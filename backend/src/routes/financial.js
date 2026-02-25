@@ -3,7 +3,6 @@ import prisma from '../config/database.js';
 import { authenticate } from '../middleware/auth.js';
 import { updatePerUnitCell, updateAccountingCell } from '../services/calculationService.js';
 import { getFarmCategories, getFarmLeafCategories, recalcParentSums } from '../services/categoryService.js';
-import { calculateForecast } from '../services/forecastService.js';
 import { broadcastCellChange } from '../socket/handler.js';
 import { generateFiscalMonths, parseYear, isValidMonth } from '../utils/fiscalYear.js';
 
@@ -70,14 +69,6 @@ router.get('/:farmId/per-unit/:year', authenticate, async (req, res, next) => {
       }
     }
 
-    // Calculate forecast
-    let forecast = {};
-    try {
-      forecast = await calculateForecast(farmId, fiscalYear, startMonth);
-    } catch {
-      // Forecast may fail if no frozen data
-    }
-
     const isFrozenPU = assumption?.is_frozen || false;
 
     // Build response rows per category
@@ -95,15 +86,14 @@ router.get('/:farmId/per-unit/:year', authenticate, async (req, res, next) => {
         currentAgg += val;
       }
 
-      const fc = forecast[cat.code] || {};
-      let forecastVal, budgetVal;
-      if (isFrozenPU) {
-        forecastVal = fc.forecastTotal ?? currentAgg;
-        budgetVal = fc.frozenBudgetTotal ?? 0;
-      } else {
-        forecastVal = currentAgg;
-        budgetVal = currentAgg;
+      // Compute frozen budget total from frozenMap
+      let frozenBudgetSum = 0;
+      for (const month of months) {
+        frozenBudgetSum += frozenMap[month]?.[cat.code] || 0;
       }
+
+      const forecastVal = currentAgg;
+      const budgetVal = isFrozenPU ? frozenBudgetSum : currentAgg;
       const varianceVal = forecastVal - budgetVal;
       const pctDiffVal = budgetVal !== 0 ? (varianceVal / Math.abs(budgetVal)) * 100 : 0;
 
@@ -120,7 +110,7 @@ router.get('/:farmId/per-unit/:year', authenticate, async (req, res, next) => {
         months: monthValues,
         actuals: monthActuals,
         comments: monthComments,
-        currentAggregate: isFrozenPU ? (fc.currentAggregate ?? currentAgg) : currentAgg,
+        currentAggregate: currentAgg,
         forecastTotal: forecastVal,
         frozenBudgetTotal: budgetVal,
         variance: varianceVal,
@@ -227,11 +217,6 @@ router.patch('/:farmId/per-unit/:year/:month', authenticate, async (req, res, ne
       return res.status(400).json({ error: 'Cannot edit parent category directly' });
     }
 
-    // Check if budget is frozen
-    const assumption = await prisma.assumption.findUnique({
-      where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: fiscalYear } },
-    });
-
     // Check if month is locked (actual data)
     const existing = await prisma.monthlyData.findUnique({
       where: {
@@ -243,10 +228,6 @@ router.patch('/:farmId/per-unit/:year/:month', authenticate, async (req, res, ne
 
     if (existing?.is_actual) {
       return res.status(403).json({ error: 'Cannot edit actual data. Month is locked.' });
-    }
-
-    if (assumption?.is_frozen && !existing?.is_actual) {
-      return res.status(403).json({ error: 'Cannot edit budget data. Budget is frozen.' });
     }
 
     const result = await updatePerUnitCell(farmId, fiscalYear, month, category_code, parseFloat(value), comment);
@@ -304,12 +285,14 @@ router.get('/:farmId/accounting/:year', authenticate, async (req, res, next) => 
       }
     }
 
-    // Calculate forecast (per-unit based)
-    let forecast = {};
-    try {
-      forecast = await calculateForecast(farmId, fiscalYear, startMonth);
-    } catch {
-      // Forecast may not be available
+    // Get frozen budget data for accounting
+    const frozenData = await prisma.monthlyDataFrozen.findMany({
+      where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'accounting' },
+    });
+
+    const acctFrozenMap = {};
+    for (const row of frozenData) {
+      acctFrozenMap[row.month] = row.data_json || {};
     }
 
     const monthMap = {};
@@ -332,15 +315,14 @@ router.get('/:farmId/accounting/:year', authenticate, async (req, res, next) => 
         total += val;
       }
 
-      const fc = forecast[cat.code] || {};
-      let forecastVal, budgetVal;
-      if (isFrozen) {
-        forecastVal = fc.forecastTotal != null ? fc.forecastTotal * totalAcres : total;
-        budgetVal = fc.frozenBudgetTotal != null ? fc.frozenBudgetTotal * totalAcres : 0;
-      } else {
-        forecastVal = total;
-        budgetVal = total;
+      // Compute frozen budget total from frozen accounting data
+      let frozenBudgetSum = 0;
+      for (const month of months) {
+        frozenBudgetSum += acctFrozenMap[month]?.[cat.code] || 0;
       }
+
+      const forecastVal = total;
+      const budgetVal = isFrozen ? frozenBudgetSum : total;
       const varianceVal = forecastVal - budgetVal;
       const pctDiffVal = budgetVal !== 0 ? (varianceVal / Math.abs(budgetVal)) * 100 : 0;
 
@@ -481,11 +463,7 @@ router.patch('/:farmId/accounting/:year/:month', authenticate, async (req, res, 
       return res.status(400).json({ error: 'Cannot edit parent category directly' });
     }
 
-    // Check if budget is frozen or month has actuals
-    const assumption = await prisma.assumption.findUnique({
-      where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: fiscalYear } },
-    });
-
+    // Check if month is locked (actual data)
     const existing = await prisma.monthlyData.findUnique({
       where: {
         farm_id_fiscal_year_month_type: {
@@ -496,10 +474,6 @@ router.patch('/:farmId/accounting/:year/:month', authenticate, async (req, res, 
 
     if (existing?.is_actual) {
       return res.status(403).json({ error: 'Cannot edit actual data. Month is locked.' });
-    }
-
-    if (assumption?.is_frozen) {
-      return res.status(403).json({ error: 'Cannot edit budget data. Budget is frozen.' });
     }
 
     const result = await updateAccountingCell(farmId, fiscalYear, month, category_code, parseFloat(value));

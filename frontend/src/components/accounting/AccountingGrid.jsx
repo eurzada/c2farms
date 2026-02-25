@@ -125,6 +125,7 @@ export default function AccountingGrid({ farmId, fiscalYear, onSummaryLoaded }) 
           // Only leaf categories (no children) are editable
           const hasChildren = rowData.some(r => r.parent_code === params.data?.code);
           if (hasChildren) return false;
+          if (params.data?.actuals?.[month]) return false;
           return true;
         },
         valueGetter: (params) => params.data?.months?.[month] || 0,

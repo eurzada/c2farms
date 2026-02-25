@@ -38,10 +38,6 @@ vi.mock('../services/categoryService.js', () => ({
   recalcParentSums: vi.fn((data) => data),
 }));
 
-vi.mock('../services/forecastService.js', () => ({
-  calculateForecast: vi.fn(() => ({})),
-}));
-
 vi.mock('../socket/handler.js', () => ({
   broadcastCellChange: vi.fn(),
 }));
@@ -90,31 +86,7 @@ describe('PATCH /api/farms/:farmId/accounting/:year/:month', () => {
     expect(res.body.error).toMatch(/actual/i);
   });
 
-  it('rejects edit when budget is frozen — 403', async () => {
-    prismaMock.assumption.findUnique.mockResolvedValue({
-      farm_id: FARM_ID,
-      fiscal_year: 2025,
-      is_frozen: true,
-    });
-    prismaMock.monthlyData.findUnique.mockResolvedValue({
-      data_json: {},
-      is_actual: false,
-    });
-
-    const res = await request(app)
-      .patch(`/api/farms/${FARM_ID}/accounting/2025/Jan`)
-      .send({ category_code: 'rev_canola', value: 1000 });
-
-    expect(res.status).toBe(403);
-    expect(res.body.error).toMatch(/frozen/i);
-  });
-
-  it('allows edit on non-frozen, non-actual month', async () => {
-    prismaMock.assumption.findUnique.mockResolvedValue({
-      farm_id: FARM_ID,
-      fiscal_year: 2025,
-      is_frozen: false,
-    });
+  it('allows edit when budget is frozen but month is not actual — 200', async () => {
     prismaMock.monthlyData.findUnique.mockResolvedValue({
       data_json: {},
       is_actual: false,
@@ -191,31 +163,7 @@ describe('PATCH /api/farms/:farmId/per-unit/:year/:month', () => {
     expect(res.body.error).toMatch(/actual/i);
   });
 
-  it('rejects edit when budget is frozen — 403', async () => {
-    prismaMock.assumption.findUnique.mockResolvedValue({
-      farm_id: FARM_ID,
-      fiscal_year: 2025,
-      is_frozen: true,
-    });
-    prismaMock.monthlyData.findUnique.mockResolvedValue({
-      data_json: {},
-      is_actual: false,
-    });
-
-    const res = await request(app)
-      .patch(`/api/farms/${FARM_ID}/per-unit/2025/Jan`)
-      .send({ category_code: 'rev_canola', value: 10 });
-
-    expect(res.status).toBe(403);
-    expect(res.body.error).toMatch(/frozen/i);
-  });
-
-  it('allows edit on non-frozen, non-actual month', async () => {
-    prismaMock.assumption.findUnique.mockResolvedValue({
-      farm_id: FARM_ID,
-      fiscal_year: 2025,
-      is_frozen: false,
-    });
+  it('allows edit when budget is frozen but month is not actual — 200', async () => {
     prismaMock.monthlyData.findUnique.mockResolvedValue({
       data_json: {},
       is_actual: false,

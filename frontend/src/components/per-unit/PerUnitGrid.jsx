@@ -123,8 +123,6 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
           if (params.data?.level === 0 && params.context?.rowData?.some(r => r.parent_code === params.data?.code)) return false;
           if (params.data?.level === 1 && params.context?.rowData?.some(r => r.parent_code === params.data?.code)) return false;
           if (params.data?.actuals?.[month]) return false;
-          // Frozen budget: non-actual months are read-only
-          if (params.context?.isFrozen) return false;
           return true;
         },
         valueGetter: (params) => params.data?.months?.[month] || 0,
@@ -156,7 +154,7 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
     cols.push(
       {
         headerName: 'Forecast',
-        field: 'currentAggregate',
+        field: 'forecastTotal',
         width: 100,
         type: 'numericColumn',
         valueFormatter: (p) => formatNumber(p.value),
@@ -168,7 +166,7 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
       },
       {
         headerName: 'Budget',
-        field: 'forecastTotal',
+        field: 'frozenBudgetTotal',
         width: 100,
         type: 'numericColumn',
         valueFormatter: (p) => formatNumber(p.value),
