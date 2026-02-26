@@ -20,6 +20,25 @@ export function setupSocketHandlers(io) {
   io.on('connection', (socket) => {
     console.log(`Client connected: ${socket.id} (user: ${socket.userId})`);
 
+    // Per-connection rate limiting: 100 events per 60 seconds
+    const RATE_LIMIT = 100;
+    const RATE_WINDOW = 60 * 1000;
+    let eventTimestamps = [];
+
+    socket.use(([_event, ..._args], next) => {
+      const now = Date.now();
+      eventTimestamps = eventTimestamps.filter(t => now - t < RATE_WINDOW);
+      eventTimestamps.push(now);
+
+      if (eventTimestamps.length > RATE_LIMIT) {
+        console.warn(`Socket rate limit exceeded: ${socket.id} (user: ${socket.userId})`);
+        socket.emit('error', { message: 'Rate limit exceeded' });
+        socket.disconnect(true);
+        return;
+      }
+      next();
+    });
+
     socket.on('join-farm', async (farmId) => {
       // Verify user has access to this farm
       try {

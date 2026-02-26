@@ -10,12 +10,22 @@ if (!process.env.JWT_SECRET) {
   process.exit(1);
 }
 
+if (process.env.NODE_ENV === 'production' && process.env.JWT_SECRET === 'dev-secret-change-in-production') {
+  console.error('FATAL: JWT_SECRET is set to the default dev value. Generate a secure secret: openssl rand -base64 32');
+  process.exit(1);
+}
+
 const PORT = process.env.PORT || 3001;
 
 const httpServer = createServer(app);
 
+// CORS — lock down in production via CORS_ORIGIN env var
+const corsOrigin = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
+  : true;
+
 const io = new Server(httpServer, {
-  cors: { origin: true, credentials: true },
+  cors: { origin: corsOrigin, credentials: true },
 });
 
 setupSocketHandlers(io);

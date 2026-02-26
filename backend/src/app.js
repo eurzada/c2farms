@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import authRoutes from './routes/auth.js';
@@ -21,8 +23,45 @@ import { authenticate, requireFarmAccess } from './middleware/auth.js';
 
 const app = express();
 
-app.use(cors({ origin: true, credentials: true }));
+// Security headers
+app.use(helmet());
+
+// CORS — lock down in production via CORS_ORIGIN env var
+const corsOrigin = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
+  : true;
+app.use(cors({ origin: corsOrigin, credentials: true }));
+
 app.use(express.json());
+
+// Rate limiting
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts, please try again later' },
+});
+
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many registration attempts, please try again later' },
+});
+
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' },
+});
+
+app.use('/api/', generalLimiter);
+app.use('/api/auth/login', loginLimiter);
+app.use('/api/auth/register', registerLimiter);
 
 // Routes
 app.use('/api/auth', authRoutes);

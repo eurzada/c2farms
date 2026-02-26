@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import prisma from '../config/database.js';
 import { updateAccountingCell } from './calculationService.js';
+import { encrypt, decrypt } from '../utils/crypto.js';
 
 // QuickBooks OAuth2 placeholder
 export function getAuthUrl(farmId, userId) {
@@ -35,15 +36,15 @@ export async function handleCallback(code, realmId, state) {
   await prisma.qbToken.upsert({
     where: { farm_id: farmId },
     update: {
-      access_token: 'placeholder_access_token',
-      refresh_token: 'placeholder_refresh_token',
+      access_token: encrypt('placeholder_access_token'),
+      refresh_token: encrypt('placeholder_refresh_token'),
       realm_id: realmId || 'placeholder',
       expires_at: new Date(Date.now() + 3600000),
     },
     create: {
       farm_id: farmId,
-      access_token: 'placeholder_access_token',
-      refresh_token: 'placeholder_refresh_token',
+      access_token: encrypt('placeholder_access_token'),
+      refresh_token: encrypt('placeholder_refresh_token'),
       realm_id: realmId || 'placeholder',
       expires_at: new Date(Date.now() + 3600000),
     },
@@ -54,17 +55,21 @@ export async function handleCallback(code, realmId, state) {
 
 export async function syncExpenses(farmId, startDate, endDate, fiscalYear) {
   // Check if QB tokens exist
-  const tokens = await prisma.qbToken.findUnique({ where: { farm_id: farmId } });
+  const tokensRaw = await prisma.qbToken.findUnique({ where: { farm_id: farmId } });
 
-  if (!tokens || !process.env.QB_CLIENT_ID) {
+  if (!tokensRaw || !process.env.QB_CLIENT_ID) {
     return {
       fallback: true,
       message: 'QuickBooks is not connected. Please enter actuals manually.',
     };
   }
 
+  // Decrypt tokens for API use
+  const _accessToken = decrypt(tokensRaw.access_token);
+  const _refreshToken = decrypt(tokensRaw.refresh_token);
+
   try {
-    // Placeholder: In production, make API call to QB
+    // Placeholder: In production, make API call to QB using _accessToken/_refreshToken
     // For MVP, return fallback
     throw new Error('QB API not implemented');
   } catch (err) {

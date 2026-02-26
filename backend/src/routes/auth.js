@@ -36,19 +36,47 @@ router.post('/register', async (req, res, next) => {
       return res.status(400).json({ error: 'email, password, and name are required' });
     }
 
-    const existing = await prisma.user.findUnique({ where: { email } });
+    if (typeof email !== 'string' || typeof password !== 'string' || typeof name !== 'string') {
+      return res.status(400).json({ error: 'email, password, and name must be strings' });
+    }
+
+    if (email.length > 254 || name.length > 100 || password.length > 128) {
+      return res.status(400).json({ error: 'Input exceeds maximum length' });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+
+    const trimmedEmail = email.trim().toLowerCase();
+    const trimmedName = name.trim();
+
+    if (trimmedName.length < 1) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+
+    // Password policy: min 8 chars, at least one letter and one number
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+    if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
+      return res.status(400).json({ error: 'Password must contain at least one letter and one number' });
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email: trimmedEmail } });
     if (existing) {
       return res.status(409).json({ error: 'Email already registered' });
     }
 
     const password_hash = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({
-      data: { email, password_hash, name },
+      data: { email: trimmedEmail, password_hash, name: trimmedName },
       select: { id: true, email: true, name: true, role: true },
     });
 
     // Auto-accept pending invites
-    await acceptPendingInvites(user.id, email);
+    await acceptPendingInvites(user.id, trimmedEmail);
 
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
     res.status(201).json({ token, user });
@@ -64,7 +92,17 @@ router.post('/login', async (req, res, next) => {
       return res.status(400).json({ error: 'email and password are required' });
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    if (typeof email !== 'string' || typeof password !== 'string') {
+      return res.status(400).json({ error: 'email and password must be strings' });
+    }
+
+    if (email.length > 254 || password.length > 128) {
+      return res.status(400).json({ error: 'Input exceeds maximum length' });
+    }
+
+    const trimmedEmail = email.trim().toLowerCase();
+
+    const user = await prisma.user.findUnique({ where: { email: trimmedEmail } });
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -75,7 +113,7 @@ router.post('/login', async (req, res, next) => {
     }
 
     // Auto-accept pending invites
-    await acceptPendingInvites(user.id, email);
+    await acceptPendingInvites(user.id, trimmedEmail);
 
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
     res.json({
