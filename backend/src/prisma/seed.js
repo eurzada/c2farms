@@ -38,6 +38,42 @@ async function main() {
     create: { user_id: user.id, farm_id: farm.id, role: 'admin' },
   });
 
+  // Create manager user
+  const managerUser = await prisma.user.upsert({
+    where: { email: 'manager@c2farms.com' },
+    update: {},
+    create: {
+      email: 'manager@c2farms.com',
+      password_hash: passwordHash,
+      name: 'Jane Manager',
+      role: 'farm_manager',
+    },
+  });
+  await prisma.userFarmRole.upsert({
+    where: { user_id_farm_id: { user_id: managerUser.id, farm_id: farm.id } },
+    update: {},
+    create: { user_id: managerUser.id, farm_id: farm.id, role: 'manager' },
+  });
+  console.log(`Manager: ${managerUser.email}`);
+
+  // Create viewer user
+  const viewerUser = await prisma.user.upsert({
+    where: { email: 'viewer@c2farms.com' },
+    update: {},
+    create: {
+      email: 'viewer@c2farms.com',
+      password_hash: passwordHash,
+      name: 'Bob Viewer',
+      role: 'farm_manager',
+    },
+  });
+  await prisma.userFarmRole.upsert({
+    where: { user_id_farm_id: { user_id: viewerUser.id, farm_id: farm.id } },
+    update: {},
+    create: { user_id: viewerUser.id, farm_id: farm.id, role: 'viewer' },
+  });
+  console.log(`Viewer: ${viewerUser.email}`);
+
   const FISCAL_YEAR = 2026;
   const crops = [
     { name: 'Canola', acres: 1500, target_yield: 45, price_per_unit: 14 },
@@ -365,7 +401,9 @@ async function main() {
   console.log('Seeded prior year (FY2025) data');
 
   console.log('\n--- Seed Complete ---');
-  console.log(`Login: farmer@c2farms.com / password123`);
+  console.log(`Admin:   farmer@c2farms.com / password123`);
+  console.log(`Manager: manager@c2farms.com / password123`);
+  console.log(`Viewer:  viewer@c2farms.com / password123`);
   console.log(`Farm ID: ${farm.id}`);
 }
 

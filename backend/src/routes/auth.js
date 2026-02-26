@@ -6,6 +6,29 @@ import { authenticate } from '../middleware/auth.js';
 
 const router = Router();
 
+// Accept any pending farm invites for a user
+async function acceptPendingInvites(userId, email) {
+  const pendingInvites = await prisma.farmInvite.findMany({
+    where: { email, status: 'pending', expires_at: { gt: new Date() } },
+  });
+
+  for (const invite of pendingInvites) {
+    // Create farm role if it doesn't already exist
+    await prisma.userFarmRole.upsert({
+      where: { user_id_farm_id: { user_id: userId, farm_id: invite.farm_id } },
+      update: {},
+      create: { user_id: userId, farm_id: invite.farm_id, role: invite.role },
+    });
+
+    await prisma.farmInvite.update({
+      where: { id: invite.id },
+      data: { status: 'accepted' },
+    });
+  }
+
+  return pendingInvites.length;
+}
+
 router.post('/register', async (req, res, next) => {
   try {
     const { email, password, name } = req.body;
@@ -23,6 +46,9 @@ router.post('/register', async (req, res, next) => {
       data: { email, password_hash, name },
       select: { id: true, email: true, name: true, role: true },
     });
+
+    // Auto-accept pending invites
+    await acceptPendingInvites(user.id, email);
 
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
     res.status(201).json({ token, user });
@@ -47,6 +73,9 @@ router.post('/login', async (req, res, next) => {
     if (!valid) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
+
+    // Auto-accept pending invites
+    await acceptPendingInvites(user.id, email);
 
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
     res.json({

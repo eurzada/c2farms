@@ -8,7 +8,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import AddIcon from '@mui/icons-material/Add';
 import api from '../../services/api';
 
-export default function CategoryTree({ categories, farmId, onRefresh }) {
+export default function CategoryTree({ categories, farmId, onRefresh, canEdit }) {
   const [editDialog, setEditDialog] = useState(null);
   const [addDialog, setAddDialog] = useState(false);
   const [form, setForm] = useState({ code: '', display_name: '', parent_code: '', category_type: 'INPUT' });
@@ -55,11 +55,13 @@ export default function CategoryTree({ categories, farmId, onRefresh }) {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
-        <Button startIcon={<AddIcon />} variant="outlined" size="small" onClick={openAdd}>
-          Add Category
-        </Button>
-      </Box>
+      {canEdit && (
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
+          <Button startIcon={<AddIcon />} variant="outlined" size="small" onClick={openAdd}>
+            Add Category
+          </Button>
+        </Box>
+      )}
       <Paper>
         <Table size="small">
           <TableHead>
@@ -93,9 +95,11 @@ export default function CategoryTree({ categories, farmId, onRefresh }) {
                     -
                   </TableCell>
                   <TableCell>
-                    <IconButton size="small" onClick={() => openEdit(cat)}>
-                      <EditIcon fontSize="small" />
-                    </IconButton>
+                    {canEdit && (
+                      <IconButton size="small" onClick={() => openEdit(cat)}>
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    )}
                   </TableCell>
                 </TableRow>
               );

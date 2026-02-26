@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import prisma from '../config/database.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, requireRole } from '../middleware/auth.js';
 import { generateFiscalMonths, CALENDAR_MONTHS, parseYear } from '../utils/fiscalYear.js';
 import { LEAF_CATEGORIES } from '../utils/categories.js';
+import { emitDataChange, aiEvents } from '../socket/aiEvents.js';
 
 const router = Router();
 
@@ -26,7 +27,7 @@ router.get('/:farmId/assumptions/:year', authenticate, async (req, res, next) =>
 });
 
 // CREATE or UPDATE assumptions
-router.post('/:farmId/assumptions', authenticate, async (req, res, next) => {
+router.post('/:farmId/assumptions', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId } = req.params;
     const { fiscal_year, start_month, end_month, total_acres, crops, bins } = req.body;
@@ -136,7 +137,7 @@ router.post('/:farmId/assumptions', authenticate, async (req, res, next) => {
 });
 
 // FREEZE budget
-router.post('/:farmId/assumptions/:year/freeze', authenticate, async (req, res, next) => {
+router.post('/:farmId/assumptions/:year/freeze', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId, year } = req.params;
     const fiscalYear = parseYear(year);
@@ -183,6 +184,9 @@ router.post('/:farmId/assumptions/:year/freeze', authenticate, async (req, res, 
       data: { is_frozen: true, frozen_at: new Date() },
     });
 
+    const io = req.app.get('io');
+    if (io) emitDataChange(io, farmId, aiEvents.budgetFrozen(fiscalYear));
+
     res.json({ message: 'Budget frozen successfully' });
   } catch (err) {
     next(err);
@@ -190,19 +194,11 @@ router.post('/:farmId/assumptions/:year/freeze', authenticate, async (req, res, 
 });
 
 // UNFREEZE budget (admin only)
-router.post('/:farmId/assumptions/:year/unfreeze', authenticate, async (req, res, next) => {
+router.post('/:farmId/assumptions/:year/unfreeze', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
     const { farmId, year } = req.params;
     const fiscalYear = parseYear(year);
     if (!fiscalYear) return res.status(400).json({ error: 'Invalid fiscal year' });
-
-    // Check admin role
-    const role = await prisma.userFarmRole.findUnique({
-      where: { user_id_farm_id: { user_id: req.userId, farm_id: farmId } },
-    });
-    if (!role || role.role !== 'admin') {
-      return res.status(403).json({ error: 'Admin access required to unfreeze budget' });
-    }
 
     const assumption = await prisma.assumption.findUnique({
       where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: fiscalYear } },
@@ -219,6 +215,9 @@ router.post('/:farmId/assumptions/:year/unfreeze', authenticate, async (req, res
       where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: fiscalYear } },
       data: { is_frozen: false, frozen_at: null },
     });
+
+    const io = req.app.get('io');
+    if (io) emitDataChange(io, farmId, aiEvents.budgetUnfrozen(fiscalYear));
 
     res.json({ message: 'Budget unfrozen successfully' });
   } catch (err) {

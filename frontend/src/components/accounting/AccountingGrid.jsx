@@ -5,6 +5,7 @@ import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import api from '../../services/api';
 import { useThemeMode } from '../../contexts/ThemeContext';
+import { useFarm } from '../../contexts/FarmContext';
 import { getGridColors } from '../../utils/gridColors';
 import { FISCAL_MONTHS, isPastMonth } from '../../utils/fiscalYear';
 import { formatCurrency, formatNumber, formatPercent } from '../../utils/formatting';
@@ -18,6 +19,7 @@ export default function AccountingGrid({ farmId, fiscalYear, onSummaryLoaded }) 
   const [error, setError] = useState('');
   const gridRef = useRef();
   const { mode } = useThemeMode();
+  const { canEdit } = useFarm();
   const colors = useMemo(() => getGridColors(mode), [mode]);
 
   const fetchData = useCallback(async () => {
@@ -121,6 +123,7 @@ export default function AccountingGrid({ farmId, fiscalYear, onSummaryLoaded }) 
         width: 110,
         type: 'numericColumn',
         editable: (params) => {
+          if (!canEdit) return false;
           if (params.data?.isComputed) return false;
           // Only leaf categories (no children) are editable
           const hasChildren = rowData.some(r => r.parent_code === params.data?.code);

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import prisma from '../config/database.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, requireFarmAccess, requireRole } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -27,21 +27,13 @@ router.post('/', authenticate, async (req, res, next) => {
 });
 
 // PATCH /api/farms/:farmId — update farm name
-router.patch('/:farmId', authenticate, async (req, res, next) => {
+router.patch('/:farmId', authenticate, requireFarmAccess, requireRole('admin'), async (req, res, next) => {
   try {
     const { farmId } = req.params;
     const { name } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Farm name is required' });
-    }
-
-    // Verify admin role
-    const role = await prisma.userFarmRole.findUnique({
-      where: { user_id_farm_id: { user_id: req.userId, farm_id: farmId } },
-    });
-    if (!role || role.role !== 'admin') {
-      return res.status(403).json({ error: 'Admin access required' });
     }
 
     const farm = await prisma.farm.update({
@@ -56,17 +48,9 @@ router.patch('/:farmId', authenticate, async (req, res, next) => {
 });
 
 // DELETE /api/farms/:farmId — delete farm and all related data
-router.delete('/:farmId', authenticate, async (req, res, next) => {
+router.delete('/:farmId', authenticate, requireFarmAccess, requireRole('admin'), async (req, res, next) => {
   try {
     const { farmId } = req.params;
-
-    // Verify admin role
-    const role = await prisma.userFarmRole.findUnique({
-      where: { user_id_farm_id: { user_id: req.userId, farm_id: farmId } },
-    });
-    if (!role || role.role !== 'admin') {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
 
     await prisma.$transaction([
       prisma.monthlyDataFrozen.deleteMany({ where: { farm_id: farmId } }),
@@ -74,6 +58,7 @@ router.delete('/:farmId', authenticate, async (req, res, next) => {
       prisma.assumption.deleteMany({ where: { farm_id: farmId } }),
       prisma.qbCategoryMapping.deleteMany({ where: { farm_id: farmId } }),
       prisma.qbToken.deleteMany({ where: { farm_id: farmId } }),
+      prisma.farmInvite.deleteMany({ where: { farm_id: farmId } }),
       prisma.userFarmRole.deleteMany({ where: { farm_id: farmId } }),
       prisma.farm.delete({ where: { id: farmId } }),
     ]);

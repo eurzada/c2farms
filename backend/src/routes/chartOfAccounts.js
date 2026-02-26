@@ -1,22 +1,51 @@
 import { Router } from 'express';
 import prisma from '../config/database.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, requireRole } from '../middleware/auth.js';
 import { getFarmCategories, initFarmCategories, invalidateCache } from '../services/categoryService.js';
-import { importGlActuals } from '../services/glRollupService.js';
-import { parseYear, isValidMonth } from '../utils/fiscalYear.js';
+import { importGlActuals, rollupGlActuals } from '../services/glRollupService.js';
+import { parseYear, isValidMonth, FISCAL_MONTHS } from '../utils/fiscalYear.js';
+import { emitDataChange, aiEvents } from '../socket/aiEvents.js';
 
 const router = Router();
 
 // GET chart of accounts: categories + GL accounts + mappings
+// Optional ?fiscal_year=XXXX to include YTD amounts from GlActualDetail
 router.get('/:farmId/chart-of-accounts', authenticate, async (req, res, next) => {
   try {
     const { farmId } = req.params;
+    const fiscalYear = parseYear(req.query.fiscal_year);
     const categories = await getFarmCategories(farmId);
     const glAccounts = await prisma.glAccount.findMany({
       where: { farm_id: farmId, is_active: true },
       include: { category: { select: { id: true, code: true, display_name: true } } },
       orderBy: { account_number: 'asc' },
     });
+
+    // Attach YTD totals and per-month breakdown if fiscal_year provided
+    if (fiscalYear) {
+      const glAmounts = await prisma.glActualDetail.groupBy({
+        by: ['gl_account_id', 'month'],
+        where: { farm_id: farmId, fiscal_year: fiscalYear },
+        _sum: { amount: true },
+      });
+
+      // Build lookup: { gl_account_id: { ytd_total, month_totals: { Mon: amt } } }
+      const amountMap = {};
+      for (const row of glAmounts) {
+        if (!amountMap[row.gl_account_id]) {
+          amountMap[row.gl_account_id] = { ytd_total: 0, month_totals: {} };
+        }
+        const amt = row._sum.amount || 0;
+        amountMap[row.gl_account_id].ytd_total += amt;
+        amountMap[row.gl_account_id].month_totals[row.month] = amt;
+      }
+
+      for (const gl of glAccounts) {
+        const amounts = amountMap[gl.id];
+        gl.ytd_total = amounts?.ytd_total ?? 0;
+        gl.month_totals = amounts?.month_totals ?? {};
+      }
+    }
 
     res.json({ categories, glAccounts });
   } catch (err) {
@@ -25,7 +54,7 @@ router.get('/:farmId/chart-of-accounts', authenticate, async (req, res, next) =>
 });
 
 // POST initialize chart of accounts from template
-router.post('/:farmId/chart-of-accounts/init', authenticate, async (req, res, next) => {
+router.post('/:farmId/chart-of-accounts/init', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId } = req.params;
     const { crops } = req.body;
@@ -49,7 +78,7 @@ router.post('/:farmId/chart-of-accounts/init', authenticate, async (req, res, ne
 });
 
 // POST create category
-router.post('/:farmId/categories', authenticate, async (req, res, next) => {
+router.post('/:farmId/categories', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId } = req.params;
     const { code, display_name, parent_code, category_type, sort_order } = req.body;
@@ -113,7 +142,7 @@ router.post('/:farmId/categories', authenticate, async (req, res, next) => {
 });
 
 // PUT update category
-router.put('/:farmId/categories/:id', authenticate, async (req, res, next) => {
+router.put('/:farmId/categories/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId, id } = req.params;
     const { display_name, sort_order, is_active } = req.body;
@@ -141,7 +170,7 @@ router.put('/:farmId/categories/:id', authenticate, async (req, res, next) => {
 });
 
 // DELETE (soft) deactivate category
-router.delete('/:farmId/categories/:id', authenticate, async (req, res, next) => {
+router.delete('/:farmId/categories/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId, id } = req.params;
 
@@ -178,7 +207,7 @@ router.get('/:farmId/gl-accounts', authenticate, async (req, res, next) => {
 });
 
 // POST create/bulk-create GL accounts
-router.post('/:farmId/gl-accounts', authenticate, async (req, res, next) => {
+router.post('/:farmId/gl-accounts', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId } = req.params;
     const { accounts } = req.body;
@@ -222,10 +251,10 @@ router.post('/:farmId/gl-accounts', authenticate, async (req, res, next) => {
 });
 
 // PUT update GL account
-router.put('/:farmId/gl-accounts/:id', authenticate, async (req, res, next) => {
+router.put('/:farmId/gl-accounts/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId, id } = req.params;
-    const { account_name, category_code, is_active } = req.body;
+    const { account_name, category_code, is_active, fiscal_year } = req.body;
 
     // Verify GL account belongs to this farm
     const existing = await prisma.glAccount.findUnique({ where: { id } });
@@ -243,7 +272,21 @@ router.put('/:farmId/gl-accounts/:id', authenticate, async (req, res, next) => {
       updates.category_id = cat?.id || null;
     }
 
+    // When deactivating, clear category_id so rollup excludes this account's amounts
+    if (is_active === false) {
+      updates.category_id = null;
+    }
+
     const gl = await prisma.glAccount.update({ where: { id }, data: updates });
+
+    // Re-rollup if deactivated and fiscal_year provided
+    const fy = parseYear(fiscal_year);
+    if (is_active === false && fy) {
+      for (const month of FISCAL_MONTHS) {
+        await rollupGlActuals(farmId, fy, month);
+      }
+    }
+
     res.json(gl);
   } catch (err) {
     next(err);
@@ -251,10 +294,10 @@ router.put('/:farmId/gl-accounts/:id', authenticate, async (req, res, next) => {
 });
 
 // POST bulk assign GL accounts to categories
-router.post('/:farmId/gl-accounts/bulk-assign', authenticate, async (req, res, next) => {
+router.post('/:farmId/gl-accounts/bulk-assign', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId } = req.params;
-    const { assignments } = req.body;
+    const { assignments, fiscal_year } = req.body;
     // assignments: [{ account_number, category_code }]
 
     if (!assignments || !Array.isArray(assignments)) {
@@ -279,14 +322,25 @@ router.post('/:farmId/gl-accounts/bulk-assign', authenticate, async (req, res, n
       updated++;
     }
 
-    res.json({ message: `Updated ${updated} GL account assignments` });
+    // Re-rollup all fiscal months if fiscal_year provided
+    const fy = parseYear(fiscal_year);
+    if (fy) {
+      for (const month of FISCAL_MONTHS) {
+        await rollupGlActuals(farmId, fy, month);
+      }
+    }
+
+    const io = req.app.get('io');
+    if (io) emitDataChange(io, farmId, aiEvents.glMappingChanged(updated));
+
+    res.json({ message: `Updated ${updated} GL account assignments`, rollup: !!fy });
   } catch (err) {
     next(err);
   }
 });
 
 // POST import GL actuals (from QBO CSV/Excel)
-router.post('/:farmId/gl-actuals/import', authenticate, async (req, res, next) => {
+router.post('/:farmId/gl-actuals/import', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId } = req.params;
     const { fiscal_year, rows, new_accounts } = req.body;

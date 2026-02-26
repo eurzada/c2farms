@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import prisma from '../config/database.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, requireRole } from '../middleware/auth.js';
 import * as qbService from '../services/quickbooksService.js';
 
 // General QB routes (mounted at /api/quickbooks)
@@ -39,7 +39,7 @@ qbGeneralRouter.get('/callback', async (req, res, next) => {
 // Farm-specific QB routes (mounted at /api/farms)
 export const qbFarmRouter = Router();
 
-qbFarmRouter.post('/:farmId/quickbooks/sync', authenticate, async (req, res, next) => {
+qbFarmRouter.post('/:farmId/quickbooks/sync', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId } = req.params;
     const { start_date, end_date, fiscal_year } = req.body;
@@ -59,7 +59,7 @@ qbFarmRouter.get('/:farmId/quickbooks/mappings', authenticate, async (req, res, 
   }
 });
 
-qbFarmRouter.post('/:farmId/quickbooks/mappings', authenticate, async (req, res, next) => {
+qbFarmRouter.post('/:farmId/quickbooks/mappings', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { qb_account, category_code, weight } = req.body;
     const mapping = await qbService.upsertMapping(req.params.farmId, qb_account, category_code, weight);

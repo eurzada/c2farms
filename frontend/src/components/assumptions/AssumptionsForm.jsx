@@ -18,7 +18,7 @@ import { useFarm } from '../../contexts/FarmContext';
 import api from '../../services/api';
 
 export default function AssumptionsForm({ farmId, fiscalYear }) {
-  const { currentFarm, refreshFarms } = useFarm();
+  const { currentFarm, refreshFarms, canEdit, isAdmin } = useFarm();
   const [data, setData] = useState({
     fiscal_year: fiscalYear,
     start_month: 'Nov',
@@ -120,7 +120,6 @@ export default function AssumptionsForm({ farmId, fiscalYear }) {
   if (loading) return null;
 
   const cropAcresSum = data.crops.reduce((sum, c) => sum + (c.acres || 0), 0);
-  const isAdmin = currentFarm?.role === 'admin';
 
   return (
     <Box>
@@ -144,7 +143,7 @@ export default function AssumptionsForm({ farmId, fiscalYear }) {
           disabled
           size="small"
         />
-        <FormControl size="small" sx={{ minWidth: 120 }} disabled={isFrozen}>
+        <FormControl size="small" sx={{ minWidth: 120 }} disabled={isFrozen || !canEdit}>
           <InputLabel>Start Month</InputLabel>
           <Select
             value={data.start_month || 'Nov'}
@@ -161,7 +160,7 @@ export default function AssumptionsForm({ farmId, fiscalYear }) {
           type="number"
           value={data.total_acres || ''}
           onChange={(e) => setData({ ...data, total_acres: parseFloat(e.target.value) || 0 })}
-          disabled={isFrozen}
+          disabled={isFrozen || !canEdit}
           size="small"
         />
         <Chip
@@ -188,19 +187,19 @@ export default function AssumptionsForm({ farmId, fiscalYear }) {
       <CropInputs
         crops={data.crops}
         onChange={(crops) => setData({ ...data, crops })}
-        disabled={isFrozen}
+        disabled={isFrozen || !canEdit}
       />
 
       <Box sx={{ mt: 3 }}>
         <BinInputs
           bins={data.bins}
           onChange={(bins) => setData({ ...data, bins })}
-          disabled={isFrozen}
+          disabled={isFrozen || !canEdit}
         />
       </Box>
 
       <Box sx={{ mt: 3, display: 'flex', gap: 2 }}>
-        {!isFrozen && (
+        {!isFrozen && canEdit && (
           <>
             <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSave}>
               Save Assumptions

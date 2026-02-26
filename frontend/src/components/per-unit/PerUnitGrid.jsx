@@ -6,6 +6,7 @@ import 'ag-grid-community/styles/ag-theme-alpine.css';
 import api from '../../services/api';
 import { useRealtime } from '../../hooks/useRealtime';
 import { useThemeMode } from '../../contexts/ThemeContext';
+import { useFarm } from '../../contexts/FarmContext';
 import { getGridColors } from '../../utils/gridColors';
 import { FISCAL_MONTHS, isPastMonth } from '../../utils/fiscalYear';
 import { formatNumber, formatPercent } from '../../utils/formatting';
@@ -19,6 +20,7 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
   const [revenueWarning, setRevenueWarning] = useState('');
   const gridRef = useRef();
   const { mode } = useThemeMode();
+  const { canEdit } = useFarm();
   const colors = useMemo(() => getGridColors(mode), [mode]);
 
   const fetchData = useCallback(async () => {
@@ -118,6 +120,7 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
         width: 90,
         type: 'numericColumn',
         editable: (params) => {
+          if (!canEdit) return false;
           if (params.data?.isComputed) return false;
           // Parent categories are not directly editable
           if (params.data?.level === 0 && params.context?.rowData?.some(r => r.parent_code === params.data?.code)) return false;

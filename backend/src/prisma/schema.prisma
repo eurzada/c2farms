@@ -183,3 +183,44 @@ model GlActualDetail {
   @@unique([farm_id, fiscal_year, month, gl_account_id])
   @@map("gl_actual_details")
 }
+
+model FarmInvite {
+  id         String   @id @default(uuid())
+  farm_id    String
+  email      String
+  role       String   @default("viewer")
+  invited_by String
+  status     String   @default("pending") // pending, accepted, expired
+  created_at DateTime @default(now())
+  expires_at DateTime
+
+  @@unique([farm_id, email])
+  @@map("farm_invites")
+}
+
+model AiConversation {
+  id         String      @id @default(uuid())
+  farm_id    String
+  user_id    String
+  title      String?
+  created_at DateTime    @default(now())
+  updated_at DateTime    @updatedAt
+  messages   AiMessage[]
+
+  @@index([farm_id])
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id              String         @id @default(uuid())
+  conversation_id String
+  role            String         // user, assistant, system
+  content         String
+  context_json    Json?
+  metadata_json   Json?
+  created_at      DateTime       @default(now())
+  conversation    AiConversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+
+  @@index([conversation_id])
+  @@map("ai_messages")
+}

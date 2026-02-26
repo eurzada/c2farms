@@ -7,7 +7,7 @@ import CategoryTree from '../components/chart-of-accounts/CategoryTree';
 import GlAccountTable from '../components/chart-of-accounts/GlAccountTable';
 
 export default function ChartOfAccounts() {
-  const { currentFarm } = useFarm();
+  const { currentFarm, fiscalYear, canEdit } = useFarm();
   const [categories, setCategories] = useState([]);
   const [glAccounts, setGlAccounts] = useState([]);
   const [error, setError] = useState('');
@@ -16,13 +16,14 @@ export default function ChartOfAccounts() {
   const fetchData = useCallback(async () => {
     if (!currentFarm?.id) return;
     try {
-      const res = await api.get(`/api/farms/${currentFarm.id}/chart-of-accounts`);
+      const params = fiscalYear ? `?fiscal_year=${fiscalYear}` : '';
+      const res = await api.get(`/api/farms/${currentFarm.id}/chart-of-accounts${params}`);
       setCategories(res.data.categories || []);
       setGlAccounts(res.data.glAccounts || []);
     } catch {
       setError('Failed to load chart of accounts');
     }
-  }, [currentFarm?.id]);
+  }, [currentFarm?.id, fiscalYear]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -51,7 +52,7 @@ export default function ChartOfAccounts() {
           <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchData}>
             Refresh
           </Button>
-          {categories.length === 0 && (
+          {categories.length === 0 && canEdit && (
             <Button variant="contained" onClick={handleInit}>
               Initialize from Template
             </Button>
@@ -73,6 +74,7 @@ export default function ChartOfAccounts() {
           categories={categories}
           farmId={currentFarm.id}
           onRefresh={fetchData}
+          canEdit={canEdit}
         />
       )}
 
@@ -81,7 +83,9 @@ export default function ChartOfAccounts() {
           glAccounts={glAccounts}
           categories={categories}
           farmId={currentFarm.id}
+          fiscalYear={fiscalYear}
           onRefresh={fetchData}
+          canEdit={canEdit}
         />
       )}
     </Box>

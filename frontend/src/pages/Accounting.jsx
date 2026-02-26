@@ -10,7 +10,7 @@ import { useFarm } from '../contexts/FarmContext';
 import api from '../services/api';
 
 export default function Accounting() {
-  const { currentFarm, fiscalYear } = useFarm();
+  const { currentFarm, fiscalYear, canEdit } = useFarm();
   const [summary, setSummary] = useState({});
   const [months, setMonths] = useState(null);
   const [syncMessage, setSyncMessage] = useState('');
@@ -75,27 +75,31 @@ export default function Accounting() {
           Section 3: Accounting Operating Statement
         </Typography>
         <Box sx={{ display: 'flex', gap: 2 }}>
-          <Button
-            variant="outlined"
-            color="error"
-            startIcon={<DeleteSweepIcon />}
-            onClick={() => setClearDialogOpen(true)}
-          >
-            Clear Year
-          </Button>
-          <CsvImportButton
-            farmId={currentFarm.id}
-            fiscalYear={fiscalYear}
-            onImportComplete={() => setRefreshKey(k => k + 1)}
-          />
-          <Button
-            variant="outlined"
-            startIcon={<SyncIcon />}
-            onClick={handleQBSync}
-            disabled={syncing}
-          >
-            {syncing ? 'Syncing...' : 'QB Sync'}
-          </Button>
+          {canEdit && (
+            <>
+              <Button
+                variant="outlined"
+                color="error"
+                startIcon={<DeleteSweepIcon />}
+                onClick={() => setClearDialogOpen(true)}
+              >
+                Clear Year
+              </Button>
+              <CsvImportButton
+                farmId={currentFarm.id}
+                fiscalYear={fiscalYear}
+                onImportComplete={() => setRefreshKey(k => k + 1)}
+              />
+              <Button
+                variant="outlined"
+                startIcon={<SyncIcon />}
+                onClick={handleQBSync}
+                disabled={syncing}
+              >
+                {syncing ? 'Syncing...' : 'QB Sync'}
+              </Button>
+            </>
+          )}
           <ExportButtons farmId={currentFarm.id} fiscalYear={fiscalYear} />
         </Box>
       </Box>

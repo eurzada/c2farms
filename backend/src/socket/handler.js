@@ -40,6 +40,26 @@ export function setupSocketHandlers(io) {
       socket.leave(`farm:${farmId}`);
     });
 
+    // AI event subscription
+    socket.on('join-farm-ai', async (farmId) => {
+      try {
+        const role = await prisma.userFarmRole.findUnique({
+          where: { user_id_farm_id: { user_id: socket.userId, farm_id: farmId } },
+        });
+        if (!role) {
+          socket.emit('error', { message: 'Access denied to this farm' });
+          return;
+        }
+        socket.join(`farm-ai:${farmId}`);
+      } catch {
+        socket.emit('error', { message: 'Failed to join AI events' });
+      }
+    });
+
+    socket.on('leave-farm-ai', (farmId) => {
+      socket.leave(`farm-ai:${farmId}`);
+    });
+
     socket.on('disconnect', () => {
       console.log(`Client disconnected: ${socket.id}`);
     });

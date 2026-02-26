@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { FarmProvider } from './contexts/FarmContext';
+import { FarmProvider, useFarm } from './contexts/FarmContext';
 import AppLayout from './components/layout/AppLayout';
 import Login from './pages/Login';
 import Assumptions from './pages/Assumptions';
@@ -8,6 +8,7 @@ import PerUnit from './pages/PerUnit';
 import Accounting from './pages/Accounting';
 import Dashboard from './pages/Dashboard';
 import ChartOfAccounts from './pages/ChartOfAccounts';
+import Settings from './pages/Settings';
 import ErrorBoundary from './components/shared/ErrorBoundary';
 import { Typography, Box } from '@mui/material';
 
@@ -23,6 +24,12 @@ function LoginRoute() {
   if (loading) return null;
   if (user) return <Navigate to="/assumptions" />;
   return <Login />;
+}
+
+function AdminRoute({ children }) {
+  const { isAdmin } = useFarm();
+  if (!isAdmin) return <Navigate to="/assumptions" />;
+  return children;
 }
 
 function NotFound() {
@@ -53,6 +60,7 @@ export default function App() {
                       <Route path="/accounting" element={<Accounting />} />
                       <Route path="/dashboard" element={<Dashboard />} />
                       <Route path="/chart-of-accounts" element={<ChartOfAccounts />} />
+                      <Route path="/settings" element={<AdminRoute><Settings /></AdminRoute>} />
                       <Route path="*" element={<NotFound />} />
                     </Routes>
                   </AppLayout>

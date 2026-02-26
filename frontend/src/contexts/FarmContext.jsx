@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from './AuthContext';
 
 const FarmContext = createContext(null);
@@ -11,6 +11,11 @@ export function FarmProvider({ children }) {
     const now = new Date();
     return now.getMonth() >= 10 ? now.getFullYear() + 1 : now.getFullYear();
   });
+
+  // Role-derived values
+  const currentRole = currentFarm?.role || 'viewer';
+  const isAdmin = currentRole === 'admin';
+  const canEdit = currentRole === 'admin' || currentRole === 'manager';
 
   // Initialize current farm from authFarms, respecting localStorage persistence
   useEffect(() => {
@@ -51,8 +56,13 @@ export function FarmProvider({ children }) {
     });
   }, [refreshAuthFarms]);
 
+  const value = useMemo(() => ({
+    farms: authFarms, currentFarm, setCurrentFarm, fiscalYear, setFiscalYear, refreshFarms,
+    currentRole, isAdmin, canEdit,
+  }), [authFarms, currentFarm, fiscalYear, refreshFarms, currentRole, isAdmin, canEdit]);
+
   return (
-    <FarmContext.Provider value={{ farms: authFarms, currentFarm, setCurrentFarm, fiscalYear, setFiscalYear, refreshFarms }}>
+    <FarmContext.Provider value={value}>
       {children}
     </FarmContext.Provider>
   );

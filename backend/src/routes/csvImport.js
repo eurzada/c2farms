@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import prisma from '../config/database.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, requireRole } from '../middleware/auth.js';
 import { getFarmLeafCategories } from '../services/categoryService.js';
 import { rollupGlActuals } from '../services/glRollupService.js';
 import { isValidMonth } from '../utils/fiscalYear.js';
+import { emitDataChange, aiEvents } from '../socket/aiEvents.js';
 
 const router = Router();
 
@@ -11,7 +12,7 @@ const router = Router();
 // Accepts: { fiscal_year, accounts: [{ name, category_code, months: { Mon: amount } }] }
 // Creates GL accounts + GlActualDetail records, then rolls up to MonthlyData.
 // This populates both the executive (category-level) and detail (GL-level) views.
-router.post('/:farmId/accounting/import-csv', authenticate, async (req, res, next) => {
+router.post('/:farmId/accounting/import-csv', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId } = req.params;
     const { fiscal_year, accounts } = req.body;
@@ -118,6 +119,9 @@ router.post('/:farmId/accounting/import-csv', authenticate, async (req, res, nex
       console.warn('[CSV Import] Skipped details:', JSON.stringify(skippedDetails));
     }
 
+    const io = req.app.get('io');
+    if (io) emitDataChange(io, farmId, aiEvents.actualImport(monthsAffected.size, accountsProcessed));
+
     res.json({
       message: `Imported ${accountsProcessed} account(s) across ${monthsAffected.size} month(s)`,
       imported: accountsProcessed,
@@ -134,7 +138,7 @@ router.post('/:farmId/accounting/import-csv', authenticate, async (req, res, nex
 // DELETE /:farmId/accounting/clear-year
 // Body: { fiscal_year }
 // Clears all GL actual details and resets MonthlyData for a farm + fiscal year.
-router.delete('/:farmId/accounting/clear-year', authenticate, async (req, res, next) => {
+router.delete('/:farmId/accounting/clear-year', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId } = req.params;
     const { fiscal_year } = req.body;

@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import prisma from '../config/database.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, requireRole } from '../middleware/auth.js';
 import { updatePerUnitCell, updateAccountingCell } from '../services/calculationService.js';
 import { getFarmCategories, getFarmLeafCategories, recalcParentSums } from '../services/categoryService.js';
 import { broadcastCellChange } from '../socket/handler.js';
+import { emitDataChange, aiEvents } from '../socket/aiEvents.js';
 import { generateFiscalMonths, parseYear, isValidMonth } from '../utils/fiscalYear.js';
 
 const router = Router();
@@ -198,7 +199,7 @@ router.get('/:farmId/per-unit/:year', authenticate, async (req, res, next) => {
 });
 
 // PATCH per-unit cell
-router.patch('/:farmId/per-unit/:year/:month', authenticate, async (req, res, next) => {
+router.patch('/:farmId/per-unit/:year/:month', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId, year, month } = req.params;
     const { category_code, value, comment } = req.body;
@@ -244,6 +245,7 @@ router.patch('/:farmId/per-unit/:year/:month', authenticate, async (req, res, ne
         perUnitData: result.perUnit,
         accountingData: result.accounting,
       });
+      emitDataChange(io, farmId, aiEvents.cellEdit('per_unit', month, category_code, null, value));
     }
 
     res.json(result);
@@ -444,7 +446,7 @@ router.get('/:farmId/accounting/:year', authenticate, async (req, res, next) => 
 });
 
 // PATCH single accounting cell (used by AccountingGrid inline editing)
-router.patch('/:farmId/accounting/:year/:month', authenticate, async (req, res, next) => {
+router.patch('/:farmId/accounting/:year/:month', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId, year, month } = req.params;
     const { category_code, value } = req.body;
@@ -488,6 +490,7 @@ router.patch('/:farmId/accounting/:year/:month', authenticate, async (req, res, 
         perUnitData: result.perUnit,
         accountingData: result.accounting,
       });
+      emitDataChange(io, farmId, aiEvents.cellEdit('accounting', month, category_code, null, value));
     }
 
     res.json(result);
@@ -497,7 +500,7 @@ router.patch('/:farmId/accounting/:year/:month', authenticate, async (req, res, 
 });
 
 // POST manual actual entry (QB fallback / bulk)
-router.post('/:farmId/financial/manual-actual', authenticate, async (req, res, next) => {
+router.post('/:farmId/financial/manual-actual', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId } = req.params;
     const { fiscal_year, month, data } = req.body;

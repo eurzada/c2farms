@@ -54,3 +54,13 @@ export function authorize(...roles) {
     next();
   };
 }
+
+// Farm-level role check — must be used AFTER requireFarmAccess (which sets req.farmRole)
+export function requireRole(...allowedRoles) {
+  return (req, res, next) => {
+    if (!req.farmRole || !allowedRoles.includes(req.farmRole)) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
+    next();
+  };
+}

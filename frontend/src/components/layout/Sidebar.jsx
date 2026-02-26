@@ -7,6 +7,8 @@ import TableChartIcon from '@mui/icons-material/TableChart';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import ListAltIcon from '@mui/icons-material/ListAlt';
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
+import { useFarm } from '../../contexts/FarmContext';
 
 const NAV_ITEMS = [
   { label: '1. Assumptions', path: '/assumptions', icon: <SettingsIcon /> },
@@ -19,6 +21,7 @@ const NAV_ITEMS = [
 export default function Sidebar({ width }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { isAdmin } = useFarm();
 
   return (
     <Drawer
@@ -26,7 +29,7 @@ export default function Sidebar({ width }) {
       sx={{
         width,
         flexShrink: 0,
-        '& .MuiDrawer-paper': { width, boxSizing: 'border-box', borderRight: (theme) => `1px solid ${theme.palette.divider}` },
+        '& .MuiDrawer-paper': { width, boxSizing: 'border-box', borderRight: (theme) => `1px solid ${theme.palette.divider}`, display: 'flex', flexDirection: 'column' },
       }}
     >
       <Box sx={{ p: 2, textAlign: 'center' }}>
@@ -37,7 +40,7 @@ export default function Sidebar({ width }) {
         />
       </Box>
       <Divider />
-      <List>
+      <List sx={{ flexGrow: 1 }}>
         {NAV_ITEMS.map(item => (
           <ListItemButton
             key={item.path}
@@ -56,6 +59,27 @@ export default function Sidebar({ width }) {
           </ListItemButton>
         ))}
       </List>
+      {isAdmin && (
+        <>
+          <Divider />
+          <List>
+            <ListItemButton
+              selected={location.pathname === '/settings'}
+              onClick={() => navigate('/settings')}
+              sx={{
+                mx: 1,
+                borderRadius: 2,
+                mb: 0.5,
+                '&.Mui-selected': { bgcolor: 'primary.light', color: 'white' },
+                '&.Mui-selected:hover': { bgcolor: 'primary.main' },
+              }}
+            >
+              <ListItemIcon sx={{ minWidth: 36, color: 'inherit' }}><AdminPanelSettingsIcon /></ListItemIcon>
+              <ListItemText primary="Settings" primaryTypographyProps={{ fontSize: 14 }} />
+            </ListItemButton>
+          </List>
+        </>
+      )}
     </Drawer>
   );
 }
