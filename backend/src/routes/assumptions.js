@@ -2,7 +2,6 @@ import { Router } from 'express';
 import prisma from '../config/database.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { generateFiscalMonths, CALENDAR_MONTHS, parseYear } from '../utils/fiscalYear.js';
-import { LEAF_CATEGORIES } from '../utils/categories.js';
 import { emitDataChange, aiEvents } from '../socket/aiEvents.js';
 
 const router = Router();
@@ -30,7 +29,7 @@ router.get('/:farmId/assumptions/:year', authenticate, async (req, res, next) =>
 router.post('/:farmId/assumptions', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId } = req.params;
-    const { fiscal_year, start_month, end_month, total_acres, crops, bins } = req.body;
+    const { fiscal_year, start_month, end_month: _end_month, total_acres, crops, bins } = req.body;
 
     if (!fiscal_year || !total_acres) {
       return res.status(400).json({ error: 'fiscal_year and total_acres are required' });

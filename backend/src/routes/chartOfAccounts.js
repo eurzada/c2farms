@@ -3,7 +3,7 @@ import prisma from '../config/database.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { getFarmCategories, initFarmCategories, invalidateCache } from '../services/categoryService.js';
 import { importGlActuals, rollupGlActuals } from '../services/glRollupService.js';
-import { parseYear, isValidMonth, FISCAL_MONTHS } from '../utils/fiscalYear.js';
+import { parseYear, FISCAL_MONTHS } from '../utils/fiscalYear.js';
 import { emitDataChange, aiEvents } from '../socket/aiEvents.js';
 
 const router = Router();
@@ -81,7 +81,7 @@ router.post('/:farmId/chart-of-accounts/init', authenticate, requireRole('admin'
 router.post('/:farmId/categories', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId } = req.params;
-    const { code, display_name, parent_code, category_type, sort_order } = req.body;
+    const { code, display_name, parent_code, category_type, sort_order: _sort_order } = req.body;
 
     if (!code || !display_name || !category_type) {
       return res.status(400).json({ error: 'code, display_name, and category_type are required' });

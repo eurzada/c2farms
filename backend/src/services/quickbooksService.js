@@ -1,6 +1,5 @@
 import jwt from 'jsonwebtoken';
 import prisma from '../config/database.js';
-import { updateAccountingCell } from './calculationService.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 
 // QuickBooks OAuth2 placeholder
@@ -53,7 +52,7 @@ export async function handleCallback(code, realmId, state) {
   return { success: true };
 }
 
-export async function syncExpenses(farmId, startDate, endDate, fiscalYear) {
+export async function syncExpenses(farmId, _startDate, _endDate, _fiscalYear) {
   // Check if QB tokens exist
   const tokensRaw = await prisma.qbToken.findUnique({ where: { farm_id: farmId } });
 

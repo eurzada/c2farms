@@ -1,5 +1,5 @@
-import { useEffect, useRef, useCallback } from 'react';
-import { connectSocket, disconnectSocket } from '../services/socket';
+import { useEffect, useRef } from 'react';
+import { connectSocket } from '../services/socket';
 
 export function useRealtime(farmId, onCellChanged) {
   const socketRef = useRef(null);

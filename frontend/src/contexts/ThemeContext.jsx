@@ -17,7 +17,7 @@ export function ThemeProvider({ children }) {
   const toggleMode = () => {
     setMode(prev => {
       const next = prev === 'light' ? 'dark' : 'light';
-      try { localStorage.setItem('c2farms-theme', next); } catch {}
+      try { localStorage.setItem('c2farms-theme', next); } catch { /* localStorage unavailable */ }
       return next;
     });
   };

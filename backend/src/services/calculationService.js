@@ -1,5 +1,5 @@
 import prisma from '../config/database.js';
-import { getFarmCategories, getFarmLeafCategories, recalcParentSums, validateLeafCategory } from './categoryService.js';
+import { getFarmCategories, recalcParentSums, validateLeafCategory } from './categoryService.js';
 
 // Update per-unit cell and cascade to accounting
 export async function updatePerUnitCell(farmId, fiscalYear, month, categoryCode, value, comment) {

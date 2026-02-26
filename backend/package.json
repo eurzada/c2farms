@@ -12,7 +12,8 @@
     "db:migrate": "npx prisma migrate dev --schema=src/prisma/schema.prisma",
     "db:push": "npx prisma db push --schema=src/prisma/schema.prisma",
     "db:seed": "node src/prisma/seed.js",
-    "db:studio": "npx prisma studio --schema=src/prisma/schema.prisma"
+    "db:studio": "npx prisma studio --schema=src/prisma/schema.prisma",
+    "lint": "eslint src/"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
@@ -29,7 +30,10 @@
     "uuid": "^10.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@vitest/coverage-v8": "^4.0.18",
+    "eslint": "^10.0.2",
+    "globals": "^17.3.0",
     "prisma": "^5.22.0",
     "supertest": "^7.2.2",
     "vitest": "^4.0.18"

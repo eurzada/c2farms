@@ -30,7 +30,7 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
       setIsFrozen(res.data.isFrozen || false);
       if (res.data.months) setMonths(res.data.months);
       if (res.data.startMonth) setStartMonth(res.data.startMonth);
-    } catch (err) {
+    } catch {
       setError('Failed to load per-unit data');
     }
   }, [farmId, fiscalYear]);

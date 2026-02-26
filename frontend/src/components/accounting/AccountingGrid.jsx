@@ -12,8 +12,8 @@ import { formatCurrency, formatNumber, formatPercent } from '../../utils/formatt
 
 export default function AccountingGrid({ farmId, fiscalYear, onSummaryLoaded }) {
   const [rowData, setRowData] = useState([]);
-  const [summary, setSummary] = useState({});
-  const [totalAcres, setTotalAcres] = useState(0);
+  const [_summary, setSummary] = useState({});
+  const [_totalAcres, setTotalAcres] = useState(0);
   const [months, setMonths] = useState(FISCAL_MONTHS);
   const [startMonth, setStartMonth] = useState('Nov');
   const [error, setError] = useState('');
