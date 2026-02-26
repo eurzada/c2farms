@@ -247,27 +247,10 @@ export async function generateExcel(farmId, fiscalYear) {
   return workbook;
 }
 
-export async function generatePdf(farmId, fiscalYear) {
-  const farm = await prisma.farm.findUnique({ where: { id: farmId } });
-
-  const assumption = await prisma.assumption.findUnique({
-    where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: fiscalYear } },
-  });
-  const months = generateFiscalMonths(assumption?.start_month || 'Nov');
-  const farmCategories = await getFarmCategories(farmId);
-
-  const accountingData = await prisma.monthlyData.findMany({
-    where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'accounting' },
-  });
-
-  const accountingMap = {};
-  for (const row of accountingData) {
-    accountingMap[row.month] = row.data_json || {};
-  }
-
-  const statementRows = buildStatementRows(farmCategories, accountingMap, months);
-
-  // Build PDF table body
+/**
+ * Build a pdfmake table body from structured statement rows.
+ */
+function buildPdfTableBody(statementRows, months) {
   const noBorder = [false, false, false, false];
   const topBorder = [false, true, false, false];
   const topAndBottomBorder = [false, true, false, true];
@@ -342,32 +325,91 @@ export async function generatePdf(farmId, fiscalYear) {
     }
   }
 
+  return tableBody;
+}
+
+const tableLayout = {
+  hLineWidth: function () { return 0.5; },
+  vLineWidth: function () { return 0; },
+  hLineColor: function () { return '#000000'; },
+  paddingLeft: function () { return 3; },
+  paddingRight: function () { return 3; },
+  paddingTop: function () { return 1; },
+  paddingBottom: function () { return 1; },
+};
+
+export async function generatePdf(farmId, fiscalYear) {
+  const farm = await prisma.farm.findUnique({ where: { id: farmId } });
+
+  const assumption = await prisma.assumption.findUnique({
+    where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: fiscalYear } },
+  });
+  const months = generateFiscalMonths(assumption?.start_month || 'Nov');
+  const farmCategories = await getFarmCategories(farmId);
+
+  // Fetch both accounting and per-unit data
+  const [accountingData, perUnitData] = await Promise.all([
+    prisma.monthlyData.findMany({
+      where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'accounting' },
+    }),
+    prisma.monthlyData.findMany({
+      where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'per_unit' },
+    }),
+  ]);
+
+  const accountingMap = {};
+  for (const row of accountingData) {
+    accountingMap[row.month] = row.data_json || {};
+  }
+
+  const perUnitMap = {};
+  for (const row of perUnitData) {
+    perUnitMap[row.month] = row.data_json || {};
+  }
+
+  const accountingRows = buildStatementRows(farmCategories, accountingMap, months);
+  const perUnitRows = buildStatementRows(farmCategories, perUnitMap, months);
+
+  const accountingTableBody = buildPdfTableBody(accountingRows, months);
+  const perUnitTableBody = buildPdfTableBody(perUnitRows, months);
+
   const startMonth = assumption?.start_month || 'Nov';
   const endMonth = assumption?.end_month || 'Oct';
+  const farmName = farm?.name || 'Farm';
+  const fySubtitle = `Fiscal Year ${fiscalYear} (${startMonth} ${fiscalYear - 1} - ${endMonth} ${fiscalYear})`;
+  const colWidths = ['*', ...months.map(() => 60), 60];
 
   const docDefinition = {
     pageOrientation: 'landscape',
     pageSize: 'LEGAL',
     pageMargins: [30, 40, 30, 30],
     content: [
-      { text: `${farm?.name || 'Farm'} - Operating Statement`, style: 'header' },
-      { text: `Fiscal Year ${fiscalYear} (${startMonth} ${fiscalYear - 1} - ${endMonth} ${fiscalYear})`, style: 'subheader' },
+      // Page 1: Operating Statement (Accounting $)
+      { text: `${farmName} - Operating Statement`, style: 'header' },
+      { text: fySubtitle, style: 'subheader' },
       { text: ' ' },
       {
         table: {
           headerRows: 1,
-          widths: ['*', ...months.map(() => 60), 60],
-          body: tableBody,
+          widths: colWidths,
+          body: accountingTableBody,
         },
-        layout: {
-          hLineWidth: function () { return 0.5; },
-          vLineWidth: function () { return 0; },
-          hLineColor: function () { return '#000000'; },
-          paddingLeft: function () { return 3; },
-          paddingRight: function () { return 3; },
-          paddingTop: function () { return 1; },
-          paddingBottom: function () { return 1; },
+        layout: tableLayout,
+        fontSize: 7,
+        pageBreak: 'after',
+      },
+
+      // Page 2: Per-Unit Analysis ($/acre)
+      { text: `${farmName} - Per-Unit Analysis ($/acre)`, style: 'header' },
+      { text: fySubtitle, style: 'subheader' },
+      { text: ' ' },
+      {
+        table: {
+          headerRows: 1,
+          widths: colWidths,
+          body: perUnitTableBody,
         },
+        layout: tableLayout,
         fontSize: 7,
       },
     ],

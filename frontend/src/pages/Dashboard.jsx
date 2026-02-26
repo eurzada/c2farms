@@ -35,7 +35,7 @@ export default function Dashboard() {
   return (
     <Box>
       <Typography variant="h5" sx={{ mb: 3 }}>
-        Section 4: KPI Dashboard - FY{fiscalYear}
+        Section 5: KPI Dashboard - FY{fiscalYear}
       </Typography>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}

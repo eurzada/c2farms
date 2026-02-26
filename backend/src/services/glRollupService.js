@@ -34,8 +34,16 @@ export async function rollupGlActuals(farmId, fiscalYear, month) {
 
   const currentData = existing?.data_json || {};
 
-  // Overwrite only categories that have GL data
-  const merged = { ...currentData, ...categorySums };
+  // Zero out all leaf categories first so deactivated/remapped accounts don't leave stale values
+  const parentIdSet = new Set(farmCategories.filter(c => c.parent_id).map(c => c.parent_id));
+  const leafCodes = farmCategories.filter(c => !parentIdSet.has(c.id)).map(c => c.code);
+  const zeroed = {};
+  for (const code of leafCodes) {
+    zeroed[code] = 0;
+  }
+
+  // Merge: start with existing data, zero all leaf categories, then apply GL sums
+  const merged = { ...currentData, ...zeroed, ...categorySums };
   const withParents = recalcParentSums(merged, farmCategories);
 
   // Upsert accounting data

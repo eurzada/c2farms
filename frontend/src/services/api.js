@@ -9,6 +9,8 @@ api.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  // Bypass ngrok free-tier browser interstitial on API calls
+  config.headers['ngrok-skip-browser-warning'] = 'true';
   return config;
 });
 

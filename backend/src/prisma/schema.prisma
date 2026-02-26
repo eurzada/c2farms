@@ -198,6 +198,21 @@ model FarmInvite {
   @@map("farm_invites")
 }
 
+model OperationalData {
+  id           String   @id @default(uuid())
+  farm_id      String
+  fiscal_year  Int
+  month        String
+  metric       String   // 'labour_hours', 'equipment_hours', 'fuel_litres'
+  budget_value Float    @default(0)
+  actual_value Float    @default(0)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  @@unique([farm_id, fiscal_year, month, metric])
+  @@map("operational_data")
+}
+
 model AiConversation {
   id         String      @id @default(uuid())
   farm_id    String
