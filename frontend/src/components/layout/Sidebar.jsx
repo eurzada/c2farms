@@ -8,6 +8,7 @@ import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing';
+import WarehouseIcon from '@mui/icons-material/Warehouse';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import SupervisorAccountIcon from '@mui/icons-material/SupervisorAccount';
 import { useFarm } from '../../contexts/FarmContext';
@@ -18,6 +19,7 @@ const NAV_ITEMS = [
   { label: '3. Per-Unit', path: '/per-unit', icon: <TableChartIcon /> },
   { label: '4. Operations', path: '/operations', icon: <PrecisionManufacturingIcon /> },
   { label: '5. Dashboard', path: '/dashboard', icon: <DashboardIcon /> },
+  { label: '6. Grain Control', path: '/inventory', icon: <WarehouseIcon /> },
   { label: 'Chart of Accounts', path: '/chart-of-accounts', icon: <ListAltIcon /> },
 ];
 
@@ -48,7 +50,7 @@ export default function Sidebar({ width }) {
         {NAV_ITEMS.map(item => (
           <ListItemButton
             key={item.path}
-            selected={location.pathname === item.path}
+            selected={location.pathname === item.path || (item.path === '/inventory' && location.pathname.startsWith('/inventory'))}
             onClick={() => navigate(item.path)}
             sx={{
               mx: 1,

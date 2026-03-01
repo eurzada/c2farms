@@ -239,3 +239,141 @@ model AiMessage {
   @@index([conversation_id])
   @@map("ai_messages")
 }
+
+// ─── Inventory Module (Grain Control Centre) ────────────────────────
+
+model Commodity {
+  id         String          @id @default(uuid())
+  farm_id    String
+  name       String
+  code       String
+  lbs_per_bu Float
+  created_at DateTime        @default(now())
+  updated_at DateTime        @updatedAt
+  bins       InventoryBin[]
+  bin_counts BinCount[]
+  contracts  Contract[]
+
+  @@unique([farm_id, code])
+  @@map("commodities")
+}
+
+model InventoryLocation {
+  id          String            @id @default(uuid())
+  farm_id     String
+  name        String
+  code        String
+  cluster     String            @default("individual") // central, individual, transit
+  created_at  DateTime          @default(now())
+  updated_at  DateTime          @updatedAt
+  bins        InventoryBin[]
+  submissions CountSubmission[]
+
+  @@unique([farm_id, code])
+  @@map("inventory_locations")
+}
+
+model InventoryBin {
+  id          String            @id @default(uuid())
+  farm_id     String
+  location_id String
+  bin_number  String
+  bin_type    String            @default("hopper") // hopper, flat, temporary
+  capacity_bu Float?
+  commodity_id String?
+  notes       String?
+  is_active   Boolean           @default(true)
+  created_at  DateTime          @default(now())
+  updated_at  DateTime          @updatedAt
+  location    InventoryLocation @relation(fields: [location_id], references: [id], onDelete: Cascade)
+  commodity   Commodity?        @relation(fields: [commodity_id], references: [id])
+  bin_counts  BinCount[]
+
+  @@unique([farm_id, location_id, bin_number])
+  @@map("inventory_bins")
+}
+
+model CountPeriod {
+  id          String            @id @default(uuid())
+  farm_id     String
+  period_date DateTime          @db.Date
+  crop_year   Int
+  status      String            @default("open") // open, closed
+  created_at  DateTime          @default(now())
+  updated_at  DateTime          @updatedAt
+  bin_counts  BinCount[]
+  submissions CountSubmission[]
+
+  @@unique([farm_id, period_date])
+  @@map("count_periods")
+}
+
+model CountSubmission {
+  id              String            @id @default(uuid())
+  farm_id         String
+  count_period_id String
+  location_id     String
+  submitted_by    String?
+  status          String            @default("draft") // draft, submitted, approved, rejected
+  notes           String?
+  created_at      DateTime          @default(now())
+  updated_at      DateTime          @updatedAt
+  count_period    CountPeriod       @relation(fields: [count_period_id], references: [id], onDelete: Cascade)
+  location        InventoryLocation @relation(fields: [location_id], references: [id], onDelete: Cascade)
+
+  @@unique([farm_id, count_period_id, location_id])
+  @@map("count_submissions")
+}
+
+model BinCount {
+  id              String       @id @default(uuid())
+  farm_id         String
+  count_period_id String
+  bin_id          String
+  commodity_id    String?
+  bushels         Float        @default(0)
+  kg              Float        @default(0)
+  crop_year       Int?
+  notes           String?
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  count_period    CountPeriod  @relation(fields: [count_period_id], references: [id], onDelete: Cascade)
+  bin             InventoryBin @relation(fields: [bin_id], references: [id], onDelete: Cascade)
+  commodity       Commodity?   @relation(fields: [commodity_id], references: [id])
+
+  @@unique([farm_id, count_period_id, bin_id])
+  @@map("bin_counts")
+}
+
+model Contract {
+  id             String     @id @default(uuid())
+  farm_id        String
+  contract_number String?
+  buyer          String
+  commodity_id   String
+  contracted_mt  Float
+  price_per_mt   Float?
+  status         String     @default("open") // open, fulfilled, cancelled
+  notes          String?
+  created_at     DateTime   @default(now())
+  updated_at     DateTime   @updatedAt
+  commodity      Commodity  @relation(fields: [commodity_id], references: [id])
+  deliveries     Delivery[]
+
+  @@map("contracts")
+}
+
+model Delivery {
+  id            String   @id @default(uuid())
+  farm_id       String
+  contract_id   String
+  mt_delivered  Float
+  delivery_date DateTime @db.Date
+  ticket_number String?
+  notes         String?
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+  contract      Contract @relation(fields: [contract_id], references: [id], onDelete: Cascade)
+
+  @@map("deliveries")
+}
