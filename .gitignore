@@ -4,3 +4,16 @@ dist/
 *.log
 .DS_Store
 .claude/
+
+# Data files
+*.xlsx
+*.csv
+*.pdf
+*.zip
+monthly_ops_extraction.txt
+
+# Test data
+csv for testing*/
+
+# Obsidian vault
+obsidian C2 Farms/
