@@ -10,6 +10,7 @@ import Dashboard from './pages/Dashboard';
 import OperationalData from './pages/OperationalData';
 import ChartOfAccounts from './pages/ChartOfAccounts';
 import Settings from './pages/Settings';
+import UniversalSettings from './pages/UniversalSettings';
 import ErrorBoundary from './components/shared/ErrorBoundary';
 import { Typography, Box } from '@mui/material';
 
@@ -30,6 +31,13 @@ function LoginRoute() {
 function AdminRoute({ children }) {
   const { isAdmin } = useFarm();
   if (!isAdmin) return <Navigate to="/assumptions" />;
+  return children;
+}
+
+function AnyFarmAdminRoute({ children }) {
+  const { farms } = useFarm();
+  const isAnyAdmin = farms.some(f => f.role === 'admin');
+  if (!isAnyAdmin) return <Navigate to="/assumptions" />;
   return children;
 }
 
@@ -64,6 +72,7 @@ export default function App() {
                       <Route path="/dashboard" element={<Dashboard />} />
                       <Route path="/chart-of-accounts" element={<ChartOfAccounts />} />
                       <Route path="/settings" element={<AdminRoute><Settings /></AdminRoute>} />
+                      <Route path="/universal-settings" element={<AnyFarmAdminRoute><UniversalSettings /></AnyFarmAdminRoute>} />
                       <Route path="*" element={<NotFound />} />
                     </Routes>
                   </AppLayout>

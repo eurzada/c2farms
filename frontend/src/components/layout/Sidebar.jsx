@@ -9,6 +9,7 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
+import SupervisorAccountIcon from '@mui/icons-material/SupervisorAccount';
 import { useFarm } from '../../contexts/FarmContext';
 
 const NAV_ITEMS = [
@@ -23,7 +24,8 @@ const NAV_ITEMS = [
 export default function Sidebar({ width }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAdmin } = useFarm();
+  const { isAdmin, farms } = useFarm();
+  const isAnyFarmAdmin = farms.some(f => f.role === 'admin');
 
   return (
     <Drawer
@@ -61,24 +63,42 @@ export default function Sidebar({ width }) {
           </ListItemButton>
         ))}
       </List>
-      {isAdmin && (
+      {(isAdmin || isAnyFarmAdmin) && (
         <>
           <Divider />
           <List>
-            <ListItemButton
-              selected={location.pathname === '/settings'}
-              onClick={() => navigate('/settings')}
-              sx={{
-                mx: 1,
-                borderRadius: 2,
-                mb: 0.5,
-                '&.Mui-selected': { bgcolor: 'primary.light', color: 'white' },
-                '&.Mui-selected:hover': { bgcolor: 'primary.main' },
-              }}
-            >
-              <ListItemIcon sx={{ minWidth: 36, color: 'inherit' }}><AdminPanelSettingsIcon /></ListItemIcon>
-              <ListItemText primary="Settings" primaryTypographyProps={{ fontSize: 14 }} />
-            </ListItemButton>
+            {isAdmin && (
+              <ListItemButton
+                selected={location.pathname === '/settings'}
+                onClick={() => navigate('/settings')}
+                sx={{
+                  mx: 1,
+                  borderRadius: 2,
+                  mb: 0.5,
+                  '&.Mui-selected': { bgcolor: 'primary.light', color: 'white' },
+                  '&.Mui-selected:hover': { bgcolor: 'primary.main' },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 36, color: 'inherit' }}><AdminPanelSettingsIcon /></ListItemIcon>
+                <ListItemText primary="Settings" primaryTypographyProps={{ fontSize: 14 }} />
+              </ListItemButton>
+            )}
+            {isAnyFarmAdmin && (
+              <ListItemButton
+                selected={location.pathname === '/universal-settings'}
+                onClick={() => navigate('/universal-settings')}
+                sx={{
+                  mx: 1,
+                  borderRadius: 2,
+                  mb: 0.5,
+                  '&.Mui-selected': { bgcolor: 'primary.light', color: 'white' },
+                  '&.Mui-selected:hover': { bgcolor: 'primary.main' },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 36, color: 'inherit' }}><SupervisorAccountIcon /></ListItemIcon>
+                <ListItemText primary="All Users" primaryTypographyProps={{ fontSize: 14 }} />
+              </ListItemButton>
+            )}
           </List>
         </>
       )}

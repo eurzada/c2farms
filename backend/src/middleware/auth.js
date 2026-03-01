@@ -55,6 +55,25 @@ export function authorize(...roles) {
   };
 }
 
+// Verify the authenticated user is admin on at least one farm
+export async function requireAnyFarmAdmin(req, res, next) {
+  try {
+    const adminRoles = await prisma.userFarmRole.findMany({
+      where: { user_id: req.userId, role: 'admin' },
+      select: { farm_id: true },
+    });
+
+    if (adminRoles.length === 0) {
+      return res.status(403).json({ error: 'Admin access required on at least one farm' });
+    }
+
+    req.adminFarmIds = adminRoles.map(r => r.farm_id);
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
 // Farm-level role check — must be used AFTER requireFarmAccess (which sets req.farmRole)
 export function requireRole(...allowedRoles) {
   return (req, res, next) => {
