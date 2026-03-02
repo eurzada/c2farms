@@ -1,9 +1,12 @@
 import { Router } from 'express';
+import multer from 'multer';
 import prisma from '../config/database.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { convertBuToKg } from '../services/inventoryService.js';
+import { importInventoryFromExcel } from '../services/inventoryImportService.js';
 
 const router = Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // GET commodities for a farm
 router.get('/:farmId/inventory/commodities', authenticate, async (req, res, next) => {
@@ -285,6 +288,20 @@ router.post('/:farmId/inventory/bin-counts/:periodId', authenticate, requireRole
     }
 
     res.json({ counts: results, total: results.length });
+  } catch (err) { next(err); }
+});
+
+// POST import inventory from Excel
+router.post('/:farmId/inventory/import', authenticate, requireRole('admin', 'manager'), upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+    if (!req.file.originalname.match(/\.xlsx?$/i)) {
+      return res.status(400).json({ error: 'Only .xlsx files are supported' });
+    }
+    const result = await importInventoryFromExcel(req.params.farmId, req.file.buffer);
+    res.json(result);
   } catch (err) { next(err); }
 });
 

@@ -25,6 +25,7 @@
     "express-rate-limit": "^8.2.1",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
+    "multer": "^2.1.0",
     "pdfmake": "^0.2.12",
     "socket.io": "^4.8.0",
     "uuid": "^10.0.0"

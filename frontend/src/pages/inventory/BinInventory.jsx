@@ -1,12 +1,15 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { AgGridReact } from 'ag-grid-react';
-import { Box, Stack, FormControl, InputLabel, Select, MenuItem, Typography, Chip } from '@mui/material';
+import { Box, Stack, FormControl, InputLabel, Select, MenuItem, Typography, Chip, Button, Divider } from '@mui/material';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { useFarm } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import { getGridColors } from '../../utils/gridColors';
 import api from '../../services/api';
+import ExcelImportDialog from '../../components/inventory/ExcelImportDialog';
+import InventoryExportButtons from '../../components/inventory/InventoryExportButtons';
 
 function StatusCell({ value }) {
   const colorMap = { active: 'success', empty: 'default', committed: 'warning', transit: 'info' };
@@ -14,7 +17,7 @@ function StatusCell({ value }) {
 }
 
 export default function BinInventory() {
-  const { currentFarm } = useFarm();
+  const { currentFarm, canEdit } = useFarm();
   const { mode } = useThemeMode();
   const gridRef = useRef();
   const colors = useMemo(() => getGridColors(mode), [mode]);
@@ -23,6 +26,12 @@ export default function BinInventory() {
   const [locations, setLocations] = useState([]);
   const [commodities, setCommodities] = useState([]);
   const [filters, setFilters] = useState({ location: '', commodity: '', status: '' });
+  const [importOpen, setImportOpen] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const handleImportComplete = useCallback(() => {
+    setReloadKey(k => k + 1);
+  }, []);
 
   useEffect(() => {
     if (!currentFarm) return;
@@ -33,7 +42,7 @@ export default function BinInventory() {
       setLocations(locRes.data.locations || []);
       setCommodities(comRes.data.commodities || []);
     });
-  }, [currentFarm]);
+  }, [currentFarm, reloadKey]);
 
   useEffect(() => {
     if (!currentFarm) return;
@@ -43,7 +52,7 @@ export default function BinInventory() {
     if (filters.status) params.set('status', filters.status);
     api.get(`/api/farms/${currentFarm.id}/inventory/bins?${params}`)
       .then(res => setBins(res.data.bins || []));
-  }, [currentFarm, filters]);
+  }, [currentFarm, filters, reloadKey]);
 
   const columnDefs = useMemo(() => [
     { field: 'location_name', headerName: 'Location', rowGroup: true, hide: true },
@@ -72,7 +81,23 @@ export default function BinInventory() {
 
   return (
     <Box>
-      <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>Bin Inventory</Typography>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
+        <Typography variant="h5" sx={{ fontWeight: 600 }}>Bin Inventory</Typography>
+        <Stack direction="row" spacing={1} alignItems="center">
+          {canEdit && (
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<UploadFileIcon />}
+              onClick={() => setImportOpen(true)}
+            >
+              Import
+            </Button>
+          )}
+          <Divider orientation="vertical" flexItem />
+          <InventoryExportButtons farmId={currentFarm?.id} filters={filters} />
+        </Stack>
+      </Stack>
 
       {/* Filter toolbar */}
       <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
@@ -113,6 +138,15 @@ export default function BinInventory() {
           getRowId={p => p.data?.id}
         />
       </Box>
+
+      {canEdit && (
+        <ExcelImportDialog
+          open={importOpen}
+          onClose={() => setImportOpen(false)}
+          farmId={currentFarm?.id}
+          onImportComplete={handleImportComplete}
+        />
+      )}
     </Box>
   );
 }

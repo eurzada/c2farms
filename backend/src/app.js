@@ -23,6 +23,7 @@ import inventoryRoutes from './routes/inventory.js';
 import contractRoutes from './routes/contracts.js';
 import reconciliationRoutes from './routes/reconciliation.js';
 import inventoryDashboardRoutes from './routes/inventoryDashboard.js';
+import inventoryExportsRoutes from './routes/inventoryExports.js';
 
 import { errorHandler } from './middleware/errorHandler.js';
 import { authenticate, requireFarmAccess } from './middleware/auth.js';
@@ -94,6 +95,7 @@ app.use('/api/farms', inventoryRoutes);
 app.use('/api/farms', contractRoutes);
 app.use('/api/farms', reconciliationRoutes);
 app.use('/api/farms', inventoryDashboardRoutes);
+app.use('/api/farms', inventoryExportsRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
