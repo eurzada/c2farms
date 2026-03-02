@@ -22,6 +22,7 @@ router.get('/:farmId/settings/users', ...adminOnly, async (req, res, next) => {
       email: fr.user.email,
       name: fr.user.name,
       role: fr.role,
+      modules: fr.modules || ['forecast', 'inventory'],
     }));
 
     const invites = await prisma.farmInvite.findMany({
@@ -92,29 +93,40 @@ router.post('/:farmId/settings/users/invite', ...adminOnly, async (req, res, nex
 router.patch('/:farmId/settings/users/:userId', ...adminOnly, async (req, res, next) => {
   try {
     const { farmId, userId } = req.params;
-    const { role } = req.body;
+    const { role, modules } = req.body;
 
-    const validRoles = ['admin', 'manager', 'viewer'];
-    if (!role || !validRoles.includes(role)) {
-      return res.status(400).json({ error: 'Valid role is required (admin, manager, viewer)' });
+    const updateData = {};
+
+    if (role) {
+      const validRoles = ['admin', 'manager', 'viewer'];
+      if (!validRoles.includes(role)) {
+        return res.status(400).json({ error: 'Valid role is required (admin, manager, viewer)' });
+      }
+
+      // Prevent admin from demoting themselves if they're the only admin
+      if (userId === req.userId && role !== 'admin') {
+        const adminCount = await prisma.userFarmRole.count({
+          where: { farm_id: farmId, role: 'admin' },
+        });
+        if (adminCount <= 1) {
+          return res.status(400).json({ error: 'Cannot remove the last admin' });
+        }
+      }
+      updateData.role = role;
     }
 
-    // Prevent admin from demoting themselves if they're the only admin
-    if (userId === req.userId && role !== 'admin') {
-      const adminCount = await prisma.userFarmRole.count({
-        where: { farm_id: farmId, role: 'admin' },
-      });
-      if (adminCount <= 1) {
-        return res.status(400).json({ error: 'Cannot remove the last admin' });
-      }
+    if (modules !== undefined) {
+      const validModules = ['forecast', 'inventory'];
+      const filtered = modules.filter(m => validModules.includes(m));
+      updateData.modules = filtered;
     }
 
     const updated = await prisma.userFarmRole.update({
       where: { user_id_farm_id: { user_id: userId, farm_id: farmId } },
-      data: { role },
+      data: updateData,
     });
 
-    res.json({ message: 'Role updated', role: updated.role });
+    res.json({ message: 'User updated', role: updated.role, modules: updated.modules });
   } catch (err) {
     if (err.code === 'P2025') {
       return res.status(404).json({ error: 'User not found on this farm' });

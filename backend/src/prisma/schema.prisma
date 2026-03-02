@@ -35,6 +35,7 @@ model UserFarmRole {
   user_id String
   farm_id String
   role    String @default("admin")
+  modules Json   @default("[\"forecast\",\"inventory\"]") // which modules this user can access
   user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
   farm    Farm   @relation(fields: [farm_id], references: [id], onDelete: Cascade)
 

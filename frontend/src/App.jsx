@@ -47,6 +47,12 @@ function AnyFarmAdminRoute({ children }) {
   return children;
 }
 
+function ModuleRoute({ module, children }) {
+  const { hasModule } = useFarm();
+  if (!hasModule(module)) return <Navigate to="/assumptions" />;
+  return children;
+}
+
 function NotFound() {
   return (
     <Box sx={{ p: 4, textAlign: 'center' }}>
@@ -79,12 +85,12 @@ export default function App() {
                       <Route path="/chart-of-accounts" element={<ChartOfAccounts />} />
                       <Route path="/settings" element={<AdminRoute><Settings /></AdminRoute>} />
                       <Route path="/universal-settings" element={<AnyFarmAdminRoute><UniversalSettings /></AnyFarmAdminRoute>} />
-                      <Route path="/inventory" element={<Navigate to="/inventory/dashboard" />} />
-                      <Route path="/inventory/dashboard" element={<InventoryLayout><InventoryDashboard /></InventoryLayout>} />
-                      <Route path="/inventory/bins" element={<InventoryLayout><BinInventory /></InventoryLayout>} />
-                      <Route path="/inventory/contracts" element={<InventoryLayout><Contracts /></InventoryLayout>} />
-                      <Route path="/inventory/recon" element={<InventoryLayout><Reconciliation /></InventoryLayout>} />
-                      <Route path="/inventory/count" element={<InventoryLayout><FarmManagerView /></InventoryLayout>} />
+                      <Route path="/inventory" element={<ModuleRoute module="inventory"><Navigate to="/inventory/dashboard" /></ModuleRoute>} />
+                      <Route path="/inventory/dashboard" element={<ModuleRoute module="inventory"><InventoryLayout><InventoryDashboard /></InventoryLayout></ModuleRoute>} />
+                      <Route path="/inventory/bins" element={<ModuleRoute module="inventory"><InventoryLayout><BinInventory /></InventoryLayout></ModuleRoute>} />
+                      <Route path="/inventory/contracts" element={<ModuleRoute module="inventory"><InventoryLayout><Contracts /></InventoryLayout></ModuleRoute>} />
+                      <Route path="/inventory/recon" element={<ModuleRoute module="inventory"><InventoryLayout><Reconciliation /></InventoryLayout></ModuleRoute>} />
+                      <Route path="/inventory/count" element={<ModuleRoute module="inventory"><InventoryLayout><FarmManagerView /></InventoryLayout></ModuleRoute>} />
                       <Route path="*" element={<NotFound />} />
                     </Routes>
                   </AppLayout>

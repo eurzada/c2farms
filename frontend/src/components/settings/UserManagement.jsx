@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Button, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, Paper, Select, MenuItem, IconButton, Chip, Alert,
+  Checkbox, FormControlLabel, Stack,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
@@ -42,6 +43,18 @@ export default function UserManagement() {
       fetchUsers();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to update role');
+    }
+  };
+
+  const handleModuleToggle = async (userId, module, currentModules) => {
+    const modules = currentModules.includes(module)
+      ? currentModules.filter(m => m !== module)
+      : [...currentModules, module];
+    try {
+      await api.patch(`/api/farms/${farmId}/settings/users/${userId}`, { modules });
+      fetchUsers();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to update modules');
     }
   };
 
@@ -86,6 +99,7 @@ export default function UserManagement() {
               <TableCell>Name</TableCell>
               <TableCell>Email</TableCell>
               <TableCell>Role</TableCell>
+              <TableCell>Modules</TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
@@ -106,6 +120,18 @@ export default function UserManagement() {
                     <MenuItem value="manager">Manager</MenuItem>
                     <MenuItem value="viewer">Viewer</MenuItem>
                   </Select>
+                </TableCell>
+                <TableCell>
+                  <Stack direction="row" spacing={0}>
+                    <FormControlLabel
+                      control={<Checkbox size="small" checked={(u.modules || ['forecast', 'inventory']).includes('forecast')} onChange={() => handleModuleToggle(u.id, 'forecast', u.modules || ['forecast', 'inventory'])} />}
+                      label={<Typography variant="caption">Forecast</Typography>}
+                    />
+                    <FormControlLabel
+                      control={<Checkbox size="small" checked={(u.modules || ['forecast', 'inventory']).includes('inventory')} onChange={() => handleModuleToggle(u.id, 'inventory', u.modules || ['forecast', 'inventory'])} />}
+                      label={<Typography variant="caption">Inventory</Typography>}
+                    />
+                  </Stack>
                 </TableCell>
                 <TableCell align="right">
                   <IconButton

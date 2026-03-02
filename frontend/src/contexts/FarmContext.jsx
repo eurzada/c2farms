@@ -16,6 +16,8 @@ export function FarmProvider({ children }) {
   const currentRole = currentFarm?.role || 'viewer';
   const isAdmin = currentRole === 'admin';
   const canEdit = currentRole === 'admin' || currentRole === 'manager';
+  const modules = currentFarm?.modules || ['forecast', 'inventory'];
+  const hasModule = (mod) => modules.includes(mod);
 
   // Initialize current farm from authFarms, respecting localStorage persistence
   useEffect(() => {
@@ -58,8 +60,8 @@ export function FarmProvider({ children }) {
 
   const value = useMemo(() => ({
     farms: authFarms, currentFarm, setCurrentFarm, fiscalYear, setFiscalYear, refreshFarms,
-    currentRole, isAdmin, canEdit,
-  }), [authFarms, currentFarm, fiscalYear, refreshFarms, currentRole, isAdmin, canEdit]);
+    currentRole, isAdmin, canEdit, modules, hasModule,
+  }), [authFarms, currentFarm, fiscalYear, refreshFarms, currentRole, isAdmin, canEdit, modules]);
 
   return (
     <FarmContext.Provider value={value}>

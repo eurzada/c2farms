@@ -14,20 +14,22 @@ import SupervisorAccountIcon from '@mui/icons-material/SupervisorAccount';
 import { useFarm } from '../../contexts/FarmContext';
 
 const NAV_ITEMS = [
-  { label: '1. Yield & Assumptions', path: '/assumptions', icon: <SettingsIcon /> },
-  { label: '2. Cost Forecast', path: '/cost-forecast', icon: <AccountBalanceIcon /> },
-  { label: '3. Per-Unit', path: '/per-unit', icon: <TableChartIcon /> },
-  { label: '4. Operations', path: '/operations', icon: <PrecisionManufacturingIcon /> },
-  { label: '5. Dashboard', path: '/dashboard', icon: <DashboardIcon /> },
-  { label: '6. Grain Control', path: '/inventory', icon: <WarehouseIcon /> },
-  { label: 'Chart of Accounts', path: '/chart-of-accounts', icon: <ListAltIcon /> },
+  { label: '1. Yield & Assumptions', path: '/assumptions', icon: <SettingsIcon />, module: 'forecast' },
+  { label: '2. Cost Forecast', path: '/cost-forecast', icon: <AccountBalanceIcon />, module: 'forecast' },
+  { label: '3. Per-Unit', path: '/per-unit', icon: <TableChartIcon />, module: 'forecast' },
+  { label: '4. Operations', path: '/operations', icon: <PrecisionManufacturingIcon />, module: 'forecast' },
+  { label: '5. Dashboard', path: '/dashboard', icon: <DashboardIcon />, module: 'forecast' },
+  { label: '6. Grain Control', path: '/inventory', icon: <WarehouseIcon />, module: 'inventory' },
+  { label: 'Chart of Accounts', path: '/chart-of-accounts', icon: <ListAltIcon />, module: 'forecast' },
 ];
 
 export default function Sidebar({ width }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAdmin, farms } = useFarm();
+  const { isAdmin, farms, hasModule } = useFarm();
   const isAnyFarmAdmin = farms.some(f => f.role === 'admin');
+
+  const visibleItems = NAV_ITEMS.filter(item => !item.module || hasModule(item.module));
 
   return (
     <Drawer
@@ -47,7 +49,7 @@ export default function Sidebar({ width }) {
       </Box>
       <Divider />
       <List sx={{ flexGrow: 1 }}>
-        {NAV_ITEMS.map(item => (
+        {visibleItems.map(item => (
           <ListItemButton
             key={item.path}
             selected={location.pathname === item.path || (item.path === '/inventory' && location.pathname.startsWith('/inventory'))}
