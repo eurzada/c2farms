@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import ExcelJS from 'exceljs';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -34,8 +34,8 @@ const LOCATIONS = [
   { name: 'LGX', code: 'LGX', cluster: 'transit' },
 ];
 
-// Map Excel commodity names to our codes
-const COMMODITY_MAP = {
+// Map commodity names to codes (for JSON data)
+const COMMODITY_NAME_MAP = {
   'Spring Wheat': 'CWRS',
   'Durum': 'CWAD',
   'Chickpeas': 'CHKP',
@@ -64,7 +64,7 @@ const CONTRACT_COMMODITY_MAP = {
   'Barley': 'BRLY',
 };
 
-// Normalize bin type from Excel
+// Normalize bin type
 function normalizeBinType(raw) {
   if (!raw) return 'hopper';
   const t = raw.toString().trim().toLowerCase();
@@ -77,16 +77,28 @@ function normalizeBinType(raw) {
 }
 
 function convertBuToKg(bushels, lbsPerBu) {
-  return bushels * lbsPerBu * 0.45359237; // bushels × lbs/bu × kg/lb = kg
+  return bushels * lbsPerBu * 0.45359237;
+}
+
+function loadJsonData() {
+  const jsonPath = path.join(__dirname, 'inventory-seed-data.json');
+  if (!fs.existsSync(jsonPath)) return null;
+  console.log('Loading from inventory-seed-data.json...');
+  return JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
 }
 
 async function main() {
   console.log('Seeding inventory data...');
 
+  const jsonData = loadJsonData();
+  if (!jsonData) {
+    console.error('inventory-seed-data.json not found. Run the export script first.');
+    process.exit(1);
+  }
+
   // Find or create the farm
   let farm = await prisma.farm.findFirst({ where: { name: 'Prairie Fields Farm' } });
   if (!farm) {
-    // Use first existing farm, or create one
     farm = await prisma.farm.findFirst();
     if (!farm) {
       farm = await prisma.farm.create({ data: { name: 'Prairie Fields Farm' } });
@@ -122,166 +134,118 @@ async function main() {
   }
   console.log(`  ${Object.keys(locationMap).length} locations upserted`);
 
-  // 3. Read Excel workbook
-  const xlPath = path.join(__dirname, '../../../2026 SK Inventory.xlsx');
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(xlPath);
-
-  // Use Dec sheet as the master bin list (most complete)
-  const decSheet = wb.getWorksheet('Dec 31, 25');
-  if (!decSheet) {
-    console.error('Dec 31, 25 sheet not found');
-    process.exit(1);
-  }
-
-  // 3. Upsert Bins from Dec sheet
+  // 3. Determine unique bins and periods from JSON data
   console.log('\n3. Seeding bins...');
-  const binMap = {}; // key: "Farm|BinNumber" → record
+  const binMap = {};
   let binCount = 0;
-  for (let r = 2; r <= decSheet.rowCount; r++) {
-    const row = decSheet.getRow(r);
-    const farmName = row.getCell(1).value?.toString().trim();
-    const binNum = row.getCell(2).value;
-    const binType = row.getCell(3).value;
-    const capacity = row.getCell(4).value;
 
-    if (!farmName || !locationMap[farmName]) continue;
-    const location = locationMap[farmName];
+  // Collect unique bins from all period data
+  const seenBins = new Set();
+  for (const row of jsonData.bins) {
+    const key = `${row.f}|${row.n}`;
+    if (seenBins.has(key)) continue;
+    seenBins.add(key);
 
-    // Skip rows with no bin number — use row index as fallback
-    const binNumber = binNum != null ? binNum.toString().trim() : `R${r}`;
-    if (!binNumber) continue;
+    const location = locationMap[row.f];
+    if (!location) continue;
 
-    const commodityShort = (row.getCell(5).value || row.getCell(6).value)?.toString().trim();
-    const commodityCode = commodityShort ? COMMODITY_MAP[commodityShort] : null;
+    const commodityCode = row.c ? COMMODITY_NAME_MAP[row.c] : null;
     const commodityId = commodityCode ? commodityMap[commodityCode]?.id : null;
 
-    const key = `${farmName}|${binNumber}`;
-    if (!binMap[key]) {
-      const record = await prisma.inventoryBin.upsert({
-        where: {
-          farm_id_location_id_bin_number: {
-            farm_id: farmId,
-            location_id: location.id,
-            bin_number: binNumber,
-          },
-        },
-        update: {
-          bin_type: normalizeBinType(binType),
-          capacity_bu: capacity ? parseFloat(capacity) : null,
-          commodity_id: commodityId,
-        },
-        create: {
+    const record = await prisma.inventoryBin.upsert({
+      where: {
+        farm_id_location_id_bin_number: {
           farm_id: farmId,
           location_id: location.id,
-          bin_number: binNumber,
-          bin_type: normalizeBinType(binType),
-          capacity_bu: capacity ? parseFloat(capacity) : null,
-          commodity_id: commodityId,
+          bin_number: row.n,
         },
-      });
-      binMap[key] = record;
-      binCount++;
-    }
+      },
+      update: {
+        bin_type: normalizeBinType(row.t),
+        capacity_bu: row.cap ? parseFloat(row.cap) : null,
+        commodity_id: commodityId,
+      },
+      create: {
+        farm_id: farmId,
+        location_id: location.id,
+        bin_number: row.n,
+        bin_type: normalizeBinType(row.t),
+        capacity_bu: row.cap ? parseFloat(row.cap) : null,
+        commodity_id: commodityId,
+      },
+    });
+    binMap[key] = record;
+    binCount++;
   }
   console.log(`  ${binCount} bins upserted`);
 
   // 4. Create Count Periods
   console.log('\n4. Seeding count periods...');
-  const periods = [
-    { date: new Date('2025-10-31'), status: 'closed' },
-    { date: new Date('2025-11-30'), status: 'closed' },
-    { date: new Date('2025-12-31'), status: 'open' },
-  ];
+  const periodDates = [...new Set(jsonData.bins.map(r => r.p))].sort();
   const periodMap = {};
-  for (const p of periods) {
+  for (const dateStr of periodDates) {
+    const isLast = dateStr === periodDates[periodDates.length - 1];
     const record = await prisma.countPeriod.upsert({
-      where: { farm_id_period_date: { farm_id: farmId, period_date: p.date } },
-      update: { status: p.status, crop_year: 2025 },
-      create: { farm_id: farmId, period_date: p.date, crop_year: 2025, status: p.status },
+      where: { farm_id_period_date: { farm_id: farmId, period_date: new Date(dateStr) } },
+      update: { status: isLast ? 'open' : 'closed', crop_year: 2025 },
+      create: { farm_id: farmId, period_date: new Date(dateStr), crop_year: 2025, status: isLast ? 'open' : 'closed' },
     });
-    periodMap[p.date.toISOString().slice(0, 10)] = record;
+    periodMap[dateStr] = record;
   }
   console.log(`  ${Object.keys(periodMap).length} count periods upserted`);
 
-  // 5. Seed BinCounts from each snapshot sheet
-  const sheetConfig = [
-    { name: 'Oct 31, 25', periodKey: '2025-10-31' },
-    { name: 'Nov 30, 25', periodKey: '2025-11-30' },
-    { name: 'Dec 31, 25', periodKey: '2025-12-31' },
-  ];
-
+  // 5. Seed BinCounts
   console.log('\n5. Seeding bin counts...');
   let totalCounts = 0;
-  for (const sc of sheetConfig) {
-    const sheet = wb.getWorksheet(sc.name);
-    if (!sheet) {
-      console.warn(`  Sheet "${sc.name}" not found, skipping`);
-      continue;
-    }
-    const period = periodMap[sc.periodKey];
-    let sheetCounts = 0;
+  const countsByPeriod = {};
 
-    for (let r = 2; r <= sheet.rowCount; r++) {
-      const row = sheet.getRow(r);
-      const farmName = row.getCell(1).value?.toString().trim();
-      const binNum = row.getCell(2).value;
-      const bushelsRaw = row.getCell(7).value;
-      const cropYear = row.getCell(9).value;
-      const notes = row.getCell(10).value?.toString().trim() || null;
+  for (const row of jsonData.bins) {
+    const key = `${row.f}|${row.n}`;
+    const bin = binMap[key];
+    const period = periodMap[row.p];
+    if (!bin || !period) continue;
 
-      if (!farmName || !locationMap[farmName]) continue;
+    const bushels = typeof row.bu === 'number' ? row.bu : 0;
+    const commodityCode = row.c ? COMMODITY_NAME_MAP[row.c] : null;
+    const commodity = commodityCode ? commodityMap[commodityCode] : null;
+    const lbsPerBu = commodity?.lbs_per_bu || 60;
+    const kg = convertBuToKg(bushels, lbsPerBu);
 
-      const binNumber = binNum != null ? binNum.toString().trim() : `R${r}`;
-      const key = `${farmName}|${binNumber}`;
-      const bin = binMap[key];
-      if (!bin) continue;
-
-      const bushels = typeof bushelsRaw === 'number' ? bushelsRaw : 0;
-
-      // Determine commodity for this count
-      const commodityShort = (row.getCell(5).value || row.getCell(6).value)?.toString().trim();
-      const commodityCode = commodityShort ? COMMODITY_MAP[commodityShort] : null;
-      const commodity = commodityCode ? commodityMap[commodityCode] : null;
-
-      // Compute kg from bushels
-      const lbsPerBu = commodity?.lbs_per_bu || 60;
-      const kg = convertBuToKg(bushels, lbsPerBu);
-
-      await prisma.binCount.upsert({
-        where: {
-          farm_id_count_period_id_bin_id: {
-            farm_id: farmId,
-            count_period_id: period.id,
-            bin_id: bin.id,
-          },
-        },
-        update: {
-          commodity_id: commodity?.id || null,
-          bushels,
-          kg,
-          crop_year: cropYear ? parseInt(cropYear) : null,
-          notes,
-        },
-        create: {
+    await prisma.binCount.upsert({
+      where: {
+        farm_id_count_period_id_bin_id: {
           farm_id: farmId,
           count_period_id: period.id,
           bin_id: bin.id,
-          commodity_id: commodity?.id || null,
-          bushels,
-          kg,
-          crop_year: cropYear ? parseInt(cropYear) : null,
-          notes,
         },
-      });
-      sheetCounts++;
-    }
-    totalCounts += sheetCounts;
-    console.log(`  ${sc.name}: ${sheetCounts} bin counts`);
+      },
+      update: {
+        commodity_id: commodity?.id || null,
+        bushels,
+        kg,
+        crop_year: row.cy ? parseInt(row.cy) : null,
+        notes: row.no || null,
+      },
+      create: {
+        farm_id: farmId,
+        count_period_id: period.id,
+        bin_id: bin.id,
+        commodity_id: commodity?.id || null,
+        bushels,
+        kg,
+        crop_year: row.cy ? parseInt(row.cy) : null,
+        notes: row.no || null,
+      },
+    });
+    totalCounts++;
+    countsByPeriod[row.p] = (countsByPeriod[row.p] || 0) + 1;
+  }
+  for (const [p, c] of Object.entries(countsByPeriod)) {
+    console.log(`  ${p}: ${c} bin counts`);
   }
   console.log(`  Total: ${totalCounts} bin counts`);
 
-  // 6. Create auto-approved CountSubmissions for seed data
+  // 6. Create auto-approved CountSubmissions
   console.log('\n6. Seeding count submissions...');
   let subCount = 0;
   for (const p of Object.values(periodMap)) {
@@ -308,81 +272,58 @@ async function main() {
   }
   console.log(`  ${subCount} submissions upserted`);
 
-  // 7. Seed Contracts + Deliveries from YTD Contracts sheet
+  // 7. Seed Contracts + Deliveries
   console.log('\n7. Seeding contracts...');
-  // Clear existing contracts for idempotency
   await prisma.delivery.deleteMany({ where: { farm_id: farmId } });
   await prisma.contract.deleteMany({ where: { farm_id: farmId } });
-  const contractSheet = wb.getWorksheet('YTD Contracts');
-  if (!contractSheet) {
-    console.warn('  YTD Contracts sheet not found, skipping');
-  } else {
-    // Parse contracts — skip total rows
-    let contractCount = 0;
-    for (let r = 2; r <= contractSheet.rowCount; r++) {
-      const row = contractSheet.getRow(r);
-      const name = row.getCell(1).value?.toString().trim();
-      const cropRaw = row.getCell(2).value?.toString().trim();
-      const contractedRaw = row.getCell(3).value;
-      const tractionRaw = row.getCell(4).value;
-      const hauledRaw = row.getCell(5).value;
 
-      // Skip total/empty rows
-      if (!name || !cropRaw || name.includes('Total')) continue;
+  let contractCount = 0;
+  for (const c of jsonData.contracts) {
+    const commodityCode = CONTRACT_COMMODITY_MAP[c.crop];
+    if (!commodityCode || !commodityMap[commodityCode]) {
+      console.warn(`  Skipping contract "${c.name}" — unknown crop "${c.crop}"`);
+      continue;
+    }
 
-      const commodityCode = CONTRACT_COMMODITY_MAP[cropRaw];
-      if (!commodityCode || !commodityMap[commodityCode]) {
-        console.warn(`  Skipping contract "${name}" — unknown crop "${cropRaw}"`);
-        continue;
-      }
+    // Values in JSON are in kg, convert to MT
+    const contractedMt = (c.contracted || 0) / 1000;
+    const hauledMt = (c.hauled || 0) / 1000;
+    const status = hauledMt >= contractedMt && contractedMt > 0 ? 'fulfilled' : 'open';
 
-      // Extract contracted amount (kg) — use traction or contracted column
-      const contracted = typeof contractedRaw === 'number' ? contractedRaw :
-        (contractedRaw?.result ? contractedRaw.result : 0);
-      const hauled = typeof hauledRaw === 'number' ? hauledRaw :
-        (hauledRaw?.result ? hauledRaw.result : 0);
+    const contract = await prisma.contract.create({
+      data: {
+        farm_id: farmId,
+        contract_number: `C${String(contractCount + 1).padStart(3, '0')}`,
+        buyer: c.name,
+        commodity_id: commodityMap[commodityCode].id,
+        contracted_mt: contractedMt,
+        status,
+      },
+    });
 
-      // Values are in kg, convert to MT
-      const contractedMt = contracted / 1000;
-      const hauledMt = hauled / 1000;
-
-      const status = hauledMt >= contractedMt && contractedMt > 0 ? 'fulfilled' : 'open';
-
-      const contract = await prisma.contract.create({
+    if (hauledMt > 0) {
+      await prisma.delivery.create({
         data: {
           farm_id: farmId,
-          contract_number: `C${String(contractCount + 1).padStart(3, '0')}`,
-          buyer: name,
-          commodity_id: commodityMap[commodityCode].id,
-          contracted_mt: contractedMt,
-          status,
+          contract_id: contract.id,
+          mt_delivered: hauledMt,
+          delivery_date: new Date('2025-12-31'),
         },
       });
-
-      // Create delivery if hauled > 0
-      if (hauledMt > 0) {
-        await prisma.delivery.create({
-          data: {
-            farm_id: farmId,
-            contract_id: contract.id,
-            mt_delivered: hauledMt,
-            delivery_date: new Date('2025-12-31'),
-          },
-        });
-      }
-      contractCount++;
     }
-    console.log(`  ${contractCount} contracts seeded`);
+    contractCount++;
   }
+  console.log(`  ${contractCount} contracts seeded`);
 
   // Summary stats
   console.log('\n--- Summary ---');
-  const totalBushels = await prisma.binCount.aggregate({
-    where: { farm_id: farmId, count_period_id: periodMap['2025-12-31'].id },
+  const latestPeriod = periodMap[periodDates[periodDates.length - 1]];
+  const totalKg = await prisma.binCount.aggregate({
+    where: { farm_id: farmId, count_period_id: latestPeriod.id },
     _sum: { kg: true },
   });
-  const totalMt = (totalBushels._sum.kg || 0) / 1000;
-  console.log(`Total inventory (Dec 31): ${totalMt.toFixed(0)} MT`);
+  const totalMt = (totalKg._sum.kg || 0) / 1000;
+  console.log(`Total inventory (latest period): ${totalMt.toFixed(0)} MT`);
 
   const totalContracted = await prisma.contract.aggregate({
     where: { farm_id: farmId },
