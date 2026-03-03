@@ -20,7 +20,7 @@ const NAV_ITEMS = [
   { label: 'Per-Unit', path: '/per-unit', icon: <TableChartIcon />, module: 'forecast' },
   { label: 'Operations', path: '/operations', icon: <PrecisionManufacturingIcon />, module: 'forecast' },
   { label: 'Dashboard', path: '/dashboard', icon: <DashboardIcon />, module: 'forecast' },
-  { label: 'Grain Control', path: '/inventory', icon: <WarehouseIcon />, module: 'inventory' },
+  { label: 'Inventory Management', path: '/inventory', icon: <WarehouseIcon />, module: 'inventory' },
   { label: 'Grain Marketing', path: '/marketing', icon: <TrendingUpIcon />, module: 'marketing' },
   { label: 'Chart of Accounts', path: '/chart-of-accounts', icon: <ListAltIcon />, module: 'forecast' },
 ];

@@ -31,7 +31,7 @@ export default function InventoryDashboard() {
 
   return (
     <Box>
-      <Typography variant="h5" sx={{ mb: 3, fontWeight: 600 }}>Grain Control Centre</Typography>
+      <Typography variant="h5" sx={{ mb: 3, fontWeight: 600 }}>Inventory Management</Typography>
 
       {/* KPI Cards */}
       <Grid container spacing={2} sx={{ mb: 3 }}>
