@@ -48,7 +48,7 @@ npm run dev             # → http://localhost:5173
 | `manager@c2farms.com` | `password123` | manager |
 | `viewer@c2farms.com` | `password123` | viewer |
 
-Seed farm: **Prairie Fields Farm** (5,000 acres — Canola, Durum, Chickpeas, Lentils)
+Seed farm: **C2 Farms Ltd** (5,000 acres — Canola, Durum, Chickpeas, Lentils)
 
 ## Application Modules
 

@@ -6,7 +6,7 @@ async function main() {
   console.log('Seeding marketing module data...\n');
 
   // Find the farm
-  let farm = await prisma.farm.findFirst({ where: { name: 'Prairie Fields Farm' } });
+  let farm = await prisma.farm.findFirst({ where: { name: 'C2 Farms Ltd' } });
   if (!farm) {
     farm = await prisma.farm.findFirst();
     if (!farm) throw new Error('No farm found. Run main seed first.');

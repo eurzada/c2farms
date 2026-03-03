@@ -30,11 +30,11 @@ async function main() {
   }
 
   // Find or create the farm
-  let farm = await prisma.farm.findFirst({ where: { name: 'Prairie Fields Farm' } });
+  let farm = await prisma.farm.findFirst({ where: { name: 'C2 Farms Ltd' } });
   if (!farm) {
     farm = await prisma.farm.findFirst();
     if (!farm) {
-      farm = await prisma.farm.create({ data: { name: 'Prairie Fields Farm' } });
+      farm = await prisma.farm.create({ data: { name: 'C2 Farms Ltd' } });
     }
     console.log(`Using existing farm: ${farm.name}`);
   }

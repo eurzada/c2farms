@@ -23,10 +23,10 @@ async function main() {
   console.log(`User: ${user.email}`);
 
   // Create sample farm
-  let farm = await prisma.farm.findFirst({ where: { name: 'Prairie Fields Farm' } });
+  let farm = await prisma.farm.findFirst({ where: { name: 'C2 Farms Ltd' } });
   if (!farm) {
     farm = await prisma.farm.create({
-      data: { name: 'Prairie Fields Farm' },
+      data: { name: 'C2 Farms Ltd' },
     });
   }
   console.log(`Farm: ${farm.name} (${farm.id})`);
