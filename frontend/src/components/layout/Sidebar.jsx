@@ -15,13 +15,13 @@ import SupervisorAccountIcon from '@mui/icons-material/SupervisorAccount';
 import { useFarm } from '../../contexts/FarmContext';
 
 const NAV_ITEMS = [
-  { label: '1. Yield & Assumptions', path: '/assumptions', icon: <SettingsIcon />, module: 'forecast' },
-  { label: '2. Cost Forecast', path: '/cost-forecast', icon: <AccountBalanceIcon />, module: 'forecast' },
-  { label: '3. Per-Unit', path: '/per-unit', icon: <TableChartIcon />, module: 'forecast' },
-  { label: '4. Operations', path: '/operations', icon: <PrecisionManufacturingIcon />, module: 'forecast' },
-  { label: '5. Dashboard', path: '/dashboard', icon: <DashboardIcon />, module: 'forecast' },
-  { label: '6. Grain Control', path: '/inventory', icon: <WarehouseIcon />, module: 'inventory' },
-  { label: '7. Grain Marketing', path: '/marketing', icon: <TrendingUpIcon />, module: 'marketing' },
+  { label: 'Yield & Assumptions', path: '/assumptions', icon: <SettingsIcon />, module: 'forecast' },
+  { label: 'Cost Forecast', path: '/cost-forecast', icon: <AccountBalanceIcon />, module: 'forecast' },
+  { label: 'Per-Unit', path: '/per-unit', icon: <TableChartIcon />, module: 'forecast' },
+  { label: 'Operations', path: '/operations', icon: <PrecisionManufacturingIcon />, module: 'forecast' },
+  { label: 'Dashboard', path: '/dashboard', icon: <DashboardIcon />, module: 'forecast' },
+  { label: 'Grain Control', path: '/inventory', icon: <WarehouseIcon />, module: 'inventory' },
+  { label: 'Grain Marketing', path: '/marketing', icon: <TrendingUpIcon />, module: 'marketing' },
   { label: 'Chart of Accounts', path: '/chart-of-accounts', icon: <ListAltIcon />, module: 'forecast' },
 ];
 
