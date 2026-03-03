@@ -28,6 +28,7 @@ import marketingRoutes from './routes/marketing.js';
 import counterpartyRoutes from './routes/counterparties.js';
 import cashFlowRoutes from './routes/cashFlowEntries.js';
 import priceAlertRoutes from './routes/priceAlerts.js';
+import { fieldOpsGeneralRouter, fieldOpsFarmRouter } from './routes/fieldOps.js';
 
 import { errorHandler } from './middleware/errorHandler.js';
 import { authenticate, requireFarmAccess } from './middleware/auth.js';
@@ -64,10 +65,15 @@ const registerLimiter = rateLimit({
 
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 1000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later' },
+});
+
+// Health check — before rate limiter so Render health checks are never throttled
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 app.use('/api/', generalLimiter);
@@ -85,6 +91,8 @@ app.use('/api/farms', financialRoutes);
 app.use('/api/farms', forecastRoutes);
 app.use('/api/quickbooks', qbGeneralRouter);
 app.use('/api/farms', qbFarmRouter);
+app.use('/api/fieldops', fieldOpsGeneralRouter);
+app.use('/api/farms', fieldOpsFarmRouter);
 app.use('/api/farms', dashboardRoutes);
 app.use('/api/farms', exportsRoutes);
 app.use('/api/farms', agronomyRoutes);
@@ -104,10 +112,6 @@ app.use('/api/farms', marketingRoutes);
 app.use('/api/farms', counterpartyRoutes);
 app.use('/api/farms', cashFlowRoutes);
 app.use('/api/farms', priceAlertRoutes);
-
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
 
 // Serve frontend static files in production
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
