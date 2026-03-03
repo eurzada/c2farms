@@ -37,26 +37,34 @@ function ProtectedRoute({ children }) {
 function LoginRoute() {
   const { user, loading } = useAuth();
   if (loading) return null;
-  if (user) return <Navigate to="/assumptions" />;
+  if (user) return <SmartRedirect />;
   return <Login />;
+}
+
+function SmartRedirect() {
+  const { hasModule } = useFarm();
+  if (hasModule('forecast')) return <Navigate to="/assumptions" />;
+  if (hasModule('inventory')) return <Navigate to="/inventory" />;
+  if (hasModule('marketing')) return <Navigate to="/marketing" />;
+  return <Navigate to="/assumptions" />;
 }
 
 function AdminRoute({ children }) {
   const { isAdmin } = useFarm();
-  if (!isAdmin) return <Navigate to="/assumptions" />;
+  if (!isAdmin) return <SmartRedirect />;
   return children;
 }
 
 function AnyFarmAdminRoute({ children }) {
   const { farms } = useFarm();
   const isAnyAdmin = farms.some(f => f.role === 'admin');
-  if (!isAnyAdmin) return <Navigate to="/assumptions" />;
+  if (!isAnyAdmin) return <SmartRedirect />;
   return children;
 }
 
 function ModuleRoute({ module, children }) {
   const { hasModule } = useFarm();
-  if (!hasModule(module)) return <Navigate to="/assumptions" />;
+  if (!hasModule(module)) return <SmartRedirect />;
   return children;
 }
 
@@ -82,7 +90,7 @@ export default function App() {
                 <ProtectedRoute>
                   <AppLayout>
                     <Routes>
-                      <Route path="/" element={<Navigate to="/assumptions" />} />
+                      <Route path="/" element={<SmartRedirect />} />
                       <Route path="/assumptions" element={<Assumptions />} />
                       <Route path="/per-unit" element={<PerUnit />} />
                       <Route path="/cost-forecast" element={<Accounting />} />

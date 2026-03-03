@@ -49,7 +49,7 @@ export default function Reconciliation() {
   }, [currentFarm, fromPeriod, toPeriod]);
 
   const columnDefs = useMemo(() => [
-    { field: 'commodity', headerName: 'Commodity', flex: 1, minWidth: 150 },
+    { field: 'commodity', headerName: 'Commodity', width: 150 },
     { field: 'beginning_mt', headerName: 'Beginning MT', width: 140, valueFormatter: p => p.value?.toLocaleString(undefined, { maximumFractionDigits: 1 }) },
     { field: 'ending_mt', headerName: 'Ending MT', width: 130, valueFormatter: p => p.value?.toLocaleString(undefined, { maximumFractionDigits: 1 }) },
     { field: 'hauled_mt', headerName: 'Hauled MT', width: 130, valueFormatter: p => p.value?.toLocaleString(undefined, { maximumFractionDigits: 1 }) },

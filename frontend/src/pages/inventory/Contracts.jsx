@@ -54,7 +54,7 @@ export default function Contracts() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const columnDefs = useMemo(() => [
-    { field: 'buyer', headerName: 'Buyer', flex: 1, minWidth: 180 },
+    { field: 'buyer', headerName: 'Buyer', width: 180 },
     { field: 'commodity.name', headerName: 'Crop', width: 150 },
     { field: 'contracted_mt', headerName: 'Contract MT', width: 130, valueFormatter: p => p.value?.toLocaleString(undefined, { maximumFractionDigits: 1 }) },
     { field: 'hauled_mt', headerName: 'Hauled MT', width: 130, valueFormatter: p => p.value?.toLocaleString(undefined, { maximumFractionDigits: 1 }) },
