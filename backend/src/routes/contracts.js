@@ -2,6 +2,7 @@ import { Router } from 'express';
 import prisma from '../config/database.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { getAvailableToSell } from '../services/inventoryService.js';
+import { logAudit, diffChanges } from '../services/auditService.js';
 
 const router = Router();
 
@@ -66,6 +67,7 @@ router.post('/:farmId/contracts', authenticate, requireRole('admin', 'manager'),
       },
       include: { commodity: true },
     });
+    logAudit({ farmId, userId: req.userId, entityType: 'Contract', entityId: contract.id, action: 'create', changes: { buyer, commodity_id, contracted_mt: parseFloat(contracted_mt), price_per_mt: price_per_mt ? parseFloat(price_per_mt) : null, contract_number: contract_number || null } });
 
     res.status(201).json({ contract, warning });
   } catch (err) { next(err); }
@@ -75,6 +77,7 @@ router.post('/:farmId/contracts', authenticate, requireRole('admin', 'manager'),
 router.put('/:farmId/contracts/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { buyer, contracted_mt, price_per_mt, status, notes, contract_number } = req.body;
+    const oldContract = await prisma.contract.findUnique({ where: { id: req.params.id } });
     const contract = await prisma.contract.update({
       where: { id: req.params.id },
       data: {
@@ -87,6 +90,10 @@ router.put('/:farmId/contracts/:id', authenticate, requireRole('admin', 'manager
       },
       include: { commodity: true },
     });
+    if (oldContract) {
+      const changes = diffChanges(oldContract, contract, ['buyer', 'contracted_mt', 'price_per_mt', 'status', 'notes', 'contract_number']);
+      if (changes) logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'Contract', entityId: contract.id, action: 'update', changes });
+    }
     res.json({ contract });
   } catch (err) { next(err); }
 });
@@ -110,6 +117,7 @@ router.post('/:farmId/contracts/:id/deliveries', authenticate, requireRole('admi
         notes: notes || null,
       },
     });
+    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'Delivery', entityId: delivery.id, action: 'create', changes: { contract_id: req.params.id, mt_delivered: parseFloat(mt_delivered), delivery_date, ticket_number: ticket_number || null }, metadata: { contract_id: req.params.id } });
 
     // Check if contract is now fulfilled
     const contract = await prisma.contract.findUnique({
@@ -122,6 +130,7 @@ router.post('/:farmId/contracts/:id/deliveries', authenticate, requireRole('admi
         where: { id: req.params.id },
         data: { status: 'fulfilled' },
       });
+      logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'Contract', entityId: contract.id, action: 'update', changes: { status: { old: contract.status, new: 'fulfilled' } }, metadata: { reason: 'auto_fulfilled', total_hauled_mt: totalHauled } });
     }
 
     res.status(201).json({ delivery });

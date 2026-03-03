@@ -17,6 +17,7 @@ import BinInventory from './pages/inventory/BinInventory';
 import Contracts from './pages/inventory/Contracts';
 import Reconciliation from './pages/inventory/Reconciliation';
 import FarmManagerView from './pages/inventory/FarmManagerView';
+import AuditLog from './pages/inventory/AuditLog';
 import ErrorBoundary from './components/shared/ErrorBoundary';
 import { Typography, Box } from '@mui/material';
 
@@ -91,6 +92,7 @@ export default function App() {
                       <Route path="/inventory/contracts" element={<ModuleRoute module="inventory"><InventoryLayout><Contracts /></InventoryLayout></ModuleRoute>} />
                       <Route path="/inventory/recon" element={<ModuleRoute module="inventory"><InventoryLayout><Reconciliation /></InventoryLayout></ModuleRoute>} />
                       <Route path="/inventory/count" element={<ModuleRoute module="inventory"><InventoryLayout><FarmManagerView /></InventoryLayout></ModuleRoute>} />
+                      <Route path="/inventory/audit" element={<ModuleRoute module="inventory"><InventoryLayout><AuditLog /></InventoryLayout></ModuleRoute>} />
                       <Route path="*" element={<NotFound />} />
                     </Routes>
                   </AppLayout>

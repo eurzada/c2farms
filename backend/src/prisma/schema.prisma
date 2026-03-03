@@ -16,6 +16,7 @@ model User {
   created_at    DateTime       @default(now())
   updated_at    DateTime       @updatedAt
   farm_roles    UserFarmRole[]
+  audit_logs    AuditLog[]
 
   @@map("users")
 }
@@ -26,6 +27,7 @@ model Farm {
   created_at DateTime       @default(now())
   updated_at DateTime       @updatedAt
   user_roles UserFarmRole[]
+  audit_logs AuditLog[]
 
   @@map("farms")
 }
@@ -377,4 +379,25 @@ model Delivery {
   contract      Contract @relation(fields: [contract_id], references: [id], onDelete: Cascade)
 
   @@map("deliveries")
+}
+
+// ─── Audit Trail ─────────────────────────────────────────────────────
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  farm_id     String
+  user_id     String
+  entity_type String
+  entity_id   String
+  action      String
+  changes     Json?
+  metadata    Json?
+  created_at  DateTime @default(now())
+
+  farm Farm @relation(fields: [farm_id], references: [id])
+  user User @relation(fields: [user_id], references: [id])
+
+  @@index([farm_id, entity_type, entity_id])
+  @@index([farm_id, created_at])
+  @@map("audit_logs")
 }

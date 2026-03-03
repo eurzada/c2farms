@@ -4,6 +4,7 @@ import prisma from '../config/database.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { convertBuToKg } from '../services/inventoryService.js';
 import { importInventoryFromExcel } from '../services/inventoryImportService.js';
+import { logAudit, diffChanges } from '../services/auditService.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -29,6 +30,7 @@ router.post('/:farmId/inventory/commodities', authenticate, requireRole('admin',
     const commodity = await prisma.commodity.create({
       data: { farm_id: req.params.farmId, name, code, lbs_per_bu: parseFloat(lbs_per_bu) },
     });
+    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'Commodity', entityId: commodity.id, action: 'create', changes: { name, code, lbs_per_bu: parseFloat(lbs_per_bu) } });
     res.status(201).json({ commodity });
   } catch (err) { next(err); }
 });
@@ -116,6 +118,7 @@ router.post('/:farmId/inventory/bins', authenticate, requireRole('admin', 'manag
         notes: notes || null,
       },
     });
+    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'InventoryBin', entityId: bin.id, action: 'create', changes: { location_id, bin_number, bin_type: bin_type || 'hopper', capacity_bu: capacity_bu ? parseFloat(capacity_bu) : null, commodity_id: commodity_id || null } });
     res.status(201).json({ bin });
   } catch (err) { next(err); }
 });
@@ -124,6 +127,7 @@ router.post('/:farmId/inventory/bins', authenticate, requireRole('admin', 'manag
 router.put('/:farmId/inventory/bins/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { bin_type, capacity_bu, commodity_id, notes, is_active } = req.body;
+    const oldBin = await prisma.inventoryBin.findUnique({ where: { id: req.params.id } });
     const bin = await prisma.inventoryBin.update({
       where: { id: req.params.id },
       data: {
@@ -134,6 +138,10 @@ router.put('/:farmId/inventory/bins/:id', authenticate, requireRole('admin', 'ma
         ...(is_active !== undefined && { is_active }),
       },
     });
+    if (oldBin) {
+      const changes = diffChanges(oldBin, bin, ['bin_type', 'capacity_bu', 'commodity_id', 'notes', 'is_active']);
+      if (changes) logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'InventoryBin', entityId: bin.id, action: 'update', changes });
+    }
     res.json({ bin });
   } catch (err) { next(err); }
 });
@@ -159,6 +167,7 @@ router.post('/:farmId/inventory/count-periods', authenticate, requireRole('admin
     const period = await prisma.countPeriod.create({
       data: { farm_id: req.params.farmId, period_date: new Date(period_date), crop_year: parseInt(crop_year) },
     });
+    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'CountPeriod', entityId: period.id, action: 'create', changes: { period_date, crop_year: parseInt(crop_year) } });
     res.status(201).json({ period });
   } catch (err) { next(err); }
 });
@@ -167,10 +176,15 @@ router.post('/:farmId/inventory/count-periods', authenticate, requireRole('admin
 router.put('/:farmId/inventory/count-periods/:id', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
     const { status } = req.body;
+    const oldPeriod = await prisma.countPeriod.findUnique({ where: { id: req.params.id } });
     const period = await prisma.countPeriod.update({
       where: { id: req.params.id },
       data: { status },
     });
+    if (oldPeriod) {
+      const changes = diffChanges(oldPeriod, period, ['status']);
+      if (changes) logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'CountPeriod', entityId: period.id, action: 'update', changes });
+    }
     res.json({ period });
   } catch (err) { next(err); }
 });
@@ -194,6 +208,9 @@ router.post('/:farmId/inventory/submissions', authenticate, requireRole('admin',
     if (!count_period_id || !location_id) {
       return res.status(400).json({ error: 'count_period_id and location_id are required' });
     }
+    const existing = await prisma.countSubmission.findUnique({
+      where: { farm_id_count_period_id_location_id: { farm_id: req.params.farmId, count_period_id, location_id } },
+    });
     const submission = await prisma.countSubmission.upsert({
       where: {
         farm_id_count_period_id_location_id: {
@@ -206,6 +223,7 @@ router.post('/:farmId/inventory/submissions', authenticate, requireRole('admin',
         status: 'draft', submitted_by: req.userId,
       },
     });
+    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'CountSubmission', entityId: submission.id, action: existing ? 'update' : 'create', changes: existing ? diffChanges(existing, submission, ['status', 'submitted_by']) : { count_period_id, location_id, status: 'draft' }, metadata: { count_period_id, location_id } });
     res.status(201).json({ submission });
   } catch (err) { next(err); }
 });
@@ -214,6 +232,7 @@ router.post('/:farmId/inventory/submissions', authenticate, requireRole('admin',
 router.put('/:farmId/inventory/submissions/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { status, notes } = req.body;
+    const oldSub = await prisma.countSubmission.findUnique({ where: { id: req.params.id } });
     const submission = await prisma.countSubmission.update({
       where: { id: req.params.id },
       data: {
@@ -222,6 +241,10 @@ router.put('/:farmId/inventory/submissions/:id', authenticate, requireRole('admi
         submitted_by: req.userId,
       },
     });
+    if (oldSub) {
+      const changes = diffChanges(oldSub, submission, ['status', 'notes', 'submitted_by']);
+      if (changes) logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'CountSubmission', entityId: submission.id, action: 'update', changes, metadata: { count_period_id: submission.count_period_id, location_id: submission.location_id } });
+    }
     res.json({ submission });
   } catch (err) { next(err); }
 });
@@ -229,10 +252,12 @@ router.put('/:farmId/inventory/submissions/:id', authenticate, requireRole('admi
 // POST approve submission
 router.post('/:farmId/inventory/submissions/:id/approve', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
+    const oldSub = await prisma.countSubmission.findUnique({ where: { id: req.params.id } });
     const submission = await prisma.countSubmission.update({
       where: { id: req.params.id },
       data: { status: 'approved' },
     });
+    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'CountSubmission', entityId: submission.id, action: 'update', changes: { status: { old: oldSub?.status, new: 'approved' } }, metadata: { count_period_id: submission.count_period_id, location_id: submission.location_id } });
     res.json({ submission });
   } catch (err) { next(err); }
 });
@@ -241,10 +266,12 @@ router.post('/:farmId/inventory/submissions/:id/approve', authenticate, requireR
 router.post('/:farmId/inventory/submissions/:id/reject', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
     const { notes } = req.body;
+    const oldSub = await prisma.countSubmission.findUnique({ where: { id: req.params.id } });
     const submission = await prisma.countSubmission.update({
       where: { id: req.params.id },
       data: { status: 'rejected', notes: notes || null },
     });
+    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'CountSubmission', entityId: submission.id, action: 'update', changes: { status: { old: oldSub?.status, new: 'rejected' }, notes: { old: oldSub?.notes, new: notes || null } }, metadata: { count_period_id: submission.count_period_id, location_id: submission.location_id } });
     res.json({ submission });
   } catch (err) { next(err); }
 });
@@ -270,6 +297,12 @@ router.post('/:farmId/inventory/bin-counts/:periodId', authenticate, requireRole
     const commodities = await prisma.commodity.findMany({ where: { farm_id: farmId } });
     const commodityLookup = Object.fromEntries(commodities.map(c => [c.id, c]));
 
+    // Fetch existing counts for diff
+    const existingCounts = await prisma.binCount.findMany({
+      where: { farm_id: farmId, count_period_id: periodId, bin_id: { in: counts.map(c => c.bin_id) } },
+    });
+    const existingLookup = Object.fromEntries(existingCounts.map(c => [c.bin_id, c]));
+
     const results = [];
     for (const item of counts) {
       const { bin_id, commodity_id, bushels, crop_year, notes } = item;
@@ -284,10 +317,44 @@ router.post('/:farmId/inventory/bin-counts/:periodId', authenticate, requireRole
         update: { commodity_id: commodity_id || null, bushels: parseFloat(bushels) || 0, kg, crop_year: crop_year ? parseInt(crop_year) : null, notes: notes || null },
         create: { farm_id: farmId, count_period_id: periodId, bin_id, commodity_id: commodity_id || null, bushels: parseFloat(bushels) || 0, kg, crop_year: crop_year ? parseInt(crop_year) : null, notes: notes || null },
       });
+
+      const existing = existingLookup[bin_id];
+      if (existing) {
+        const changes = diffChanges(existing, record, ['commodity_id', 'bushels', 'kg', 'crop_year', 'notes']);
+        if (changes) logAudit({ farmId, userId: req.userId, entityType: 'BinCount', entityId: record.id, action: 'update', changes, metadata: { period_id: periodId, bin_id } });
+      } else {
+        logAudit({ farmId, userId: req.userId, entityType: 'BinCount', entityId: record.id, action: 'create', changes: { bin_id, commodity_id: commodity_id || null, bushels: parseFloat(bushels) || 0, kg }, metadata: { period_id: periodId, bin_id } });
+      }
+
       results.push(record);
     }
 
     res.json({ counts: results, total: results.length });
+  } catch (err) { next(err); }
+});
+
+// GET audit log (admin/manager only)
+router.get('/:farmId/inventory/audit-log', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { farmId } = req.params;
+    const { entityType, entityId, limit = '50', offset = '0' } = req.query;
+
+    const where = { farm_id: farmId };
+    if (entityType) where.entity_type = entityType;
+    if (entityId) where.entity_id = entityId;
+
+    const [entries, total] = await Promise.all([
+      prisma.auditLog.findMany({
+        where,
+        include: { user: { select: { id: true, name: true, email: true } } },
+        orderBy: { created_at: 'desc' },
+        take: parseInt(limit),
+        skip: parseInt(offset),
+      }),
+      prisma.auditLog.count({ where }),
+    ]);
+
+    res.json({ entries, total, limit: parseInt(limit), offset: parseInt(offset) });
   } catch (err) { next(err); }
 });
 
