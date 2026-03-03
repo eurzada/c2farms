@@ -37,7 +37,7 @@ model UserFarmRole {
   user_id String
   farm_id String
   role    String @default("admin")
-  modules Json   @default("[\"forecast\",\"inventory\"]") // which modules this user can access
+  modules Json   @default("[\"forecast\",\"inventory\",\"marketing\"]") // which modules this user can access
   user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
   farm    Farm   @relation(fields: [farm_id], references: [id], onDelete: Cascade)
 
@@ -253,9 +253,12 @@ model Commodity {
   lbs_per_bu Float
   created_at DateTime        @default(now())
   updated_at DateTime        @updatedAt
-  bins       InventoryBin[]
-  bin_counts BinCount[]
-  contracts  Contract[]
+  bins                InventoryBin[]
+  bin_counts          BinCount[]
+  contracts           Contract[]
+  marketing_contracts MarketingContract[]
+  market_prices       MarketPrice[]
+  price_alerts        PriceAlert[]
 
   @@unique([farm_id, code])
   @@map("commodities")
@@ -367,18 +370,167 @@ model Contract {
 }
 
 model Delivery {
-  id            String   @id @default(uuid())
-  farm_id       String
-  contract_id   String
-  mt_delivered  Float
-  delivery_date DateTime @db.Date
-  ticket_number String?
-  notes         String?
-  created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
-  contract      Contract @relation(fields: [contract_id], references: [id], onDelete: Cascade)
+  id                    String              @id @default(uuid())
+  farm_id               String
+  contract_id           String?
+  marketing_contract_id String?
+  mt_delivered          Float
+  gross_weight_mt       Float?
+  dockage_pct           Float?
+  delivery_date         DateTime            @db.Date
+  ticket_number         String?
+  notes                 String?
+  created_at            DateTime            @default(now())
+  updated_at            DateTime            @updatedAt
+  contract              Contract?           @relation(fields: [contract_id], references: [id], onDelete: Cascade)
+  marketing_contract    MarketingContract?  @relation(fields: [marketing_contract_id], references: [id])
 
   @@map("deliveries")
+}
+
+// ─── Grain Marketing Module ──────────────────────────────────────────
+
+model Counterparty {
+  id                  String              @id @default(uuid())
+  farm_id             String
+  name                String
+  short_code          String
+  type                String              @default("buyer") // buyer, broker, elevator, terminal
+  contact_name        String?
+  contact_email       String?
+  contact_phone       String?
+  default_elevator_site String?
+  is_active           Boolean             @default(true)
+  notes               String?
+  created_at          DateTime            @default(now())
+  updated_at          DateTime            @updatedAt
+  marketing_contracts MarketingContract[]
+
+  @@unique([farm_id, name])
+  @@map("counterparties")
+}
+
+model MarketingContract {
+  id                String        @id @default(uuid())
+  farm_id           String
+  contract_number   String
+  crop_year         String        // e.g. "2025/26"
+  commodity_id      String
+  counterparty_id   String
+  grade             String?
+  broker            String?
+  contracted_mt     Float
+  delivered_mt      Float         @default(0)
+  remaining_mt      Float
+  tolerance_pct     Float?
+  pricing_type      String        @default("flat") // flat, basis, hta, min_price, deferred
+  pricing_status    String        @default("priced") // priced, unpriced, partially_priced
+  price_per_bu      Float?
+  price_per_mt      Float?
+  basis_level       Float?        // $/bu
+  futures_reference String?       // e.g. "ICE RS May26"
+  futures_price     Float?        // $/bu for HTA
+  currency          String        @default("CAD")
+  delivery_start    DateTime?     @db.Date
+  delivery_end      DateTime?     @db.Date
+  elevator_site     String?
+  farm_origin       String?
+  status            String        @default("executed") // executed, in_delivery, delivered, settled, cancelled
+  settlement_date   DateTime?     @db.Date
+  settlement_amount Float?
+  contract_value    Float?
+  cop_per_mt        Float?
+  notes             String?
+  created_by        String?
+  created_at        DateTime      @default(now())
+  updated_at        DateTime      @updatedAt
+  counterparty      Counterparty    @relation(fields: [counterparty_id], references: [id])
+  commodity         Commodity       @relation(fields: [commodity_id], references: [id])
+  deliveries        Delivery[]
+  cash_flow_entries CashFlowEntry[]
+
+  @@unique([farm_id, contract_number])
+  @@index([farm_id, commodity_id])
+  @@index([farm_id, status])
+  @@map("marketing_contracts")
+}
+
+model MarketPrice {
+  id               String    @id @default(uuid())
+  farm_id          String
+  commodity_id     String
+  price_date       DateTime  @db.Date
+  bid_per_bu       Float?
+  basis_per_bu     Float?
+  futures_reference String?
+  futures_close    Float?
+  buyer_name       String?
+  outlook          String?   // sideways, bullish, bearish
+  cop_per_bu       Float?
+  target_price_bu  Float?
+  notes            String?
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
+  commodity        Commodity @relation(fields: [commodity_id], references: [id])
+
+  @@unique([farm_id, commodity_id, price_date])
+  @@map("market_prices")
+}
+
+model PriceAlert {
+  id              String    @id @default(uuid())
+  farm_id         String
+  commodity_id    String
+  alert_type      String    // target_price, basis_trigger, percent_change
+  direction       String    // above, below
+  threshold_value Float
+  is_active       Boolean   @default(true)
+  triggered_at    DateTime?
+  triggered_value Float?
+  notify_method   String?   @default("in_app")
+  created_by      String?
+  notes           String?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  commodity       Commodity @relation(fields: [commodity_id], references: [id])
+
+  @@index([farm_id, commodity_id, is_active])
+  @@map("price_alerts")
+}
+
+model CashFlowEntry {
+  id                    String             @id @default(uuid())
+  farm_id               String
+  period_date           DateTime           @db.Date
+  entry_type            String             // requirement, receipt
+  category              String             // fertilizer, seed, chemical, loc_interest, overhead, equipment, land_rent, grain_sale, other
+  description           String?
+  amount                Float              // positive = inflow, negative = outflow
+  marketing_contract_id String?
+  is_actual             Boolean            @default(false)
+  notes                 String?
+  created_at            DateTime           @default(now())
+  updated_at            DateTime           @updatedAt
+  marketing_contract    MarketingContract? @relation(fields: [marketing_contract_id], references: [id])
+
+  @@index([farm_id, period_date, entry_type])
+  @@map("cash_flow_entries")
+}
+
+model MarketingSettings {
+  id                      String   @id @default(uuid())
+  farm_id                 String   @unique
+  loc_interest_rate       Float    @default(0.0725)
+  storage_cost_per_mt_month Float  @default(3.5)
+  default_currency        String   @default("CAD")
+  contract_prefix         String   @default("MKT")
+  next_contract_seq       Int      @default(1)
+  loc_available           Float?
+  fiscal_year_start_month Int      @default(11)
+  created_at              DateTime @default(now())
+  updated_at              DateTime @updatedAt
+
+  @@map("marketing_settings")
 }
 
 // ─── Audit Trail ─────────────────────────────────────────────────────

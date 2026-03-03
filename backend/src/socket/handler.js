@@ -79,6 +79,26 @@ export function setupSocketHandlers(io) {
       socket.leave(`farm-ai:${farmId}`);
     });
 
+    // Marketing event subscription
+    socket.on('join-farm-marketing', async (farmId) => {
+      try {
+        const role = await prisma.userFarmRole.findUnique({
+          where: { user_id_farm_id: { user_id: socket.userId, farm_id: farmId } },
+        });
+        if (!role) {
+          socket.emit('error', { message: 'Access denied to this farm' });
+          return;
+        }
+        socket.join(`farm-marketing:${farmId}`);
+      } catch {
+        socket.emit('error', { message: 'Failed to join marketing events' });
+      }
+    });
+
+    socket.on('leave-farm-marketing', (farmId) => {
+      socket.leave(`farm-marketing:${farmId}`);
+    });
+
     socket.on('disconnect', () => {
       console.log(`Client disconnected: ${socket.id}`);
     });
@@ -87,4 +107,8 @@ export function setupSocketHandlers(io) {
 
 export function broadcastCellChange(io, farmId, data) {
   io.to(`farm:${farmId}`).emit('cell-changed', data);
+}
+
+export function broadcastMarketingEvent(io, farmId, event, data) {
+  io.to(`farm-marketing:${farmId}`).emit(event, data);
 }

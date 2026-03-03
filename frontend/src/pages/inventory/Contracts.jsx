@@ -3,14 +3,15 @@ import { AgGridReact } from 'ag-grid-react';
 import {
   Box, Typography, Button, Stack, LinearProgress, Snackbar, Alert,
 } from '@mui/material';
-import AddIcon from '@mui/icons-material/Add';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { useFarm } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import { getGridColors } from '../../utils/gridColors';
 import api from '../../services/api';
+import { useNavigate } from 'react-router-dom';
 import ContractFormDialog from '../../components/inventory/ContractFormDialog';
 import DeliveryFormDialog from '../../components/inventory/DeliveryFormDialog';
 import AvailableToSellTable from '../../components/inventory/AvailableToSellTable';
@@ -29,6 +30,7 @@ function ProgressCell({ value }) {
 export default function Contracts() {
   const { currentFarm, canEdit } = useFarm();
   const { mode } = useThemeMode();
+  const navigate = useNavigate();
   const gridRef = useRef();
   const colors = useMemo(() => getGridColors(mode), [mode]);
 
@@ -74,11 +76,9 @@ export default function Contracts() {
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
         <Typography variant="h5" sx={{ fontWeight: 600 }}>Contracts & Delivery</Typography>
-        {canEdit && (
-          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setContractDialogOpen(true)}>
-            Add Contract
-          </Button>
-        )}
+        <Button variant="outlined" startIcon={<OpenInNewIcon />} onClick={() => navigate('/marketing/contracts')}>
+          Grain Marketing
+        </Button>
       </Stack>
 
       {/* Active Contracts Grid */}

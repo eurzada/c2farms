@@ -53,16 +53,29 @@ export async function getAvailableToSell(farmId) {
     inventoryByCommodity[code].total_kg += bc.kg;
   }
 
-  // Get contracted amounts for open contracts
+  // Get contracted amounts from old Contract model (remaining = contracted - delivered)
   const contracts = await prisma.contract.findMany({
     where: { farm_id: farmId, status: 'open' },
-    include: { commodity: true },
+    include: { commodity: true, deliveries: true },
   });
 
   const contractedByCommodity = {};
   for (const c of contracts) {
     const code = c.commodity.code;
-    contractedByCommodity[code] = (contractedByCommodity[code] || 0) + c.contracted_mt;
+    const hauled = c.deliveries.reduce((s, d) => s + d.mt_delivered, 0);
+    const remaining = Math.max(0, c.contracted_mt - hauled);
+    contractedByCommodity[code] = (contractedByCommodity[code] || 0) + remaining;
+  }
+
+  // Also include Marketing Contracts (active = executed or in_delivery)
+  const mktContracts = await prisma.marketingContract.findMany({
+    where: { farm_id: farmId, status: { in: ['executed', 'in_delivery'] } },
+    include: { commodity: true },
+  });
+
+  for (const mc of mktContracts) {
+    const code = mc.commodity.code;
+    contractedByCommodity[code] = (contractedByCommodity[code] || 0) + mc.remaining_mt;
   }
 
   // Build result

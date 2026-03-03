@@ -18,6 +18,13 @@ import Contracts from './pages/inventory/Contracts';
 import Reconciliation from './pages/inventory/Reconciliation';
 import FarmManagerView from './pages/inventory/FarmManagerView';
 import AuditLog from './pages/inventory/AuditLog';
+import MarketingLayout from './components/marketing/MarketingLayout';
+import MarketingDashboard from './pages/marketing/MarketingDashboard';
+import MarketingContracts from './pages/marketing/MarketingContracts';
+import MarketingPrices from './pages/marketing/MarketingPrices';
+import MarketingCashFlow from './pages/marketing/MarketingCashFlow';
+import SellDecisionTool from './pages/marketing/SellDecisionTool';
+import MarketingBuyers from './pages/marketing/MarketingBuyers';
 import ErrorBoundary from './components/shared/ErrorBoundary';
 import { Typography, Box } from '@mui/material';
 
@@ -93,6 +100,13 @@ export default function App() {
                       <Route path="/inventory/recon" element={<ModuleRoute module="inventory"><InventoryLayout><Reconciliation /></InventoryLayout></ModuleRoute>} />
                       <Route path="/inventory/count" element={<ModuleRoute module="inventory"><InventoryLayout><FarmManagerView /></InventoryLayout></ModuleRoute>} />
                       <Route path="/inventory/audit" element={<ModuleRoute module="inventory"><InventoryLayout><AuditLog /></InventoryLayout></ModuleRoute>} />
+                      <Route path="/marketing" element={<ModuleRoute module="marketing"><Navigate to="/marketing/dashboard" /></ModuleRoute>} />
+                      <Route path="/marketing/dashboard" element={<ModuleRoute module="marketing"><MarketingLayout><MarketingDashboard /></MarketingLayout></ModuleRoute>} />
+                      <Route path="/marketing/contracts" element={<ModuleRoute module="marketing"><MarketingLayout><MarketingContracts /></MarketingLayout></ModuleRoute>} />
+                      <Route path="/marketing/prices" element={<ModuleRoute module="marketing"><MarketingLayout><MarketingPrices /></MarketingLayout></ModuleRoute>} />
+                      <Route path="/marketing/cash-flow" element={<ModuleRoute module="marketing"><MarketingLayout><MarketingCashFlow /></MarketingLayout></ModuleRoute>} />
+                      <Route path="/marketing/sell-tool" element={<ModuleRoute module="marketing"><MarketingLayout><SellDecisionTool /></MarketingLayout></ModuleRoute>} />
+                      <Route path="/marketing/buyers" element={<ModuleRoute module="marketing"><MarketingLayout><MarketingBuyers /></MarketingLayout></ModuleRoute>} />
                       <Route path="*" element={<NotFound />} />
                     </Routes>
                   </AppLayout>

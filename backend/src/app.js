@@ -24,6 +24,10 @@ import contractRoutes from './routes/contracts.js';
 import reconciliationRoutes from './routes/reconciliation.js';
 import inventoryDashboardRoutes from './routes/inventoryDashboard.js';
 import inventoryExportsRoutes from './routes/inventoryExports.js';
+import marketingRoutes from './routes/marketing.js';
+import counterpartyRoutes from './routes/counterparties.js';
+import cashFlowRoutes from './routes/cashFlowEntries.js';
+import priceAlertRoutes from './routes/priceAlerts.js';
 
 import { errorHandler } from './middleware/errorHandler.js';
 import { authenticate, requireFarmAccess } from './middleware/auth.js';
@@ -96,6 +100,10 @@ app.use('/api/farms', contractRoutes);
 app.use('/api/farms', reconciliationRoutes);
 app.use('/api/farms', inventoryDashboardRoutes);
 app.use('/api/farms', inventoryExportsRoutes);
+app.use('/api/farms', marketingRoutes);
+app.use('/api/farms', counterpartyRoutes);
+app.use('/api/farms', cashFlowRoutes);
+app.use('/api/farms', priceAlertRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

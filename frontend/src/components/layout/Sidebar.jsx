@@ -9,6 +9,7 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing';
 import WarehouseIcon from '@mui/icons-material/Warehouse';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import SupervisorAccountIcon from '@mui/icons-material/SupervisorAccount';
 import { useFarm } from '../../contexts/FarmContext';
@@ -20,6 +21,7 @@ const NAV_ITEMS = [
   { label: '4. Operations', path: '/operations', icon: <PrecisionManufacturingIcon />, module: 'forecast' },
   { label: '5. Dashboard', path: '/dashboard', icon: <DashboardIcon />, module: 'forecast' },
   { label: '6. Grain Control', path: '/inventory', icon: <WarehouseIcon />, module: 'inventory' },
+  { label: '7. Grain Marketing', path: '/marketing', icon: <TrendingUpIcon />, module: 'marketing' },
   { label: 'Chart of Accounts', path: '/chart-of-accounts', icon: <ListAltIcon />, module: 'forecast' },
 ];
 
@@ -52,7 +54,7 @@ export default function Sidebar({ width }) {
         {visibleItems.map(item => (
           <ListItemButton
             key={item.path}
-            selected={location.pathname === item.path || (item.path === '/inventory' && location.pathname.startsWith('/inventory'))}
+            selected={location.pathname === item.path || (item.path === '/inventory' && location.pathname.startsWith('/inventory')) || (item.path === '/marketing' && location.pathname.startsWith('/marketing'))}
             onClick={() => navigate(item.path)}
             sx={{
               mx: 1,

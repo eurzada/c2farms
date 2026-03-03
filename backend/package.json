@@ -12,6 +12,7 @@
     "db:migrate": "npx prisma migrate dev --schema=src/prisma/schema.prisma",
     "db:push": "npx prisma db push --schema=src/prisma/schema.prisma",
     "db:seed": "node src/prisma/seed.js",
+    "seed:marketing": "node src/scripts/seedMarketing.js",
     "db:studio": "npx prisma studio --schema=src/prisma/schema.prisma",
     "lint": "eslint src/"
   },
