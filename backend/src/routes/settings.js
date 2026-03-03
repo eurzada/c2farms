@@ -22,7 +22,7 @@ router.get('/:farmId/settings/users', ...adminOnly, async (req, res, next) => {
       email: fr.user.email,
       name: fr.user.name,
       role: fr.role,
-      modules: fr.modules || ['forecast', 'inventory'],
+      modules: fr.modules || ['forecast', 'inventory', 'marketing'],
     }));
 
     const invites = await prisma.farmInvite.findMany({
@@ -116,7 +116,7 @@ router.patch('/:farmId/settings/users/:userId', ...adminOnly, async (req, res, n
     }
 
     if (modules !== undefined) {
-      const validModules = ['forecast', 'inventory'];
+      const validModules = ['forecast', 'inventory', 'marketing'];
       const filtered = modules.filter(m => validModules.includes(m));
       updateData.modules = filtered;
     }

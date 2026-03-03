@@ -124,12 +124,16 @@ export default function UserManagement() {
                 <TableCell>
                   <Stack direction="row" spacing={0}>
                     <FormControlLabel
-                      control={<Checkbox size="small" checked={(u.modules || ['forecast', 'inventory']).includes('forecast')} onChange={() => handleModuleToggle(u.id, 'forecast', u.modules || ['forecast', 'inventory'])} />}
+                      control={<Checkbox size="small" checked={(u.modules || ['forecast', 'inventory', 'marketing']).includes('forecast')} onChange={() => handleModuleToggle(u.id, 'forecast', u.modules || ['forecast', 'inventory', 'marketing'])} />}
                       label={<Typography variant="caption">Forecast</Typography>}
                     />
                     <FormControlLabel
-                      control={<Checkbox size="small" checked={(u.modules || ['forecast', 'inventory']).includes('inventory')} onChange={() => handleModuleToggle(u.id, 'inventory', u.modules || ['forecast', 'inventory'])} />}
+                      control={<Checkbox size="small" checked={(u.modules || ['forecast', 'inventory', 'marketing']).includes('inventory')} onChange={() => handleModuleToggle(u.id, 'inventory', u.modules || ['forecast', 'inventory', 'marketing'])} />}
                       label={<Typography variant="caption">Inventory</Typography>}
+                    />
+                    <FormControlLabel
+                      control={<Checkbox size="small" checked={(u.modules || ['forecast', 'inventory', 'marketing']).includes('marketing')} onChange={() => handleModuleToggle(u.id, 'marketing', u.modules || ['forecast', 'inventory', 'marketing'])} />}
+                      label={<Typography variant="caption">Marketing</Typography>}
                     />
                   </Stack>
                 </TableCell>

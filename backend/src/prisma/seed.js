@@ -34,8 +34,8 @@ async function main() {
   // Link user to farm
   await prisma.userFarmRole.upsert({
     where: { user_id_farm_id: { user_id: user.id, farm_id: farm.id } },
-    update: {},
-    create: { user_id: user.id, farm_id: farm.id, role: 'admin' },
+    update: { modules: ['forecast', 'inventory', 'marketing'] },
+    create: { user_id: user.id, farm_id: farm.id, role: 'admin', modules: ['forecast', 'inventory', 'marketing'] },
   });
 
   // Create manager user
@@ -51,8 +51,8 @@ async function main() {
   });
   await prisma.userFarmRole.upsert({
     where: { user_id_farm_id: { user_id: managerUser.id, farm_id: farm.id } },
-    update: {},
-    create: { user_id: managerUser.id, farm_id: farm.id, role: 'manager' },
+    update: { modules: ['forecast', 'inventory', 'marketing'] },
+    create: { user_id: managerUser.id, farm_id: farm.id, role: 'manager', modules: ['forecast', 'inventory', 'marketing'] },
   });
   console.log(`Manager: ${managerUser.email}`);
 
@@ -69,10 +69,37 @@ async function main() {
   });
   await prisma.userFarmRole.upsert({
     where: { user_id_farm_id: { user_id: viewerUser.id, farm_id: farm.id } },
-    update: {},
-    create: { user_id: viewerUser.id, farm_id: farm.id, role: 'viewer' },
+    update: { modules: ['forecast', 'inventory', 'marketing'] },
+    create: { user_id: viewerUser.id, farm_id: farm.id, role: 'viewer', modules: ['forecast', 'inventory', 'marketing'] },
   });
   console.log(`Viewer: ${viewerUser.email}`);
+
+  // C2 Farms team members
+  const teamMembers = [
+    { email: 'michael@c2farms.ca', name: 'Michael', role: 'admin' },
+    { email: 'carly@c2farms.ca', name: 'Carly', role: 'admin' },
+    { email: 'collin@c2farms.ca', name: 'Collin', role: 'admin' },
+    { email: 'jessica@c2farms.ca', name: 'Jessica', role: 'admin' },
+  ];
+
+  for (const member of teamMembers) {
+    const memberUser = await prisma.user.upsert({
+      where: { email: member.email },
+      update: {},
+      create: {
+        email: member.email,
+        password_hash: passwordHash,
+        name: member.name,
+        role: 'farm_manager',
+      },
+    });
+    await prisma.userFarmRole.upsert({
+      where: { user_id_farm_id: { user_id: memberUser.id, farm_id: farm.id } },
+      update: { role: member.role, modules: ['forecast', 'inventory', 'marketing'] },
+      create: { user_id: memberUser.id, farm_id: farm.id, role: member.role, modules: ['forecast', 'inventory', 'marketing'] },
+    });
+    console.log(`Team member: ${member.email} (${member.role})`);
+  }
 
   const FISCAL_YEAR = 2026;
   const crops = [
