@@ -38,11 +38,12 @@ export default function UserManagement() {
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
   const handleRoleChange = async (userId, newRole) => {
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u));
     try {
       await api.patch(`/api/farms/${farmId}/settings/users/${userId}`, { role: newRole });
-      fetchUsers();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to update role');
+      fetchUsers(); // revert on error
     }
   };
 
@@ -50,11 +51,13 @@ export default function UserManagement() {
     const modules = currentModules.includes(module)
       ? currentModules.filter(m => m !== module)
       : [...currentModules, module];
+    // Optimistically update local state so user doesn't jump in the list
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, modules } : u));
     try {
       await api.patch(`/api/farms/${farmId}/settings/users/${userId}`, { modules });
-      fetchUsers();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to update modules');
+      fetchUsers(); // revert on error
     }
   };
 

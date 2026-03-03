@@ -15,6 +15,7 @@ router.get('/:farmId/settings/users', ...adminOnly, async (req, res, next) => {
     const farmRoles = await prisma.userFarmRole.findMany({
       where: { farm_id: farmId },
       include: { user: { select: { id: true, email: true, name: true } } },
+      orderBy: { user: { name: 'asc' } },
     });
 
     const users = farmRoles.map(fr => ({
