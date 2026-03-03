@@ -17,7 +17,6 @@ import BinInventory from './pages/inventory/BinInventory';
 import Contracts from './pages/inventory/Contracts';
 import Reconciliation from './pages/inventory/Reconciliation';
 import FarmManagerView from './pages/inventory/FarmManagerView';
-import AuditLog from './pages/inventory/AuditLog';
 import MarketingLayout from './components/marketing/MarketingLayout';
 import MarketingDashboard from './pages/marketing/MarketingDashboard';
 import MarketingContracts from './pages/marketing/MarketingContracts';
@@ -99,7 +98,6 @@ export default function App() {
                       <Route path="/inventory/contracts" element={<ModuleRoute module="inventory"><InventoryLayout><Contracts /></InventoryLayout></ModuleRoute>} />
                       <Route path="/inventory/recon" element={<ModuleRoute module="inventory"><InventoryLayout><Reconciliation /></InventoryLayout></ModuleRoute>} />
                       <Route path="/inventory/count" element={<ModuleRoute module="inventory"><InventoryLayout><FarmManagerView /></InventoryLayout></ModuleRoute>} />
-                      <Route path="/inventory/audit" element={<ModuleRoute module="inventory"><InventoryLayout><AuditLog /></InventoryLayout></ModuleRoute>} />
                       <Route path="/marketing" element={<ModuleRoute module="marketing"><Navigate to="/marketing/dashboard" /></ModuleRoute>} />
                       <Route path="/marketing/dashboard" element={<ModuleRoute module="marketing"><MarketingLayout><MarketingDashboard /></MarketingLayout></ModuleRoute>} />
                       <Route path="/marketing/contracts" element={<ModuleRoute module="marketing"><MarketingLayout><MarketingContracts /></MarketingLayout></ModuleRoute>} />

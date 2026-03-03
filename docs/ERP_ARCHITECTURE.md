@@ -137,12 +137,70 @@ All static sites point their API calls to the single backend service.
 | Auth (shared) | JWT (jsonwebtoken + bcrypt) |
 | Exports | ExcelJS (Excel), pdfmake (PDF) |
 
+## Enterprise View (Consolidated / 7th Business Unit)
+
+The business unit dropdown currently has 6 locations (Lewvan, Hyas, Waldron, Balcarres, Ridgedale, Ogema). A 7th entry — the **Enterprise View** — will aggregate all locations into a single executive-level experience.
+
+### Concept
+
+Data flows **upward** through the system:
+
+```
+Control Centres (input)        Forecast (per BU)       Enterprise View (rollup)
+┌──────────────────┐          ┌───────────────┐       ┌─────────────────────┐
+│ Grain Marketing  │──┐       │ Lewvan        │──┐    │                     │
+│ Grain Inventory  │──┼─────▶ │ Hyas          │──┼──▶ │ Consolidated view   │
+│ Agronomy         │──┘       │ Waldron       │  │    │ across all 6 BUs:   │
+│ QuickBooks       │          │ Balcarres     │──┼──▶ │ - Forecast (P&L)    │
+└──────────────────┘          │ Ridgedale     │  │    │ - Marketing position│
+                              │ Ogema         │──┘    │ - Inventory totals  │
+                              └───────────────┘       │ - Agronomy summary  │
+                                                      │ - Cash flow         │
+                                                      │ - Labour & equip    │
+                                                      └─────────────────────┘
+```
+
+### Key Design Decisions
+
+- **Appears as a 7th item in the BU dropdown**, separated by a divider from the 6 physical locations
+- **Read-mostly** — aggregation and dashboards, not data entry
+- **When selected, the sidebar shows all module sections**: Forecast (consolidated), Grain Marketing, Grain Inventory, Agronomy — unlike individual BUs which only show Forecast
+- Control centre modules (Marketing, Inventory, Agronomy) are inherently cross-location — a marketing contract belongs to the farm, not a single BU — so they naturally live at the enterprise level
+- Individual BU selection continues to show only the Forecast module for that location
+
+### UX — Dropdown Behavior
+
+```
+┌─────────────────────┐
+│  ▼ Prairie Fields    │  ← farm name
+│  ──────────────────  │
+│    Lewvan            │
+│    Hyas              │
+│    Waldron           │
+│    Balcarres         │
+│    Ridgedale         │
+│    Ogema             │
+│  ──────────────────  │  ← divider
+│  ★ Enterprise View   │  ← consolidated
+└─────────────────────┘
+```
+
+### Naming
+
+Working title: **Enterprise View**. Alternatives considered: Farm Overview, Operations Summary, Head Office. Deliberately avoiding "Corporate" — too corporate for a farm operation.
+
+### Status
+
+Planned — not yet implemented. Placeholder in dropdown may be added before full build-out.
+
 ## Current Module Status
 
 | Module | Status | Frontend Location |
 |--------|--------|-------------------|
 | Financial Forecast | Complete | `apps/forecast/` (currently `frontend/`) |
-| Inventory | Next up | `apps/inventory/` |
+| Inventory | Complete | `apps/inventory/` (currently in `frontend/`) |
+| Grain Marketing | Complete | `apps/marketing/` (currently in `frontend/`) |
 | AI Analytics | Partial (keyword-based, needs LLM) | Embedded in forecast |
 | QuickBooks Integration | Partial (routes stubbed) | Embedded in forecast |
 | Agronomy | Not started | `apps/agronomy/` (future) |
+| Enterprise View | Planned | `apps/enterprise/` (future) |
