@@ -91,13 +91,13 @@ export default function App() {
                   <AppLayout>
                     <Routes>
                       <Route path="/" element={<SmartRedirect />} />
-                      <Route path="/assumptions" element={<Assumptions />} />
-                      <Route path="/per-unit" element={<PerUnit />} />
-                      <Route path="/cost-forecast" element={<Accounting />} />
+                      <Route path="/assumptions" element={<ModuleRoute module="forecast"><Assumptions /></ModuleRoute>} />
+                      <Route path="/per-unit" element={<ModuleRoute module="forecast"><PerUnit /></ModuleRoute>} />
+                      <Route path="/cost-forecast" element={<ModuleRoute module="forecast"><Accounting /></ModuleRoute>} />
                       <Route path="/accounting" element={<Navigate to="/cost-forecast" />} />
-                      <Route path="/operations" element={<OperationalData />} />
-                      <Route path="/dashboard" element={<Dashboard />} />
-                      <Route path="/chart-of-accounts" element={<ChartOfAccounts />} />
+                      <Route path="/operations" element={<ModuleRoute module="forecast"><OperationalData /></ModuleRoute>} />
+                      <Route path="/dashboard" element={<ModuleRoute module="forecast"><Dashboard /></ModuleRoute>} />
+                      <Route path="/chart-of-accounts" element={<ModuleRoute module="forecast"><ChartOfAccounts /></ModuleRoute>} />
                       <Route path="/settings" element={<AdminRoute><Settings /></AdminRoute>} />
                       <Route path="/universal-settings" element={<AnyFarmAdminRoute><UniversalSettings /></AnyFarmAdminRoute>} />
                       <Route path="/inventory" element={<ModuleRoute module="inventory"><Navigate to="/inventory/dashboard" /></ModuleRoute>} />

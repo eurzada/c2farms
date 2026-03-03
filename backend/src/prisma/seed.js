@@ -34,8 +34,8 @@ async function main() {
   // Link user to farm
   await prisma.userFarmRole.upsert({
     where: { user_id_farm_id: { user_id: user.id, farm_id: farm.id } },
-    update: { modules: ['forecast', 'inventory', 'marketing'] },
-    create: { user_id: user.id, farm_id: farm.id, role: 'admin', modules: ['forecast', 'inventory', 'marketing'] },
+    update: { modules: ['inventory', 'marketing'] },
+    create: { user_id: user.id, farm_id: farm.id, role: 'admin', modules: ['inventory', 'marketing'] },
   });
 
   // Create manager user
@@ -51,8 +51,8 @@ async function main() {
   });
   await prisma.userFarmRole.upsert({
     where: { user_id_farm_id: { user_id: managerUser.id, farm_id: farm.id } },
-    update: { modules: ['forecast', 'inventory', 'marketing'] },
-    create: { user_id: managerUser.id, farm_id: farm.id, role: 'manager', modules: ['forecast', 'inventory', 'marketing'] },
+    update: { modules: ['inventory', 'marketing'] },
+    create: { user_id: managerUser.id, farm_id: farm.id, role: 'manager', modules: ['inventory', 'marketing'] },
   });
   console.log(`Manager: ${managerUser.email}`);
 
@@ -69,8 +69,8 @@ async function main() {
   });
   await prisma.userFarmRole.upsert({
     where: { user_id_farm_id: { user_id: viewerUser.id, farm_id: farm.id } },
-    update: { modules: ['forecast', 'inventory', 'marketing'] },
-    create: { user_id: viewerUser.id, farm_id: farm.id, role: 'viewer', modules: ['forecast', 'inventory', 'marketing'] },
+    update: { modules: ['inventory', 'marketing'] },
+    create: { user_id: viewerUser.id, farm_id: farm.id, role: 'viewer', modules: ['inventory', 'marketing'] },
   });
   console.log(`Viewer: ${viewerUser.email}`);
 
@@ -95,8 +95,8 @@ async function main() {
     });
     await prisma.userFarmRole.upsert({
       where: { user_id_farm_id: { user_id: memberUser.id, farm_id: farm.id } },
-      update: { role: member.role, modules: ['forecast', 'inventory', 'marketing'] },
-      create: { user_id: memberUser.id, farm_id: farm.id, role: member.role, modules: ['forecast', 'inventory', 'marketing'] },
+      update: { role: member.role, modules: ['inventory', 'marketing'] },
+      create: { user_id: memberUser.id, farm_id: farm.id, role: member.role, modules: ['inventory', 'marketing'] },
     });
     console.log(`Team member: ${member.email} (${member.role})`);
   }
