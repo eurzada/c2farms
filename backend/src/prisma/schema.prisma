@@ -131,6 +131,18 @@ model QbToken {
   @@map("qb_tokens")
 }
 
+model FieldOpsToken {
+  id            String   @id @default(uuid())
+  farm_id       String   @unique
+  access_token  String
+  refresh_token String
+  expires_at    DateTime
+  connected_at  DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  @@map("fieldops_tokens")
+}
+
 model FarmCategory {
   id            String         @id @default(uuid())
   farm_id       String
