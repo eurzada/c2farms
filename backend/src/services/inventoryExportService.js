@@ -54,7 +54,7 @@ async function getContractsData(farmId) {
     orderBy: { created_at: 'desc' },
   });
 
-  return contracts.map(c => {
+  const rows = contracts.map(c => {
     const hauledMt = c.deliveries.reduce((s, d) => s + d.mt_delivered, 0);
     return {
       contract_number: c.contract_number || '',
@@ -67,6 +67,28 @@ async function getContractsData(farmId) {
       status: c.status,
     };
   });
+
+  // Include marketing contracts
+  const mktContracts = await prisma.marketingContract.findMany({
+    where: { farm_id: farmId },
+    include: { commodity: true, counterparty: true },
+    orderBy: { created_at: 'desc' },
+  });
+
+  for (const mc of mktContracts) {
+    rows.push({
+      contract_number: mc.contract_number || '',
+      buyer: mc.counterparty?.name || '',
+      commodity: mc.commodity.name,
+      contracted_mt: mc.contracted_mt,
+      hauled_mt: mc.delivered_mt,
+      remaining_mt: mc.remaining_mt,
+      pct_complete: mc.contracted_mt > 0 ? (mc.delivered_mt / mc.contracted_mt) * 100 : 0,
+      status: mc.status,
+    });
+  }
+
+  return rows;
 }
 
 async function getReconciliationData(farmId) {
@@ -108,12 +130,17 @@ async function getReconciliationData(farmId) {
       farm_id: farmId,
       delivery_date: { gt: fromPeriod.period_date, lte: toPeriod.period_date },
     },
-    include: { contract: { include: { commodity: true } } },
+    include: {
+      contract: { include: { commodity: true } },
+      marketing_contract: { include: { commodity: true } },
+    },
   });
 
   const hauledByCommodity = {};
   for (const d of deliveries) {
-    const name = d.contract.commodity.name;
+    const commodity = d.contract?.commodity || d.marketing_contract?.commodity;
+    if (!commodity) continue;
+    const name = commodity.name;
     hauledByCommodity[name] = (hauledByCommodity[name] || 0) + d.mt_delivered * 1000;
   }
 
