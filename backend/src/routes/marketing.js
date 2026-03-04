@@ -87,7 +87,7 @@ router.post('/:farmId/marketing/contracts', authenticate, requireRole('admin', '
 
 router.put('/:farmId/marketing/contracts/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
-    const old = await prisma.marketingContract.findUnique({ where: { id: req.params.id } });
+    const old = await prisma.marketingContract.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
     if (!old) return res.status(404).json({ error: 'Contract not found' });
 
     // If price_per_bu changed, recompute price_per_mt and contract_value
@@ -123,6 +123,8 @@ router.put('/:farmId/marketing/contracts/:id', authenticate, requireRole('admin'
 
 router.post('/:farmId/marketing/contracts/:id/deliveries', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
+    const contract = await prisma.marketingContract.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    if (!contract) return res.status(404).json({ error: 'Contract not found' });
     const result = await updateContractDelivery(req.params.id, req.body);
 
     logAudit({
@@ -140,6 +142,8 @@ router.post('/:farmId/marketing/contracts/:id/deliveries', authenticate, require
 
 router.post('/:farmId/marketing/contracts/:id/settle', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
+    const existing = await prisma.marketingContract.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    if (!existing) return res.status(404).json({ error: 'Contract not found' });
     const contract = await settleContract(req.params.id, req.body);
 
     logAudit({
@@ -154,6 +158,8 @@ router.post('/:farmId/marketing/contracts/:id/settle', authenticate, requireRole
 
 router.delete('/:farmId/marketing/contracts/:id', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
+    const existing = await prisma.marketingContract.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    if (!existing) return res.status(404).json({ error: 'Contract not found' });
     const { notes } = req.body || {};
     const contract = await prisma.marketingContract.update({
       where: { id: req.params.id },

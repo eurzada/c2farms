@@ -165,8 +165,8 @@ export async function getFarmCountStatus(farmId) {
  */
 export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
   const [fromPeriod, toPeriod] = await Promise.all([
-    prisma.countPeriod.findUnique({ where: { id: fromPeriodId } }),
-    prisma.countPeriod.findUnique({ where: { id: toPeriodId } }),
+    prisma.countPeriod.findFirst({ where: { id: fromPeriodId, farm_id: farmId } }),
+    prisma.countPeriod.findFirst({ where: { id: toPeriodId, farm_id: farmId } }),
   ]);
 
   if (!fromPeriod || !toPeriod) throw new Error('Period not found');
@@ -196,7 +196,7 @@ export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
   const fromAgg = aggregate(fromCounts);
   const toAgg = aggregate(toCounts);
 
-  // Get deliveries between the two periods
+  // Get deliveries between the two periods (from both Contract and MarketingContract)
   const deliveries = await prisma.delivery.findMany({
     where: {
       farm_id: farmId,
@@ -205,12 +205,17 @@ export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
         lte: toPeriod.period_date,
       },
     },
-    include: { contract: { include: { commodity: true } } },
+    include: {
+      contract: { include: { commodity: true } },
+      marketing_contract: { include: { commodity: true } },
+    },
   });
 
   const hauledByCommodity = {};
   for (const d of deliveries) {
-    const name = d.contract.commodity.name;
+    const commodity = d.contract?.commodity || d.marketing_contract?.commodity;
+    if (!commodity) continue;
+    const name = commodity.name;
     hauledByCommodity[name] = (hauledByCommodity[name] || 0) + d.mt_delivered * 1000; // convert MT to kg
   }
 
@@ -281,14 +286,20 @@ export async function getDashboardData(farmId) {
   const totalKg = latestCounts.reduce((s, bc) => s + bc.kg, 0);
   const totalMt = convertKgToMt(totalKg);
 
-  // Contracts
+  // Contracts (both legacy Contract and MarketingContract)
   const contracts = await prisma.contract.findMany({
     where: { farm_id: farmId },
     include: { commodity: true, deliveries: true },
   });
 
   const openContracts = contracts.filter(c => c.status === 'open');
-  const committedMt = openContracts.reduce((s, c) => s + c.contracted_mt, 0);
+  let committedMt = openContracts.reduce((s, c) => s + c.contracted_mt, 0);
+
+  const mktContracts = await prisma.marketingContract.findMany({
+    where: { farm_id: farmId, status: { in: ['executed', 'in_delivery'] } },
+  });
+  committedMt += mktContracts.reduce((s, c) => s + c.remaining_mt, 0);
+
   const availableMt = totalMt - committedMt;
 
   // Crop inventory table
@@ -348,7 +359,7 @@ export async function getDashboardData(farmId) {
       total_mt: totalMt,
       committed_mt: committedMt,
       available_mt: availableMt,
-      active_contracts: openContracts.length,
+      active_contracts: openContracts.length + mktContracts.length,
     },
     cropInventory,
     farmStatus,

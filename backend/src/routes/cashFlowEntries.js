@@ -50,6 +50,9 @@ router.post('/:farmId/marketing/cash-flow/entries', authenticate, requireRole('a
 
 router.put('/:farmId/marketing/cash-flow/entries/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
+    const existing = await prisma.cashFlowEntry.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    if (!existing) return res.status(404).json({ error: 'Cash flow entry not found' });
+
     const updateData = { ...req.body };
     if (updateData.period_date) updateData.period_date = new Date(updateData.period_date);
     if (updateData.amount !== undefined) updateData.amount = parseFloat(updateData.amount);
@@ -64,6 +67,8 @@ router.put('/:farmId/marketing/cash-flow/entries/:id', authenticate, requireRole
 
 router.delete('/:farmId/marketing/cash-flow/entries/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
+    const existing = await prisma.cashFlowEntry.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    if (!existing) return res.status(404).json({ error: 'Cash flow entry not found' });
     await prisma.cashFlowEntry.delete({ where: { id: req.params.id } });
     res.json({ success: true });
   } catch (err) { next(err); }

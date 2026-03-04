@@ -127,7 +127,8 @@ router.post('/:farmId/inventory/bins', authenticate, requireRole('admin', 'manag
 router.put('/:farmId/inventory/bins/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { bin_type, capacity_bu, commodity_id, notes, is_active } = req.body;
-    const oldBin = await prisma.inventoryBin.findUnique({ where: { id: req.params.id } });
+    const oldBin = await prisma.inventoryBin.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    if (!oldBin) return res.status(404).json({ error: 'Bin not found' });
     const bin = await prisma.inventoryBin.update({
       where: { id: req.params.id },
       data: {
@@ -176,7 +177,8 @@ router.post('/:farmId/inventory/count-periods', authenticate, requireRole('admin
 router.put('/:farmId/inventory/count-periods/:id', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
     const { status } = req.body;
-    const oldPeriod = await prisma.countPeriod.findUnique({ where: { id: req.params.id } });
+    const oldPeriod = await prisma.countPeriod.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    if (!oldPeriod) return res.status(404).json({ error: 'Count period not found' });
     const period = await prisma.countPeriod.update({
       where: { id: req.params.id },
       data: { status },
@@ -232,7 +234,8 @@ router.post('/:farmId/inventory/submissions', authenticate, requireRole('admin',
 router.put('/:farmId/inventory/submissions/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { status, notes } = req.body;
-    const oldSub = await prisma.countSubmission.findUnique({ where: { id: req.params.id } });
+    const oldSub = await prisma.countSubmission.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    if (!oldSub) return res.status(404).json({ error: 'Submission not found' });
     const submission = await prisma.countSubmission.update({
       where: { id: req.params.id },
       data: {
@@ -252,7 +255,8 @@ router.put('/:farmId/inventory/submissions/:id', authenticate, requireRole('admi
 // POST approve submission
 router.post('/:farmId/inventory/submissions/:id/approve', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
-    const oldSub = await prisma.countSubmission.findUnique({ where: { id: req.params.id } });
+    const oldSub = await prisma.countSubmission.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    if (!oldSub) return res.status(404).json({ error: 'Submission not found' });
     const submission = await prisma.countSubmission.update({
       where: { id: req.params.id },
       data: { status: 'approved' },
@@ -266,7 +270,8 @@ router.post('/:farmId/inventory/submissions/:id/approve', authenticate, requireR
 router.post('/:farmId/inventory/submissions/:id/reject', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
     const { notes } = req.body;
-    const oldSub = await prisma.countSubmission.findUnique({ where: { id: req.params.id } });
+    const oldSub = await prisma.countSubmission.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    if (!oldSub) return res.status(404).json({ error: 'Submission not found' });
     const submission = await prisma.countSubmission.update({
       where: { id: req.params.id },
       data: { status: 'rejected', notes: notes || null },

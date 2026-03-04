@@ -55,6 +55,8 @@ router.post('/:farmId/marketing/counterparties', authenticate, requireRole('admi
 
 router.put('/:farmId/marketing/counterparties/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
+    const existing = await prisma.counterparty.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    if (!existing) return res.status(404).json({ error: 'Counterparty not found' });
     const counterparty = await prisma.counterparty.update({
       where: { id: req.params.id },
       data: req.body,
@@ -65,7 +67,8 @@ router.put('/:farmId/marketing/counterparties/:id', authenticate, requireRole('a
 
 router.delete('/:farmId/marketing/counterparties/:id', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
-    // Check for linked contracts
+    const existing = await prisma.counterparty.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    if (!existing) return res.status(404).json({ error: 'Counterparty not found' });
     const count = await prisma.marketingContract.count({ where: { counterparty_id: req.params.id } });
     if (count > 0) {
       return res.status(400).json({ error: `Cannot delete: ${count} contract(s) linked to this buyer` });

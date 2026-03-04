@@ -41,6 +41,8 @@ router.post('/:farmId/marketing/price-alerts', authenticate, requireRole('admin'
 
 router.put('/:farmId/marketing/price-alerts/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
+    const existing = await prisma.priceAlert.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    if (!existing) return res.status(404).json({ error: 'Price alert not found' });
     const alert = await prisma.priceAlert.update({
       where: { id: req.params.id },
       data: req.body,
@@ -52,6 +54,8 @@ router.put('/:farmId/marketing/price-alerts/:id', authenticate, requireRole('adm
 
 router.delete('/:farmId/marketing/price-alerts/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
+    const existing = await prisma.priceAlert.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    if (!existing) return res.status(404).json({ error: 'Price alert not found' });
     await prisma.priceAlert.delete({ where: { id: req.params.id } });
     res.json({ success: true });
   } catch (err) { next(err); }
