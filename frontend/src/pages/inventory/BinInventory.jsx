@@ -55,8 +55,15 @@ export default function BinInventory() {
   }, [currentFarm, filters, reloadKey]);
 
   const columnDefs = useMemo(() => [
-    { field: 'location_name', headerName: 'Location', rowGroup: true, hide: true },
-    { field: 'bin_number', headerName: 'Bin #', width: 100 },
+    { field: 'location_name', headerName: 'Location', width: 160 },
+    { field: 'bin_number', headerName: 'Bin #', width: 100, comparator: (a, b) => {
+      const numA = parseInt(a, 10);
+      const numB = parseInt(b, 10);
+      if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+      if (!isNaN(numA)) return -1;
+      if (!isNaN(numB)) return 1;
+      return String(a).localeCompare(String(b));
+    }, sort: 'asc' },
     { field: 'bin_type', headerName: 'Type', width: 100 },
     { field: 'capacity_bu', headerName: 'Capacity (bu)', width: 130, valueFormatter: p => p.value ? p.value.toLocaleString() : '-' },
     { field: 'commodity_name', headerName: 'Commodity', width: 150 },
@@ -73,11 +80,6 @@ export default function BinInventory() {
     filter: true,
   }), []);
 
-  const autoGroupColumnDef = useMemo(() => ({
-    headerName: 'Location',
-    minWidth: 200,
-    cellRendererParams: { suppressCount: false },
-  }), []);
 
   return (
     <Box>
@@ -132,8 +134,6 @@ export default function BinInventory() {
           rowData={bins}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
-          autoGroupColumnDef={autoGroupColumnDef}
-          groupDefaultExpanded={1}
           animateRows
           getRowId={p => p.data?.id}
         />
