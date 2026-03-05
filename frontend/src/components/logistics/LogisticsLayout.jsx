@@ -1,21 +1,19 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Box, Tabs, Tab } from '@mui/material';
-import DashboardIcon from '@mui/icons-material/Dashboard';
-import InventoryIcon from '@mui/icons-material/Inventory2';
-import DescriptionIcon from '@mui/icons-material/Description';
-import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
-import CountertopsIcon from '@mui/icons-material/Countertops';
+import LocalShippingIcon from '@mui/icons-material/LocalShipping';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
+import PeopleIcon from '@mui/icons-material/People';
 import { useFarm } from '../../contexts/FarmContext';
 
 const TABS = [
-  { label: 'Dashboard', path: '/inventory/dashboard', icon: <DashboardIcon /> },
-  { label: 'Bin Inventory', path: '/inventory/bins', icon: <InventoryIcon /> },
-  { label: 'Contracts', path: '/inventory/contracts', icon: <DescriptionIcon /> },
-  { label: 'Reconciliation', path: '/inventory/recon', icon: <CompareArrowsIcon /> },
-  { label: 'Bin Count', path: '/inventory/count', icon: <CountertopsIcon />, roles: ['admin', 'manager'] },
+  { label: 'Tickets', path: '/logistics/tickets', icon: <LocalShippingIcon /> },
+  { label: 'Settlements', path: '/logistics/settlements', icon: <ReceiptLongIcon /> },
+  { label: 'Settlement Recon', path: '/logistics/settlement-recon', icon: <AutoFixHighIcon />, roles: ['admin', 'manager'] },
+  { label: 'Truckers', path: '/logistics/truckers', icon: <PeopleIcon />, roles: ['admin'] },
 ];
 
-export default function InventoryLayout({ children }) {
+export default function LogisticsLayout({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { currentRole } = useFarm();

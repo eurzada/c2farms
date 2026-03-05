@@ -5,6 +5,7 @@ import {
   Dialog, DialogContent, IconButton,
 } from '@mui/material';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
+import DeleteIcon from '@mui/icons-material/Delete';
 import CloseIcon from '@mui/icons-material/Close';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
@@ -15,7 +16,7 @@ import { getSocket } from '../../services/socket';
 import TicketImportDialog from '../../components/inventory/TicketImportDialog';
 
 export default function Tickets() {
-  const { currentFarm, canEdit } = useFarm();
+  const { currentFarm, canEdit, isAdmin } = useFarm();
   const { mode } = useThemeMode();
   const gridRef = useRef();
   const [tickets, setTickets] = useState([]);
@@ -24,6 +25,7 @@ export default function Tickets() {
   const [importOpen, setImportOpen] = useState(false);
   const [settledFilter, setSettledFilter] = useState('');
   const [photoUrl, setPhotoUrl] = useState(null);
+  const [selectedCount, setSelectedCount] = useState(0);
 
   // Listen for real-time mobile ticket uploads
   useEffect(() => {
@@ -57,51 +59,82 @@ export default function Tickets() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  const handleDeleteSelected = async () => {
+    const selectedRows = gridRef.current?.api?.getSelectedRows() || [];
+    if (selectedRows.length === 0) return;
+    if (!window.confirm(`Delete ${selectedRows.length} ticket${selectedRows.length !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+
+    try {
+      const ids = selectedRows.map(r => r.id);
+      await api.delete(`/api/farms/${currentFarm.id}/tickets`, { data: { ids } });
+      setSelectedCount(0);
+      fetchData();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to delete tickets');
+    }
+  };
+
+  const onSelectionChanged = useCallback(() => {
+    const count = gridRef.current?.api?.getSelectedRows()?.length || 0;
+    setSelectedCount(count);
+  }, []);
+
   const sourceChipColors = { mobile: 'info', traction_ag: 'default', manual: 'default' };
   const sourceLabels = { mobile: 'Mobile', traction_ag: 'Traction', manual: 'Manual' };
 
   const columnDefs = useMemo(() => [
     {
-      headerName: '', width: 60, sortable: false, filter: false, resizable: false,
+      headerCheckboxSelection: true,
+      checkboxSelection: true,
+      headerCheckboxSelectionFilteredOnly: true,
+      width: 44,
+      sortable: false,
+      filter: false,
+      resizable: false,
+      pinned: 'left',
+    },
+    {
+      headerName: '', width: 50, sortable: false, filter: false, resizable: false,
       cellRenderer: p => p.data?.photo_thumbnail_url
         ? <img
             src={p.data.photo_thumbnail_url}
             alt="ticket"
-            style={{ width: 40, height: 40, borderRadius: 4, objectFit: 'cover', cursor: 'pointer' }}
+            style={{ width: 36, height: 36, borderRadius: 4, objectFit: 'cover', cursor: 'pointer' }}
             onClick={() => setPhotoUrl(p.data.photo_url)}
           />
         : null,
     },
-    { field: 'ticket_number', headerName: 'Ticket #', width: 110 },
+    { field: 'ticket_number', headerName: 'Ticket #', width: 100 },
     {
-      field: 'delivery_date', headerName: 'Date', width: 110,
+      field: 'delivery_date', headerName: 'Date', width: 95,
       valueFormatter: p => p.value ? new Date(p.value).toLocaleDateString() : '',
     },
-    { field: 'commodity.name', headerName: 'Crop', width: 120 },
+    { field: 'crop_year', headerName: 'Crop Yr', width: 75 },
+    { field: 'commodity.name', headerName: 'Crop', width: 100 },
     {
-      field: 'net_weight_mt', headerName: 'Net MT', width: 100,
+      field: 'net_weight_mt', headerName: 'Net MT', width: 85,
       valueFormatter: p => p.value?.toFixed(2),
     },
-    { field: 'counterparty.name', headerName: 'Buyer', width: 150 },
-    { field: 'marketing_contract.contract_number', headerName: 'Contract #', width: 140 },
-    { field: 'location.name', headerName: 'Location', width: 120 },
-    { field: 'bin.bin_number', headerName: 'Bin', width: 80 },
+    { field: 'location.name', headerName: 'Location', width: 100 },
+    { field: 'bin_label', headerName: 'Bin/Bag', width: 100 },
+    { field: 'buyer_name', headerName: 'Buyer', width: 120 },
+    { field: 'contract_number', headerName: 'Contract #', width: 120 },
     {
-      field: 'moisture_pct', headerName: 'Moist%', width: 80,
+      field: 'moisture_pct', headerName: 'Moist%', width: 70,
       valueFormatter: p => p.value != null ? (p.value * 100).toFixed(1) + '%' : '',
     },
-    { field: 'grade', headerName: 'Grade', width: 80 },
-    { field: 'operator_name', headerName: 'Operator', width: 130 },
-    { field: 'destination', headerName: 'Destination', width: 130 },
+    { field: 'grade', headerName: 'Grade', width: 70 },
+    { field: 'operator_name', headerName: 'Operator', width: 110 },
+    { field: 'destination', headerName: 'Destination', width: 110 },
     {
-      field: 'source_system', headerName: 'Source', width: 100,
+      field: 'source_system', headerName: 'Source', width: 85,
       cellRenderer: p => {
         const src = p.value || 'traction_ag';
         return <Chip label={sourceLabels[src] || src} size="small" color={sourceChipColors[src] || 'default'} variant="outlined" />;
       },
     },
     {
-      field: 'settled', headerName: 'Settled', width: 90,
+      field: 'settled', headerName: 'Settled', width: 75,
       cellRenderer: p => p.value
         ? <Chip label="Yes" size="small" color="success" />
         : <Chip label="No" size="small" color="default" variant="outlined" />,
@@ -117,7 +150,18 @@ export default function Tickets() {
             {total} tickets{stats ? ` | ${stats.settled} settled | ${stats.unsettled} unsettled` : ''}
           </Typography>
         </Box>
-        <Stack direction="row" spacing={1}>
+        <Stack direction="row" spacing={1} alignItems="center">
+          {selectedCount > 0 && isAdmin && (
+            <Button
+              variant="outlined"
+              color="error"
+              size="small"
+              startIcon={<DeleteIcon />}
+              onClick={handleDeleteSelected}
+            >
+              Delete {selectedCount} ticket{selectedCount !== 1 ? 's' : ''}
+            </Button>
+          )}
           <TextField
             select
             size="small"
@@ -161,7 +205,10 @@ export default function Tickets() {
           columnDefs={columnDefs}
           defaultColDef={{ sortable: true, resizable: true, filter: true }}
           animateRows
+          rowSelection="multiple"
+          suppressRowClickSelection
           getRowId={p => p.data?.id}
+          onSelectionChanged={onSelectionChanged}
         />
       </Box>
 

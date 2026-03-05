@@ -15,12 +15,13 @@ import InventoryLayout from './components/inventory/InventoryLayout';
 import InventoryDashboard from './pages/inventory/InventoryDashboard';
 import BinInventory from './pages/inventory/BinInventory';
 import Contracts from './pages/inventory/Contracts';
-import Tickets from './pages/inventory/Tickets';
-import Settlements from './pages/inventory/Settlements';
-import SettlementReconciliation from './pages/inventory/SettlementReconciliation';
 import Reconciliation from './pages/inventory/Reconciliation';
 import FarmManagerView from './pages/inventory/FarmManagerView';
-import TruckerAdmin from './pages/inventory/TruckerAdmin';
+import LogisticsLayout from './components/logistics/LogisticsLayout';
+import Tickets from './pages/logistics/Tickets';
+import Settlements from './pages/logistics/Settlements';
+import SettlementReconciliation from './pages/logistics/SettlementReconciliation';
+import TruckerAdmin from './pages/logistics/TruckerAdmin';
 import MarketingLayout from './components/marketing/MarketingLayout';
 import MarketingDashboard from './pages/marketing/MarketingDashboard';
 import MarketingContracts from './pages/marketing/MarketingContracts';
@@ -48,8 +49,9 @@ function LoginRoute() {
 function SmartRedirect() {
   const { hasModule } = useFarm();
   if (hasModule('forecast')) return <Navigate to="/assumptions" />;
-  if (hasModule('inventory')) return <Navigate to="/inventory" />;
   if (hasModule('marketing')) return <Navigate to="/marketing" />;
+  if (hasModule('logistics')) return <Navigate to="/logistics" />;
+  if (hasModule('inventory')) return <Navigate to="/inventory" />;
   return <Navigate to="/assumptions" />;
 }
 
@@ -107,13 +109,14 @@ export default function App() {
                       <Route path="/inventory" element={<ModuleRoute module="inventory"><Navigate to="/inventory/dashboard" /></ModuleRoute>} />
                       <Route path="/inventory/dashboard" element={<ModuleRoute module="inventory"><InventoryLayout><InventoryDashboard /></InventoryLayout></ModuleRoute>} />
                       <Route path="/inventory/bins" element={<ModuleRoute module="inventory"><InventoryLayout><BinInventory /></InventoryLayout></ModuleRoute>} />
-                      <Route path="/inventory/tickets" element={<ModuleRoute module="inventory"><InventoryLayout><Tickets /></InventoryLayout></ModuleRoute>} />
                       <Route path="/inventory/contracts" element={<ModuleRoute module="inventory"><InventoryLayout><Contracts /></InventoryLayout></ModuleRoute>} />
-                      <Route path="/inventory/settlements" element={<ModuleRoute module="inventory"><InventoryLayout><Settlements /></InventoryLayout></ModuleRoute>} />
                       <Route path="/inventory/recon" element={<ModuleRoute module="inventory"><InventoryLayout><Reconciliation /></InventoryLayout></ModuleRoute>} />
-                      <Route path="/inventory/settlement-recon" element={<ModuleRoute module="inventory"><InventoryLayout><SettlementReconciliation /></InventoryLayout></ModuleRoute>} />
                       <Route path="/inventory/count" element={<ModuleRoute module="inventory"><InventoryLayout><FarmManagerView /></InventoryLayout></ModuleRoute>} />
-                      <Route path="/inventory/truckers" element={<ModuleRoute module="inventory"><InventoryLayout><TruckerAdmin /></InventoryLayout></ModuleRoute>} />
+                      <Route path="/logistics" element={<ModuleRoute module="logistics"><Navigate to="/logistics/tickets" /></ModuleRoute>} />
+                      <Route path="/logistics/tickets" element={<ModuleRoute module="logistics"><LogisticsLayout><Tickets /></LogisticsLayout></ModuleRoute>} />
+                      <Route path="/logistics/settlements" element={<ModuleRoute module="logistics"><LogisticsLayout><Settlements /></LogisticsLayout></ModuleRoute>} />
+                      <Route path="/logistics/settlement-recon" element={<ModuleRoute module="logistics"><LogisticsLayout><SettlementReconciliation /></LogisticsLayout></ModuleRoute>} />
+                      <Route path="/logistics/truckers" element={<ModuleRoute module="logistics"><LogisticsLayout><TruckerAdmin /></LogisticsLayout></ModuleRoute>} />
                       <Route path="/marketing" element={<ModuleRoute module="marketing"><Navigate to="/marketing/dashboard" /></ModuleRoute>} />
                       <Route path="/marketing/dashboard" element={<ModuleRoute module="marketing"><MarketingLayout><MarketingDashboard /></MarketingLayout></ModuleRoute>} />
                       <Route path="/marketing/contracts" element={<ModuleRoute module="marketing"><MarketingLayout><MarketingContracts /></MarketingLayout></ModuleRoute>} />

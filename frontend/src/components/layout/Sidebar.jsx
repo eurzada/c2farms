@@ -10,6 +10,7 @@ import ListAltIcon from '@mui/icons-material/ListAlt';
 import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing';
 import WarehouseIcon from '@mui/icons-material/Warehouse';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import SupervisorAccountIcon from '@mui/icons-material/SupervisorAccount';
 import { useFarm } from '../../contexts/FarmContext';
@@ -20,8 +21,9 @@ const NAV_ITEMS = [
   { label: 'Per-Unit', path: '/per-unit', icon: <TableChartIcon />, module: 'forecast' },
   { label: 'Operations', path: '/operations', icon: <PrecisionManufacturingIcon />, module: 'forecast' },
   { label: 'Dashboard', path: '/dashboard', icon: <DashboardIcon />, module: 'forecast' },
-  { label: 'Inventory Management', path: '/inventory', icon: <WarehouseIcon />, module: 'inventory' },
   { label: 'Grain Marketing', path: '/marketing', icon: <TrendingUpIcon />, module: 'marketing' },
+  { label: 'Logistics', path: '/logistics', icon: <LocalShippingIcon />, module: 'logistics' },
+  { label: 'Inventory Management', path: '/inventory', icon: <WarehouseIcon />, module: 'inventory' },
   { label: 'Chart of Accounts', path: '/chart-of-accounts', icon: <ListAltIcon />, module: 'forecast' },
 ];
 
@@ -54,7 +56,7 @@ export default function Sidebar({ width }) {
         {visibleItems.map(item => (
           <ListItemButton
             key={item.path}
-            selected={location.pathname === item.path || (item.path === '/inventory' && location.pathname.startsWith('/inventory')) || (item.path === '/marketing' && location.pathname.startsWith('/marketing'))}
+            selected={location.pathname === item.path || (item.path === '/inventory' && location.pathname.startsWith('/inventory')) || (item.path === '/marketing' && location.pathname.startsWith('/marketing')) || (item.path === '/logistics' && location.pathname.startsWith('/logistics'))}
             onClick={() => navigate(item.path)}
             sx={{
               mx: 1,
