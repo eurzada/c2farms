@@ -30,11 +30,14 @@ export default function Login() {
     <Box sx={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.default' }}>
       <Card sx={{ width: 400, p: 2 }}>
         <CardContent>
-          <Typography variant="h4" textAlign="center" color="primary" gutterBottom>
+          <Box sx={{ textAlign: 'center', mb: 2 }}>
+            <img src="/logo.png" alt="C2 Farms" style={{ width: 60, height: 'auto', marginBottom: 8 }} />
+          </Box>
+          <Typography variant="h4" textAlign="center" color="primary" fontWeight={700} gutterBottom>
             C2 Farms
           </Typography>
           <Typography variant="body2" textAlign="center" color="text.secondary" sx={{ mb: 3 }}>
-            Farm Manager Login
+            A Carter Family Company
           </Typography>
 
           {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}

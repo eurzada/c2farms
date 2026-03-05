@@ -75,9 +75,17 @@ export async function requireAnyFarmAdmin(req, res, next) {
 }
 
 // Farm-level role check — must be used AFTER requireFarmAccess (which sets req.farmRole)
+// Admin implicitly has all permissions; manager includes viewer.
+const ROLE_HIERARCHY = { admin: 3, manager: 2, viewer: 1 };
+
 export function requireRole(...allowedRoles) {
   return (req, res, next) => {
-    if (!req.farmRole || !allowedRoles.includes(req.farmRole)) {
+    if (!req.farmRole) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
+    const userLevel = ROLE_HIERARCHY[req.farmRole] || 0;
+    const minLevel = Math.min(...allowedRoles.map(r => ROLE_HIERARCHY[r] || 0));
+    if (userLevel < minLevel) {
       return res.status(403).json({ error: 'Insufficient permissions' });
     }
     next();

@@ -8,19 +8,30 @@ import CountertopsIcon from '@mui/icons-material/Countertops';
 import { useFarm } from '../../contexts/FarmContext';
 
 const TABS = [
-  { label: 'Dashboard', path: '/inventory/dashboard', icon: <DashboardIcon /> },
+  { label: 'Dashboard', path: '/inventory/dashboard', icon: <DashboardIcon />, enterprise: true },
   { label: 'Bin Inventory', path: '/inventory/bins', icon: <InventoryIcon /> },
-  { label: 'Contracts', path: '/inventory/contracts', icon: <DescriptionIcon /> },
-  { label: 'Reconciliation', path: '/inventory/recon', icon: <CompareArrowsIcon /> },
+  { label: 'Contracts', path: '/inventory/contracts', icon: <DescriptionIcon />, enterprise: true },
+  { label: 'Reconciliation', path: '/inventory/recon', icon: <CompareArrowsIcon />, enterprise: true },
   { label: 'Bin Count', path: '/inventory/count', icon: <CountertopsIcon />, roles: ['admin', 'manager'] },
 ];
 
 export default function InventoryLayout({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { currentRole } = useFarm();
+  const { currentRole, isEnterprise } = useFarm();
 
-  const visibleTabs = TABS.filter(t => !t.roles || t.roles.includes(currentRole));
+  const visibleTabs = TABS.filter(t => {
+    if (t.roles && !t.roles.includes(currentRole)) return false;
+    // In farm-unit mode, hide enterprise-only tabs
+    if (!isEnterprise && t.enterprise) return false;
+    return true;
+  });
+
+  // If only one tab visible (farm-unit with just Bins), skip the tab bar
+  if (visibleTabs.length <= 1) {
+    return <Box sx={{ width: '100%' }}>{children}</Box>;
+  }
+
   const currentTab = visibleTabs.findIndex(t => location.pathname.startsWith(t.path));
 
   return (

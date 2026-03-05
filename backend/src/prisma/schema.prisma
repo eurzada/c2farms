@@ -22,12 +22,15 @@ model User {
 }
 
 model Farm {
-  id         String         @id @default(uuid())
-  name       String
-  created_at DateTime       @default(now())
-  updated_at DateTime       @updatedAt
-  user_roles UserFarmRole[]
-  audit_logs AuditLog[]
+  id              String           @id @default(uuid())
+  name            String
+  created_at      DateTime         @default(now())
+  updated_at      DateTime         @updatedAt
+  user_roles      UserFarmRole[]
+  audit_logs      AuditLog[]
+  agro_plans      AgroPlan[]
+  agro_products   AgroProduct[]
+  season_profiles SeasonProfile[]
 
   @@map("farms")
 }
@@ -687,6 +690,103 @@ model SettlementLine {
 
   @@index([settlement_id])
   @@map("settlement_lines")
+}
+
+// ─── Agronomy Module ─────────────────────────────────────────────────
+
+model AgroPlan {
+  id          String           @id @default(uuid())
+  farm_id     String
+  crop_year   Int
+  status      String           @default("draft") // draft, submitted, approved, locked
+  prepared_by String?
+  approved_by String?
+  approved_at DateTime?
+  notes       String?
+  created_at  DateTime         @default(now())
+  updated_at  DateTime         @updatedAt
+
+  farm        Farm             @relation(fields: [farm_id], references: [id])
+  allocations CropAllocation[]
+
+  @@unique([farm_id, crop_year])
+  @@map("agro_plans")
+}
+
+model CropAllocation {
+  id              String      @id @default(uuid())
+  plan_id         String
+  crop            String
+  acres           Float
+  target_yield_bu Float
+  commodity_price Float
+  sort_order      Int         @default(0)
+  n_rate_per_bu   Float?
+  p_rate_per_bu   Float?
+  k_rate_per_bu   Float?
+  s_rate_per_bu   Float?
+  available_n     Float?
+
+  plan            AgroPlan    @relation(fields: [plan_id], references: [id], onDelete: Cascade)
+  inputs          CropInput[]
+
+  @@unique([plan_id, crop])
+  @@map("crop_allocations")
+}
+
+model CropInput {
+  id               String         @id @default(uuid())
+  allocation_id    String
+  category         String         // seed, seed_treatment, fertilizer, chemical
+  product_name     String
+  product_analysis String?        // "82-0-0", "11-52-0", "12-40-0-10-1"
+  form             String?        // dry, liquid, nh3, micro_nutrient, granular
+  timing           String?        // fall_residual, preburn, incrop, fungicide, desiccation
+  rate             Float
+  rate_unit        String         // lbs/acre, L/acre, US Gal/Acre, per acre
+  cost_per_unit    Float
+  sort_order       Int            @default(0)
+
+  allocation       CropAllocation @relation(fields: [allocation_id], references: [id], onDelete: Cascade)
+
+  @@map("crop_inputs")
+}
+
+model AgroProduct {
+  id            String @id @default(uuid())
+  farm_id       String
+  name          String
+  type          String // seed, fertilizer, chemical, adjuvant
+  sub_type      String? // herbicide, fungicide, insecticide, growth_reg
+  crop_filter   String? // comma-separated crops or null for all
+  analysis_code String? // "46-0-0" (fertilizers)
+  default_unit  String?
+  default_rate  Float?
+  default_cost  Float?
+
+  farm          Farm @relation(fields: [farm_id], references: [id])
+
+  @@unique([farm_id, name, type])
+  @@map("agro_products")
+}
+
+model SeasonProfile {
+  id        String @id @default(uuid())
+  farm_id   String
+  crop      String
+  crop_year Int
+  apr_pct   Float  @default(0)
+  may_pct   Float  @default(0)
+  jun_pct   Float  @default(0)
+  jul_pct   Float  @default(0)
+  aug_pct   Float  @default(0)
+  sep_pct   Float  @default(0)
+  oct_pct   Float  @default(0)
+
+  farm      Farm @relation(fields: [farm_id], references: [id])
+
+  @@unique([farm_id, crop, crop_year])
+  @@map("season_profiles")
 }
 
 // ─── Audit Trail ─────────────────────────────────────────────────────

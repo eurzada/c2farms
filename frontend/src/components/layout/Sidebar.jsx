@@ -1,6 +1,7 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Drawer, List, ListItemButton, ListItemIcon, ListItemText, Box, Divider,
+  Typography,
 } from '@mui/material';
 import SettingsIcon from '@mui/icons-material/Settings';
 import TableChartIcon from '@mui/icons-material/TableChart';
@@ -11,29 +12,68 @@ import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturi
 import WarehouseIcon from '@mui/icons-material/Warehouse';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
+import GrassIcon from '@mui/icons-material/Grass';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import SupervisorAccountIcon from '@mui/icons-material/SupervisorAccount';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import { useFarm } from '../../contexts/FarmContext';
 
-const NAV_ITEMS = [
-  { label: 'Yield & Assumptions', path: '/assumptions', icon: <SettingsIcon />, module: 'forecast' },
+// Farm Unit nav items (per-location data entry)
+const FARM_UNIT_ITEMS = [
+  { section: 'Agronomy' },
+  { label: 'Crop Plan', path: '/agronomy', icon: <GrassIcon />, module: 'agronomy' },
+  { section: 'Forecast' },
+  { label: 'Forecast Settings', path: '/assumptions', icon: <SettingsIcon />, module: 'forecast' },
   { label: 'Cost Forecast', path: '/cost-forecast', icon: <AccountBalanceIcon />, module: 'forecast' },
   { label: 'Per-Unit', path: '/per-unit', icon: <TableChartIcon />, module: 'forecast' },
   { label: 'Operations', path: '/operations', icon: <PrecisionManufacturingIcon />, module: 'forecast' },
   { label: 'Dashboard', path: '/dashboard', icon: <DashboardIcon />, module: 'forecast' },
+  { label: 'Chart of Accounts', path: '/chart-of-accounts', icon: <ListAltIcon />, module: 'forecast' },
+  { section: 'Operations' },
+  { label: 'Bin Inventory', path: '/inventory/bins', icon: <WarehouseIcon />, module: 'inventory' },
+];
+
+// Enterprise nav items (global data entry + rollups)
+const ENTERPRISE_ITEMS = [
+  { section: 'Enterprise Data Entry' },
   { label: 'Grain Marketing', path: '/marketing', icon: <TrendingUpIcon />, module: 'marketing' },
   { label: 'Logistics', path: '/logistics', icon: <LocalShippingIcon />, module: 'logistics' },
-  { label: 'Inventory Management', path: '/inventory', icon: <WarehouseIcon />, module: 'inventory' },
-  { label: 'Chart of Accounts', path: '/chart-of-accounts', icon: <ListAltIcon />, module: 'forecast' },
+  { label: 'Inventory', path: '/inventory', icon: <WarehouseIcon />, module: 'inventory' },
+  { section: 'Rollups (Read-Only)' },
+  { label: 'Forecast Rollup', path: '/enterprise/forecast', icon: <DashboardIcon />, module: 'forecast', readOnly: true },
+  { label: 'Agronomy Rollup', path: '/enterprise/agronomy', icon: <GrassIcon />, module: 'agronomy', readOnly: true },
 ];
+
+function SectionHeader({ label }) {
+  return (
+    <Typography
+      variant="overline"
+      sx={{ px: 2, pt: 1.5, pb: 0.5, display: 'block', color: 'text.disabled', fontSize: 10, letterSpacing: 1.2 }}
+    >
+      {label}
+    </Typography>
+  );
+}
 
 export default function Sidebar({ width }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAdmin, farms, hasModule } = useFarm();
+  const { isAdmin, farms, hasModule, isEnterprise } = useFarm();
   const isAnyFarmAdmin = farms.some(f => f.role === 'admin');
 
-  const visibleItems = NAV_ITEMS.filter(item => !item.module || hasModule(item.module));
+  const items = isEnterprise ? ENTERPRISE_ITEMS : FARM_UNIT_ITEMS;
+  const visibleItems = items.filter(item => item.section || !item.module || hasModule(item.module));
+
+  const isSelected = (path) => {
+    if (location.pathname === path) return true;
+    // Prefix matching for module roots
+    const prefixes = ['/inventory', '/marketing', '/logistics', '/agronomy', '/enterprise'];
+    for (const p of prefixes) {
+      if (path === p && location.pathname.startsWith(p + '/')) return true;
+      if (path.startsWith(p + '/') && location.pathname.startsWith(p + '/') && path === location.pathname) return true;
+    }
+    return false;
+  };
 
   return (
     <Drawer
@@ -44,32 +84,39 @@ export default function Sidebar({ width }) {
         '& .MuiDrawer-paper': { width, boxSizing: 'border-box', borderRight: (theme) => `1px solid ${theme.palette.divider}`, display: 'flex', flexDirection: 'column' },
       }}
     >
-      <Box sx={{ p: 2, textAlign: 'center' }}>
+      <Box sx={{ p: 2, textAlign: 'center', cursor: 'pointer' }} onClick={() => navigate('/home')}>
         <img
-          src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='70' font-size='60'>🌾</text></svg>"
-          alt="logo"
-          style={{ width: 48, height: 48 }}
+          src="/logo.png"
+          alt="C2 Farms"
+          style={{ width: 40, height: 'auto', objectFit: 'contain' }}
         />
       </Box>
       <Divider />
       <List sx={{ flexGrow: 1 }}>
-        {visibleItems.map(item => (
-          <ListItemButton
-            key={item.path}
-            selected={location.pathname === item.path || (item.path === '/inventory' && location.pathname.startsWith('/inventory')) || (item.path === '/marketing' && location.pathname.startsWith('/marketing')) || (item.path === '/logistics' && location.pathname.startsWith('/logistics'))}
-            onClick={() => navigate(item.path)}
-            sx={{
-              mx: 1,
-              borderRadius: 2,
-              mb: 0.5,
-              '&.Mui-selected': { bgcolor: 'primary.light', color: 'white' },
-              '&.Mui-selected:hover': { bgcolor: 'primary.main' },
-            }}
-          >
-            <ListItemIcon sx={{ minWidth: 36, color: 'inherit' }}>{item.icon}</ListItemIcon>
-            <ListItemText primary={item.label} primaryTypographyProps={{ fontSize: 14 }} />
-          </ListItemButton>
-        ))}
+        {visibleItems.map((item, idx) =>
+          item.section ? (
+            <SectionHeader key={`s-${idx}`} label={item.section} />
+          ) : (
+            <ListItemButton
+              key={item.path}
+              selected={isSelected(item.path)}
+              onClick={() => navigate(item.path)}
+              sx={{
+                mx: 1,
+                borderRadius: 2,
+                mb: 0.5,
+                '&.Mui-selected': { bgcolor: 'primary.light', color: 'white' },
+                '&.Mui-selected:hover': { bgcolor: 'primary.main' },
+              }}
+            >
+              <ListItemIcon sx={{ minWidth: 36, color: 'inherit' }}>{item.icon}</ListItemIcon>
+              <ListItemText primary={item.label} primaryTypographyProps={{ fontSize: 14 }} />
+              {item.readOnly && (
+                <VisibilityIcon sx={{ fontSize: 14, color: 'text.disabled', ml: 0.5 }} />
+              )}
+            </ListItemButton>
+          )
+        )}
       </List>
       {(isAdmin || isAnyFarmAdmin) && (
         <>
@@ -80,9 +127,7 @@ export default function Sidebar({ width }) {
                 selected={location.pathname === '/settings'}
                 onClick={() => navigate('/settings')}
                 sx={{
-                  mx: 1,
-                  borderRadius: 2,
-                  mb: 0.5,
+                  mx: 1, borderRadius: 2, mb: 0.5,
                   '&.Mui-selected': { bgcolor: 'primary.light', color: 'white' },
                   '&.Mui-selected:hover': { bgcolor: 'primary.main' },
                 }}
@@ -96,9 +141,7 @@ export default function Sidebar({ width }) {
                 selected={location.pathname === '/universal-settings'}
                 onClick={() => navigate('/universal-settings')}
                 sx={{
-                  mx: 1,
-                  borderRadius: 2,
-                  mb: 0.5,
+                  mx: 1, borderRadius: 2, mb: 0.5,
                   '&.Mui-selected': { bgcolor: 'primary.light', color: 'white' },
                   '&.Mui-selected:hover': { bgcolor: 'primary.main' },
                 }}

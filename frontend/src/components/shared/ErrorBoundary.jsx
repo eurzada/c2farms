@@ -11,6 +11,12 @@ export default class ErrorBoundary extends Component {
     return { hasError: true, error };
   }
 
+  componentDidUpdate(prevProps) {
+    if (this.state.hasError && prevProps.children !== this.props.children) {
+      this.setState({ hasError: false, error: null });
+    }
+  }
+
   render() {
     if (this.state.hasError) {
       return (
@@ -21,8 +27,8 @@ export default class ErrorBoundary extends Component {
           <Typography color="text.secondary" sx={{ mb: 2 }}>
             {this.state.error?.message || 'An unexpected error occurred'}
           </Typography>
-          <Button variant="contained" onClick={() => window.location.reload()}>
-            Reload Page
+          <Button variant="contained" onClick={() => this.setState({ hasError: false, error: null })}>
+            Try Again
           </Button>
         </Box>
       );

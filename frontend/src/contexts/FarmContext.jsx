@@ -3,65 +3,97 @@ import { useAuth } from './AuthContext';
 
 const FarmContext = createContext(null);
 
+const ENTERPRISE_ID = '__enterprise__';
+const ENTERPRISE_MODULES = ['marketing', 'logistics', 'inventory', 'forecast', 'agronomy'];
+const FARM_UNIT_MODULES = ['forecast', 'agronomy', 'inventory'];
+
 export function FarmProvider({ children }) {
   const { user, farms: authFarms, refreshAuthFarms } = useAuth();
-  const [currentFarm, setCurrentFarm] = useState(null);
+  const [selectedId, setSelectedId] = useState(null); // can be ENTERPRISE_ID or a real farm id
   const [fiscalYear, setFiscalYear] = useState(() => {
-    // Default to current fiscal year (Nov-Oct: Nov/Dec = next FY)
     const now = new Date();
     return now.getMonth() >= 10 ? now.getFullYear() + 1 : now.getFullYear();
   });
 
-  // Role-derived values
-  const currentRole = currentFarm?.role || 'viewer';
-  const isAdmin = currentRole === 'admin';
-  const canEdit = currentRole === 'admin' || currentRole === 'manager';
-  const modules = currentFarm?.modules || ['forecast', 'inventory'];
-  const hasModule = (mod) => modules.includes(mod);
+  const isEnterprise = selectedId === ENTERPRISE_ID;
 
-  // Initialize current farm from authFarms, respecting localStorage persistence
+  // The real farm used for API calls (first farm when enterprise, selected farm otherwise)
+  const currentFarm = useMemo(() => {
+    if (!authFarms?.length) return null;
+    if (isEnterprise) {
+      // Return first farm but with enterprise flag for API calls
+      return authFarms[0];
+    }
+    return authFarms.find(f => f.id === selectedId) || authFarms[0];
+  }, [authFarms, selectedId, isEnterprise]);
+
+  // Build dropdown list: Enterprise + individual farms
+  const allFarms = useMemo(() => {
+    if (!authFarms?.length) return [];
+    return [
+      { id: ENTERPRISE_ID, name: 'C2 Farms Enterprise', role: 'admin' },
+      ...authFarms,
+    ];
+  }, [authFarms]);
+
+  // Role-derived values
+  const currentRole = isEnterprise ? 'admin' : (currentFarm?.role || 'viewer');
+  const isAdmin = currentRole === 'admin';
+  const canEdit = !isEnterprise ? (currentRole === 'admin' || currentRole === 'manager') : true;
+
+  // Module visibility depends on enterprise vs farm-unit mode
+  const modules = isEnterprise ? ENTERPRISE_MODULES : FARM_UNIT_MODULES;
+  const hasModule = useCallback((mod) => modules.includes(mod), [modules]);
+
+  // Wrapper for setCurrentFarm that accepts a farm object (from dropdown)
+  const setCurrentFarm = useCallback((farm) => {
+    if (farm?.id) setSelectedId(farm.id);
+  }, []);
+
+  // Initialize from localStorage
   useEffect(() => {
-    if (!user || authFarms.length === 0) {
-      setCurrentFarm(null);
+    if (!user || !authFarms?.length) {
+      setSelectedId(null);
       return;
     }
-
-    const savedFarmId = localStorage.getItem('c2farms_currentFarmId');
-    const savedFarm = savedFarmId ? authFarms.find(f => f.id === savedFarmId) : null;
-
-    if (savedFarm) {
-      setCurrentFarm(savedFarm);
-    } else if (!currentFarm || !authFarms.find(f => f.id === currentFarm.id)) {
-      setCurrentFarm(authFarms[0]);
+    const saved = localStorage.getItem('c2farms_currentFarmId');
+    if (saved === ENTERPRISE_ID) {
+      setSelectedId(ENTERPRISE_ID);
+    } else if (saved && authFarms.find(f => f.id === saved)) {
+      setSelectedId(saved);
     } else {
-      // Update current farm data (e.g. name change) from fresh farms list
-      const updated = authFarms.find(f => f.id === currentFarm.id);
-      if (updated) setCurrentFarm(updated);
+      setSelectedId(ENTERPRISE_ID); // Default to enterprise view
     }
   }, [user, authFarms]);
 
-  // Persist selected farm to localStorage
+  // Persist to localStorage
   useEffect(() => {
-    if (currentFarm?.id) {
-      localStorage.setItem('c2farms_currentFarmId', currentFarm.id);
+    if (selectedId) {
+      localStorage.setItem('c2farms_currentFarmId', selectedId);
     }
-  }, [currentFarm?.id]);
+  }, [selectedId]);
 
   const refreshFarms = useCallback(async () => {
     const newFarms = await refreshAuthFarms();
-    // After refresh, if current farm was deleted, auto-select first
-    setCurrentFarm(prev => {
-      if (!prev || !newFarms.find(f => f.id === prev.id)) {
-        return newFarms[0] || null;
-      }
-      return newFarms.find(f => f.id === prev.id) || prev;
+    setSelectedId(prev => {
+      if (prev === ENTERPRISE_ID) return ENTERPRISE_ID;
+      if (!prev || !newFarms.find(f => f.id === prev)) return ENTERPRISE_ID;
+      return prev;
     });
   }, [refreshAuthFarms]);
 
+  // All individual farms (for rollup queries)
+  const farmUnits = authFarms;
+
   const value = useMemo(() => ({
-    farms: authFarms, currentFarm, setCurrentFarm, fiscalYear, setFiscalYear, refreshFarms,
+    farms: allFarms, farmUnits, currentFarm, setCurrentFarm,
+    fiscalYear, setFiscalYear, refreshFarms,
     currentRole, isAdmin, canEdit, modules, hasModule,
-  }), [authFarms, currentFarm, fiscalYear, refreshFarms, currentRole, isAdmin, canEdit, modules]);
+    isEnterprise, selectedId,
+  }), [allFarms, farmUnits, currentFarm, setCurrentFarm,
+       fiscalYear, refreshFarms,
+       currentRole, isAdmin, canEdit, modules, hasModule,
+       isEnterprise, selectedId]);
 
   return (
     <FarmContext.Provider value={value}>
@@ -75,3 +107,5 @@ export function useFarm() {
   if (!ctx) throw new Error('useFarm must be used within FarmProvider');
   return ctx;
 }
+
+export { ENTERPRISE_ID };
