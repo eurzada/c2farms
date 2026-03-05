@@ -159,16 +159,31 @@ router.get('/:farmId/inventory/count-periods', authenticate, async (req, res, ne
 });
 
 // POST create count period
-router.post('/:farmId/inventory/count-periods', authenticate, requireRole('admin'), async (req, res, next) => {
+router.post('/:farmId/inventory/count-periods', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { period_date, crop_year } = req.body;
-    if (!period_date || !crop_year) {
-      return res.status(400).json({ error: 'period_date and crop_year are required' });
+    if (!period_date) {
+      return res.status(400).json({ error: 'period_date is required' });
     }
-    const period = await prisma.countPeriod.create({
-      data: { farm_id: req.params.farmId, period_date: new Date(period_date), crop_year: parseInt(crop_year) },
+    const parsedDate = new Date(period_date);
+
+    // Auto-infer crop_year if not provided: Aug-Dec = that year, Jan-Jul = previous year
+    const inferredCropYear = crop_year
+      ? parseInt(crop_year)
+      : (parsedDate.getUTCMonth() >= 7 ? parsedDate.getUTCFullYear() : parsedDate.getUTCFullYear() - 1);
+
+    // Check for duplicate period_date
+    const existing = await prisma.countPeriod.findFirst({
+      where: { farm_id: req.params.farmId, period_date: parsedDate },
     });
-    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'CountPeriod', entityId: period.id, action: 'create', changes: { period_date, crop_year: parseInt(crop_year) } });
+    if (existing) {
+      return res.status(400).json({ error: 'A count period already exists for this date' });
+    }
+
+    const period = await prisma.countPeriod.create({
+      data: { farm_id: req.params.farmId, period_date: parsedDate, crop_year: inferredCropYear },
+    });
+    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'CountPeriod', entityId: period.id, action: 'create', changes: { period_date, crop_year: inferredCropYear } });
     res.status(201).json({ period });
   } catch (err) { next(err); }
 });
@@ -335,6 +350,42 @@ router.post('/:farmId/inventory/bin-counts/:periodId', authenticate, requireRole
     }
 
     res.json({ counts: results, total: results.length });
+  } catch (err) { next(err); }
+});
+
+// POST copy bin counts from one period to another
+router.post('/:farmId/inventory/count-periods/:id/copy-from/:sourcePeriodId', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { farmId, id: targetPeriodId, sourcePeriodId } = req.params;
+
+    // Verify target period is open
+    const targetPeriod = await prisma.countPeriod.findFirst({ where: { id: targetPeriodId, farm_id: farmId } });
+    if (!targetPeriod) return res.status(404).json({ error: 'Target period not found' });
+    if (targetPeriod.status === 'closed') return res.status(400).json({ error: 'Target period is closed' });
+
+    // Verify target has no existing counts
+    const existingCount = await prisma.binCount.count({ where: { farm_id: farmId, count_period_id: targetPeriodId } });
+    if (existingCount > 0) return res.status(400).json({ error: 'Target period already has counts — cannot copy' });
+
+    // Get source counts
+    const sourceCounts = await prisma.binCount.findMany({ where: { farm_id: farmId, count_period_id: sourcePeriodId } });
+    if (sourceCounts.length === 0) return res.status(400).json({ error: 'Source period has no counts to copy' });
+
+    // Copy counts to target period
+    const data = sourceCounts.map(c => ({
+      farm_id: farmId,
+      count_period_id: targetPeriodId,
+      bin_id: c.bin_id,
+      commodity_id: c.commodity_id,
+      bushels: c.bushels,
+      kg: c.kg,
+      crop_year: c.crop_year,
+      notes: null,
+    }));
+    const result = await prisma.binCount.createMany({ data });
+
+    logAudit({ farmId, userId: req.userId, entityType: 'CountPeriod', entityId: targetPeriodId, action: 'copy_counts', changes: { source_period_id: sourcePeriodId, counts_copied: result.count } });
+    res.json({ copied: result.count });
   } catch (err) { next(err); }
 });
 

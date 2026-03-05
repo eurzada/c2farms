@@ -28,7 +28,10 @@ import marketingRoutes from './routes/marketing.js';
 import counterpartyRoutes from './routes/counterparties.js';
 import cashFlowRoutes from './routes/cashFlowEntries.js';
 import priceAlertRoutes from './routes/priceAlerts.js';
+import ticketRoutes from './routes/tickets.js';
+import settlementRoutes from './routes/settlements.js';
 import { fieldOpsGeneralRouter, fieldOpsFarmRouter } from './routes/fieldOps.js';
+import mobileTicketRoutes from './routes/mobileTickets.js';
 
 import { errorHandler } from './middleware/errorHandler.js';
 import { authenticate, requireFarmAccess } from './middleware/auth.js';
@@ -44,7 +47,7 @@ const corsOrigin = process.env.CORS_ORIGIN
   : true;
 app.use(cors({ origin: corsOrigin, credentials: true }));
 
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
 
 // Rate limiting
 const loginLimiter = rateLimit({
@@ -112,6 +115,9 @@ app.use('/api/farms', marketingRoutes);
 app.use('/api/farms', counterpartyRoutes);
 app.use('/api/farms', cashFlowRoutes);
 app.use('/api/farms', priceAlertRoutes);
+app.use('/api/farms', ticketRoutes);
+app.use('/api/farms', settlementRoutes);
+app.use('/api/farms', mobileTicketRoutes);
 
 // Serve frontend static files in production
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

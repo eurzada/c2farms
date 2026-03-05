@@ -14,8 +14,11 @@ import {
   buToMtFactor,
 } from '../services/marketingService.js';
 import { broadcastMarketingEvent } from '../socket/handler.js';
+import multer from 'multer';
+import { extractContractFromPdf, saveExtractedContract } from '../services/contractExtractionService.js';
 
 const router = Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 // ─── Dashboard & Position ────────────────────────────────────────────
 
@@ -222,6 +225,89 @@ router.put('/:farmId/marketing/settings', authenticate, requireRole('admin'), as
       create: { farm_id: req.params.farmId, ...req.body },
     });
     res.json({ settings });
+  } catch (err) { next(err); }
+});
+
+// ─── Contract PDF Import ─────────────────────────────────────────────
+
+// POST upload contract PDF → Claude extracts terms → creates MarketingContract
+router.post('/:farmId/marketing/contracts/import-pdf', authenticate, requireRole('admin', 'manager'), upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    if (!req.file.originalname.match(/\.(pdf|jpg|jpeg|png)$/i)) {
+      return res.status(400).json({ error: 'Only PDF and image files are supported' });
+    }
+
+    let extraction, usage;
+    try {
+      ({ extraction, usage } = await extractContractFromPdf(req.file.buffer));
+    } catch (apiErr) {
+      const status = apiErr.code === 'NO_API_KEY' || apiErr.code === 'INVALID_API_KEY' ? 500
+        : apiErr.code === 'RATE_LIMITED' ? 429
+        : apiErr.code === 'INSUFFICIENT_CREDITS' ? 402
+        : apiErr.code === 'API_OVERLOADED' ? 503
+        : 422;
+      return res.status(status).json({ error: apiErr.message, code: apiErr.code, usage: apiErr.usage || null });
+    }
+
+    // Return extraction for preview — don't save yet
+    res.json({ extraction, usage });
+  } catch (err) { next(err); }
+});
+
+// POST check for duplicate contract before confirming
+router.post('/:farmId/marketing/contracts/import-pdf/check-duplicate', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { contract_number } = req.body;
+    if (!contract_number) return res.json({ duplicate: false });
+    const existing = await prisma.marketingContract.findFirst({
+      where: { farm_id: req.params.farmId, contract_number },
+      include: { counterparty: true, commodity: true },
+    });
+    if (existing) {
+      return res.json({
+        duplicate: true,
+        existing: {
+          id: existing.id,
+          contract_number: existing.contract_number,
+          buyer: existing.counterparty?.name,
+          commodity: existing.commodity?.name,
+          contracted_mt: existing.contracted_mt,
+          status: existing.status,
+          delivered_mt: existing.delivered_mt,
+        },
+      });
+    }
+    res.json({ duplicate: false });
+  } catch (err) { next(err); }
+});
+
+// POST confirm and save extracted contract
+router.post('/:farmId/marketing/contracts/import-pdf/confirm', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { extraction, usage } = req.body;
+    if (!extraction) return res.status(400).json({ error: 'No extraction data provided' });
+
+    const contract = await saveExtractedContract(req.params.farmId, extraction, usage);
+
+    logAudit({
+      farmId: req.params.farmId,
+      userId: req.userId,
+      entityType: 'MarketingContract',
+      entityId: contract.id,
+      action: 'create',
+      changes: {
+        source: 'pdf_import',
+        contract_number: contract.contract_number,
+        buyer: contract.counterparty?.name,
+        commodity: contract.commodity?.name,
+        ai_usage: usage,
+      },
+    });
+
+    const io = req.app.get('io');
+    if (io) broadcastMarketingEvent(io, req.params.farmId, 'contract-created', contract);
+    res.status(201).json({ contract });
   } catch (err) { next(err); }
 });
 
