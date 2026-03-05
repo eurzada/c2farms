@@ -271,6 +271,7 @@ model Commodity {
   marketing_contracts MarketingContract[]
   market_prices       MarketPrice[]
   price_alerts        PriceAlert[]
+  delivery_tickets    DeliveryTicket[]
 
   @@unique([farm_id, code])
   @@map("commodities")
@@ -286,6 +287,7 @@ model InventoryLocation {
   updated_at  DateTime          @updatedAt
   bins        InventoryBin[]
   submissions CountSubmission[]
+  delivery_tickets DeliveryTicket[]
 
   @@unique([farm_id, code])
   @@map("inventory_locations")
@@ -306,6 +308,7 @@ model InventoryBin {
   location    InventoryLocation @relation(fields: [location_id], references: [id], onDelete: Cascade)
   commodity   Commodity?        @relation(fields: [commodity_id], references: [id])
   bin_counts  BinCount[]
+  delivery_tickets DeliveryTicket[]
 
   @@unique([farm_id, location_id, bin_number])
   @@map("inventory_bins")
@@ -417,6 +420,8 @@ model Counterparty {
   created_at          DateTime            @default(now())
   updated_at          DateTime            @updatedAt
   marketing_contracts MarketingContract[]
+  delivery_tickets    DeliveryTicket[]
+  settlements         Settlement[]
 
   @@unique([farm_id, name])
   @@map("counterparties")
@@ -460,6 +465,8 @@ model MarketingContract {
   commodity         Commodity       @relation(fields: [commodity_id], references: [id])
   deliveries        Delivery[]
   cash_flow_entries CashFlowEntry[]
+  delivery_tickets  DeliveryTicket[]
+  settlements       Settlement[]
 
   @@unique([farm_id, contract_number])
   @@index([farm_id, commodity_id])
@@ -543,6 +550,139 @@ model MarketingSettings {
   updated_at              DateTime @updatedAt
 
   @@map("marketing_settings")
+}
+
+// ─── Grain Logistics (Tickets, Settlements, Reconciliation) ─────────
+
+model DeliveryTicket {
+  id                    String             @id @default(uuid())
+  farm_id               String
+  marketing_contract_id String?
+  counterparty_id       String?
+  commodity_id          String?
+  bin_id                String?
+  location_id           String?
+  ticket_number         String             // Traction Ag ticket #
+  delivery_date         DateTime           @db.Date
+  gross_weight_kg       Float?
+  tare_weight_kg        Float?
+  net_weight_kg         Float
+  net_weight_mt         Float              // computed: net_weight_kg / 1000
+  dockage_pct           Float?
+  moisture_pct          Float?
+  grade                 String?
+  protein_pct           Float?
+  source_system         String             @default("traction_ag") // traction_ag, manual
+  source_ref            String?            // Load ID from Traction Ag
+  source_ticket_number  String?            // buyer's ticket # if known
+  operator_name         String?
+  vehicle               String?
+  destination           String?
+  crop_year             Int?
+  settled               Boolean            @default(false)
+  notes                 String?
+  photo_url             String?            // S3 full-size image URL
+  photo_thumbnail_url   String?            // S3 300px thumbnail URL
+  extraction_json       Json?              // raw Claude Vision output (audit trail)
+  extraction_confidence Float?             // 0-1 confidence score
+  submitted_by          String?            // user ID of trucker who submitted
+  mobile_submitted_at   DateTime?          // device timestamp from mobile app
+  client_id             String?            // UUID for offline idempotency
+  created_at            DateTime           @default(now())
+  updated_at            DateTime           @updatedAt
+  marketing_contract    MarketingContract? @relation(fields: [marketing_contract_id], references: [id])
+  counterparty          Counterparty?      @relation(fields: [counterparty_id], references: [id])
+  commodity             Commodity?         @relation(fields: [commodity_id], references: [id])
+  bin                   InventoryBin?      @relation(fields: [bin_id], references: [id])
+  location              InventoryLocation? @relation(fields: [location_id], references: [id])
+  settlement_lines      SettlementLine[]
+
+  @@unique([farm_id, ticket_number])
+  @@unique([farm_id, client_id])
+  @@index([farm_id, delivery_date])
+  @@index([farm_id, marketing_contract_id])
+  @@map("delivery_tickets")
+}
+
+model Settlement {
+  id                    String             @id @default(uuid())
+  farm_id               String
+  counterparty_id       String?
+  marketing_contract_id String?
+  ai_batch_id           String?            // links to AiBatch for batch-processed extractions
+  batch_custom_id       String?            // custom_id within the Anthropic batch
+  extraction_status     String             @default("completed") // completed, queued, processing, failed
+  settlement_number     String
+  settlement_date       DateTime?          @db.Date
+  total_amount          Float?
+  currency              String             @default("CAD")
+  status                String             @default("pending") // pending, reconciled, disputed, approved
+  buyer_format          String?            // cargill, bunge, jgl, unknown
+  source_pdf_url        String?
+  extraction_json       Json?              // raw Claude extraction output for audit
+  usage_json            Json?              // AI token usage and cost tracking
+  notes                 String?
+  created_at            DateTime           @default(now())
+  updated_at            DateTime           @updatedAt
+  counterparty          Counterparty?      @relation(fields: [counterparty_id], references: [id])
+  marketing_contract    MarketingContract? @relation(fields: [marketing_contract_id], references: [id])
+  ai_batch              AiBatch?           @relation(fields: [ai_batch_id], references: [id])
+  lines                 SettlementLine[]
+
+  @@unique([farm_id, settlement_number])
+  @@index([farm_id, status])
+  @@index([ai_batch_id])
+  @@map("settlements")
+}
+
+model AiBatch {
+  id                  String       @id @default(uuid())
+  farm_id             String
+  anthropic_batch_id  String?      // Anthropic's batch ID (msgbatch_...)
+  status              String       @default("queued") // queued, processing, completed, failed, expired
+  total_requests      Int          @default(0)
+  completed_count     Int          @default(0)
+  failed_count        Int          @default(0)
+  total_input_tokens  Int          @default(0)
+  total_output_tokens Int          @default(0)
+  estimated_cost_usd  Float        @default(0)
+  created_at          DateTime     @default(now())
+  updated_at          DateTime     @updatedAt
+  completed_at        DateTime?
+  error_message       String?
+  settlements         Settlement[]
+
+  @@index([farm_id, status])
+  @@index([anthropic_batch_id])
+  @@map("ai_batches")
+}
+
+model SettlementLine {
+  id                         String          @id @default(uuid())
+  settlement_id              String
+  delivery_ticket_id         String?         // matched ticket
+  line_number                Int
+  ticket_number_on_settlement String?        // buyer's ticket #
+  delivery_date              DateTime?       @db.Date
+  commodity                  String?
+  grade                      String?
+  gross_weight_mt            Float?
+  net_weight_mt              Float?
+  price_per_mt               Float?
+  price_per_bu               Float?
+  deductions_json            Json?           // [{name, amount}]
+  line_gross                 Float?
+  line_net                   Float?
+  match_status               String          @default("unmatched") // unmatched, matched, exception, manual
+  match_confidence           Float?          // 0-1
+  exception_reason           String?
+  created_at                 DateTime        @default(now())
+  updated_at                 DateTime        @updatedAt
+  settlement                 Settlement      @relation(fields: [settlement_id], references: [id], onDelete: Cascade)
+  delivery_ticket            DeliveryTicket? @relation(fields: [delivery_ticket_id], references: [id])
+
+  @@index([settlement_id])
+  @@map("settlement_lines")
 }
 
 // ─── Audit Trail ─────────────────────────────────────────────────────

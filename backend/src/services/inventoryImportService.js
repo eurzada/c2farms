@@ -45,23 +45,48 @@ export async function importInventoryFromExcel(farmId, buffer) {
     summary.locations++;
   }
 
-  // 3. Detect snapshot sheets (month-day pattern like "Oct 31", "Nov 30", "Dec 31")
+  // 3. Detect snapshot sheets — first by name pattern, then by column headers
   const snapshotPattern = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})$/i;
+  const contractPattern = /contract/i;
   const snapshotSheets = [];
+
+  // Helper: check if a sheet has inventory-like headers (Location + Bin #)
+  function hasInventoryHeaders(sheet) {
+    if (sheet.rowCount < 2) return false;
+    const headerRow = sheet.getRow(1);
+    let hasLocation = false, hasBin = false;
+    headerRow.eachCell((cell) => {
+      const val = (cell.value || '').toString().trim().toLowerCase();
+      if (val.includes('farm') || val.includes('location')) hasLocation = true;
+      if (val.includes('bin')) hasBin = true;
+    });
+    return hasLocation && hasBin;
+  }
+
   workbook.eachSheet((sheet) => {
-    if (snapshotPattern.test(sheet.name.trim())) {
+    const name = sheet.name.trim();
+    // Match by name pattern first
+    if (snapshotPattern.test(name)) {
+      snapshotSheets.push(sheet);
+    }
+    // Fall back: any non-contract sheet with Location + Bin # headers
+    else if (!contractPattern.test(name) && hasInventoryHeaders(sheet)) {
       snapshotSheets.push(sheet);
     }
   });
 
   if (snapshotSheets.length === 0) {
-    errors.push('No snapshot sheets found (expected names like "Oct 31", "Nov 30")');
+    errors.push('No snapshot sheets found (need sheets with Location and Bin # columns, or named like "Oct 31", "Nov 30")');
   }
 
-  // Build period date from sheet name + infer year
+  // Build period date from sheet name + infer year, or default to today
   function parsePeriodDate(sheetName) {
     const match = sheetName.trim().match(snapshotPattern);
-    if (!match) return null;
+    if (!match) {
+      // Sheet detected by headers, not name — use today as the period date
+      const now = new Date();
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    }
     const monthStr = match[1];
     const day = parseInt(match[2]);
     const monthIndex = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
