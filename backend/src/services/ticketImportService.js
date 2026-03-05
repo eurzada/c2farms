@@ -68,17 +68,25 @@ export function parseCsv(csvText) {
 }
 
 /**
- * Parse "From" field: "Lewvan: 504 Bag 1 - Canola 2025 crop"
- * Returns { locationName, binNumber }
+ * Parse "From" field: "Lewvan: 508 Bag 1 - Canola 2025 crop"
+ * Returns { locationName, binNumber, binLabel }
+ *   locationName: "Lewvan"
+ *   binNumber: "508" (just the number, for matching to InventoryBin)
+ *   binLabel: "508 Bag 1" (full storage identifier including bag/bag#)
  */
 export function parseFromField(fromValue) {
-  if (!fromValue) return { locationName: null, binNumber: null };
-  // Pattern: "LocationName: BinNumber ..."
-  const match = fromValue.match(/^([^:]+):\s*(\S+)/);
+  if (!fromValue) return { locationName: null, binNumber: null, binLabel: null };
+  // Pattern: "LocationName: BinNumber [Bag N] [- Crop Year crop]"
+  const match = fromValue.match(/^([^:]+):\s*(.+?)(?:\s*-\s*.+)?$/);
   if (match) {
-    return { locationName: match[1].trim(), binNumber: match[2].trim() };
+    const locationName = match[1].trim();
+    const binPart = match[2].trim(); // e.g. "508 Bag 1" or "504" or "LGX Yard"
+    // Extract leading number as the bin number for DB matching
+    const numMatch = binPart.match(/^(\d+)/);
+    const binNumber = numMatch ? numMatch[1] : binPart.split(/\s/)[0];
+    return { locationName, binNumber, binLabel: binPart };
   }
-  return { locationName: null, binNumber: null };
+  return { locationName: null, binNumber: null, binLabel: null };
 }
 
 /**
@@ -195,7 +203,7 @@ export async function previewTicketImport(farmId, csvText) {
 
     // Parse fields
     const cropName = parseCropName(row[colMap.crop]);
-    const { locationName, binNumber } = parseFromField(row[colMap.from]);
+    const { locationName, binNumber, binLabel } = parseFromField(row[colMap.from]);
     const { buyerName: contractBuyer, contractNumber } = parseContractField(row[colMap.contract]);
     const { buyerName: toBuyer, destination } = parseToField(row[colMap.to]);
 
@@ -276,6 +284,9 @@ export async function previewTicketImport(farmId, csvText) {
       source_ticket_number: row[colMap.toTicket] || null,
       settled: row[colMap.settled]?.toLowerCase() === 'true',
       destination,
+      bin_label: binLabel || null,
+      contract_number: contractNumber || null,
+      buyer_name: buyerNameToMatch || null,
       // Match results
       commodity_id: matchedCommodity?.id || null,
       commodity_match: matchedCommodity?.name || null,
@@ -333,6 +344,9 @@ export async function commitTicketImport(farmId, tickets) {
         vehicle: t.vehicle || null,
         destination: t.destination || null,
         crop_year: t.crop_year || null,
+        bin_label: t.bin_label || null,
+        contract_number: t.contract_number || null,
+        buyer_name: t.buyer_name || null,
         settled: t.settled || false,
         notes: t.notes || null,
         marketing_contract_id: t.marketing_contract_id || null,

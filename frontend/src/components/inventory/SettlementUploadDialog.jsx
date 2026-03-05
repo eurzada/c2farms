@@ -180,6 +180,7 @@ export default function SettlementUploadDialog({ open, onClose, farmId, onUpload
                   <MenuItem value="cargill">Cargill</MenuItem>
                   <MenuItem value="bunge">Bunge</MenuItem>
                   <MenuItem value="jgl">JGL Commodities</MenuItem>
+                  <MenuItem value="richardson">Richardson Pioneer</MenuItem>
                   <MenuItem value="unknown">Other</MenuItem>
                 </TextField>
 

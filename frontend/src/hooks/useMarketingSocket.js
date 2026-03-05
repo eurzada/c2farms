@@ -23,6 +23,7 @@ export function useMarketingSocket(farmId, onEvent) {
       'marketing:contract:updated',
       'marketing:delivery:created',
       'marketing:price:updated',
+      'settlement:approved',
     ];
 
     const handlers = events.map(event => {

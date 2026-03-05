@@ -11,16 +11,17 @@ const EXTRACTION_PROMPTS = {
   "settlement_number": "string",
   "settlement_date": "YYYY-MM-DD",
   "buyer": "Cargill",
-  "contract_number": "string",
-  "commodity": "string",
+  "contract_number": "string (the Contract # from the contract breakdown or per-ticket detail rows — look for a numeric contract number like '2100459885')",
+  "commodity": "string (look for the grain/commodity name — e.g. 'Canola', 'CWRS', 'Durum Wheat', 'Barley'. Check the first page summary, contract breakdown section, or product/grain column)",
   "total_gross_amount": number,
   "total_net_amount": number,
   "currency": "CAD",
   "lines": [
     {
       "line_number": 1,
-      "ticket_number": "string (Cargill Unit#)",
+      "ticket_number": "string (the weigh scale ticket number — this is the number that matches the trucker's scale ticket, NOT Cargill's internal receipt/unit number)",
       "delivery_date": "YYYY-MM-DD",
+      "contract_number": "string or null (per-ticket Contract #)",
       "gross_weight_mt": number,
       "net_weight_mt": number,
       "grade": "string or null",
@@ -35,7 +36,12 @@ const EXTRACTION_PROMPTS = {
   ]
 }
 
-Look for Settlement Details tables with per-ticket rows. Cargill uses "Unit#" for their ticket numbers. Extract ALL ticket rows even across multiple pages. Return ONLY valid JSON, no extra text.`,
+IMPORTANT: Look carefully for the contract number and commodity:
+- Contract # appears in the "Contract Summary" section, per-ticket detail rows (Contract# column), or the settlement header. It is usually a long numeric string (e.g. "2100459885" or "2100333513").
+- Commodity/grain type appears in the settlement summary or header (e.g. "Canola", "1 CWRS", "Durum", "Barley"). Also check the "Product" or "Grain" fields.
+- If there are multiple contracts in one settlement, use the primary/most common contract number for the top-level field and include per-line contract_number.
+
+Look for Settlement Details tables with per-ticket rows. IMPORTANT: Cargill settlements may show multiple numbers per ticket line — a Unit# (Cargill's internal receipt number) and potentially a weigh scale number. The ticket_number should be the WEIGH SCALE number (the smaller number that the trucker receives at the scale), NOT Cargill's large internal Unit#. If only one number is available per line, use that. Extract ALL ticket rows even across multiple pages. Return ONLY valid JSON, no extra text.`,
 
   bunge: `You are extracting data from a Bunge grain settlement PDF. Extract ALL of the following into structured JSON:
 
@@ -51,7 +57,7 @@ Look for Settlement Details tables with per-ticket rows. Cargill uses "Unit#" fo
   "lines": [
     {
       "line_number": 1,
-      "ticket_number": "string",
+      "ticket_number": "string (the weigh scale ticket number — the number matching the trucker's scale ticket from Traction Ag, NOT the buyer's internal receipt number)",
       "delivery_date": "YYYY-MM-DD",
       "vehicle_id": "string or null",
       "gross_weight_mt": number,
@@ -67,7 +73,7 @@ Look for Settlement Details tables with per-ticket rows. Cargill uses "Unit#" fo
   ]
 }
 
-Bunge settlements typically have one ticket per page. Look for Ticket Net Weight KG (convert to MT by dividing by 1000), Gross Qty MT, Net Qty MT. Return ONLY valid JSON, no extra text.`,
+Bunge settlements typically have one ticket per page. Look for Ticket Net Weight KG (convert to MT by dividing by 1000), Gross Qty MT, Net Qty MT. IMPORTANT: If the document shows multiple ticket/reference numbers, use the weigh scale number (the one matching the trucker's scale ticket) as the ticket_number. Return ONLY valid JSON, no extra text.`,
 
   jgl: `You are extracting data from a JGL Commodities grain settlement document. This may be a photographed/scanned document that could be rotated. Extract ALL of the following into structured JSON:
 
@@ -83,7 +89,7 @@ Bunge settlements typically have one ticket per page. Look for Ticket Net Weight
   "lines": [
     {
       "line_number": 1,
-      "ticket_number": "string",
+      "ticket_number": "string (the weigh scale ticket number — the number matching the trucker's scale ticket from Traction Ag, NOT the buyer's internal receipt number)",
       "delivery_date": "YYYY-MM-DD",
       "vehicle_id": "string or null",
       "origin": "string or null",
@@ -98,7 +104,50 @@ Bunge settlements typically have one ticket per page. Look for Ticket Net Weight
   ]
 }
 
-JGL documents show: ID, Contract#, Commodity, Settlement No, per-ticket rows with Ticket No, Vehicle Id, Date, Origin/CGC, MT Applied, Grade, DO. Also look for deduction summaries (Checkoff Levy, Drying, Quality discounts, Freight). Return ONLY valid JSON, no extra text.`,
+JGL documents show: ID, Contract#, Commodity, Settlement No, per-ticket rows with Ticket No, Vehicle Id, Date, Origin/CGC, MT Applied, Grade, DO. Also look for deduction summaries (Checkoff Levy, Drying, Quality discounts, Freight). IMPORTANT: If the document shows multiple ticket/reference numbers per line, use the weigh scale number (the one matching the trucker's scale ticket) as the ticket_number. Return ONLY valid JSON, no extra text.`,
+
+  richardson: `You are extracting data from a Richardson Pioneer grain settlement PDF (titled "Cash Purchase Ticket" or "Settlement Details"). Extract ALL of the following into structured JSON:
+
+{
+  "settlement_number": "string (the Settlement No.)",
+  "settlement_date": "YYYY-MM-DD (the Settlement Date)",
+  "buyer": "Richardson Pioneer",
+  "contract_number": "string (the Contract # — if multiple contracts appear, use the most common one)",
+  "commodity": "string (the Grain field, e.g. 'WHEAT CWRS')",
+  "crop_year": "string or null",
+  "station": "string or null (delivery station name, e.g. 'CROOKED RIVER HT')",
+  "total_gross_amount": number (the TOTALS row Gross Amount, or sum of all line Gross Amounts),
+  "total_net_amount": number (the NET SETTLEMENT AMT),
+  "currency": "CAD",
+  "lines": [
+    {
+      "line_number": 1,
+      "ticket_number": "string (the Weigh # — this is the weigh scale ticket number that matches the trucker's Traction Ag ticket, e.g. '121907'. It is typically a 6-digit number on the third line of each ticket block, NOT the large Station/Receipt # like '734510684')",
+      "station_receipt_number": "string or null (the Station/Receipt # — Richardson's internal receipt number, e.g. '734510684')",
+      "load_number": "string or null (the Load # — e.g. '734437556')",
+      "delivery_date": "YYYY-MM-DD (the Dlvy Date)",
+      "contract_number": "string or null (per-line Contract #)",
+      "grade": "string or null (e.g. '1 CW RS 135')",
+      "moisture_pct": number or null (Moist %),
+      "dockage_pct": number or null (Dock %),
+      "protein_pct": number or null (Prot %),
+      "gross_weight_mt": number or null (Unload Weight in MT),
+      "net_weight_mt": number or null (Net Weight in MT — after dockage and cleaning),
+      "price_per_mt": number or null (Base Price),
+      "line_gross": number or null (Gross Amount),
+      "deductions": [{"name": "string", "amount": number}]
+    }
+  ]
+}
+
+Richardson Pioneer settlements are titled "Cash Purchase Ticket" with "Settlement Details" headers on each page. Each ticket block has THREE lines of identifiers:
+- Line 1: Station name (e.g. "ROP YORKTON SEED 1 CANADA") and quality data
+- Line 2: Station/Receipt # (large number like 734510684), Load # (like 734437556), Dlvy Date, Contract #, Order#
+- Line 3: Weigh # (6-digit number like 121907) — THIS IS THE ticket_number TO EXTRACT
+
+CRITICAL: The ticket_number field MUST be the Weigh # (the small 6-digit number on the third line of each ticket block, e.g. "121907", "121926", "121930"). Do NOT use the Station/Receipt # (large number like "734510684") as the ticket_number — put that in station_receipt_number instead.
+
+Also extract: Grade, Moist/Dock/Prot %, Unload/Clean/Net Weight (all in MT), Base Price, Gross Amount. Below each ticket row are per-ticket Adjustments (DRYING, QUALITY SPREAD ADJ, SK WHT CHK OFF, SASK CANOLA DEV COMM, etc.) — extract these as deductions with their dollar amounts. The last page has TOTALS and a summary Adjustment table with NET SETTLEMENT AMT. Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.`,
 
   unknown: `You are extracting data from a grain settlement PDF. The buyer format is unknown. Extract ALL of the following into structured JSON:
 
@@ -114,7 +163,7 @@ JGL documents show: ID, Contract#, Commodity, Settlement No, per-ticket rows wit
   "lines": [
     {
       "line_number": 1,
-      "ticket_number": "string or null",
+      "ticket_number": "string or null (the weigh scale ticket number — the number matching the trucker's scale ticket, NOT the buyer's internal receipt number)",
       "delivery_date": "YYYY-MM-DD or null",
       "gross_weight_mt": number or null,
       "net_weight_mt": number or null,
@@ -151,7 +200,7 @@ async function detectBuyerFormat(pdfBase64) {
           },
           {
             type: 'text',
-            text: 'What grain company issued this settlement document? Reply with ONLY one word: "cargill", "bunge", "jgl", or "unknown".',
+            text: 'What grain company issued this settlement document? Reply with ONLY one word: "cargill", "bunge", "jgl", "richardson", or "unknown".',
           },
         ],
       }],
@@ -159,7 +208,7 @@ async function detectBuyerFormat(pdfBase64) {
 
     const usage = computeUsage(model, response);
     const answer = response.content[0]?.text?.trim().toLowerCase();
-    const format = ['cargill', 'bunge', 'jgl'].includes(answer) ? answer : 'unknown';
+    const format = ['cargill', 'bunge', 'jgl', 'richardson'].includes(answer) ? answer : 'unknown';
     return { format, usage };
   } catch (err) {
     const classified = classifyApiError(err);
@@ -195,7 +244,7 @@ export async function extractSettlementFromPdf(pdfBuffer, forceBuyerFormat = nul
     const client = await getAnthropicClient();
     response = await client.messages.create({
       model,
-      max_tokens: 4096,
+      max_tokens: 16384,
       messages: [{
         role: 'user',
         content: [
@@ -252,6 +301,56 @@ export async function extractSettlementFromPdf(pdfBuffer, forceBuyerFormat = nul
 }
 
 /**
+ * Post-process AI-extracted ticket numbers.
+ * Settlement PDFs often show multiple ID numbers per ticket line:
+ *   - Station/Receipt # (buyer's internal, 9+ digits)
+ *   - Load # (buyer's internal)
+ *   - Weigh # (scale ticket number, typically 5-6 digits, matches Traction Ag)
+ *
+ * The AI frequently grabs the wrong number. This function ensures ticket_number
+ * contains the weigh scale number by checking for shorter alternative numbers.
+ */
+function postProcessTicketNumbers(lines, buyerFormat) {
+  return lines.map(line => {
+    const tn = String(line.ticket_number || '');
+    // Check alternative fields that might contain the weigh scale number
+    const alternatives = [
+      line.load_number,
+      line.weigh_number,
+      line.scale_ticket,
+    ].filter(Boolean).map(String);
+
+    // If ticket_number is a long internal number (8+ digits) and there's a shorter
+    // alternative (5-6 digits), the shorter one is likely the weigh scale number
+    if (tn.length >= 8 && /^\d+$/.test(tn)) {
+      const shorter = alternatives.find(a => /^\d+$/.test(a) && a.length >= 5 && a.length <= 7);
+      if (shorter) {
+        return {
+          ...line,
+          ticket_number: shorter,
+          buyer_receipt_number: tn,
+        };
+      }
+    }
+
+    // Also handle: if ticket_number is long and load_number is shorter, swap
+    // even without strict digit-length checks — for Richardson specifically
+    if (buyerFormat === 'richardson' && tn.length >= 8 && alternatives.length > 0) {
+      const best = alternatives.find(a => a.length < tn.length) || alternatives[0];
+      if (best && best.length < tn.length) {
+        return {
+          ...line,
+          ticket_number: best,
+          buyer_receipt_number: tn,
+        };
+      }
+    }
+
+    return line;
+  });
+}
+
+/**
  * Save extracted settlement data to the database.
  * Creates Settlement + SettlementLine records.
  */
@@ -302,8 +401,8 @@ export async function saveSettlement(farmId, extraction, buyerFormat, { pdfUrl =
     },
   });
 
-  // Create settlement lines
-  const lines = extraction.lines || [];
+  // Post-process: fix ticket numbers when AI grabs internal IDs instead of weigh scale numbers
+  const lines = postProcessTicketNumbers(extraction.lines || [], buyerFormat);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     await prisma.settlementLine.create({
@@ -398,7 +497,7 @@ export async function queueBatchExtraction(farmId, files) {
       custom_id: `settlement-${aiBatch.id}-${item.index}`,
       params: {
         model: MODELS.extraction,
-        max_tokens: 4096,
+        max_tokens: 16384,
         messages: [{
           role: 'user',
           content: [
@@ -582,8 +681,8 @@ async function processBatchResults(aiBatch) {
           },
         });
 
-        // Create settlement lines
-        const lines = extraction.lines || [];
+        // Post-process ticket numbers and create settlement lines
+        const lines = postProcessTicketNumbers(extraction.lines || [], settlement.buyer_format);
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i];
           await prisma.settlementLine.create({

@@ -1,23 +1,40 @@
 import prisma from '../config/database.js';
 
 /**
- * AI-powered reconciliation service for matching settlement lines to delivery tickets.
+ * Reconciliation service for matching settlement lines to delivery tickets.
  *
- * Since ticket numbers don't match across systems (Traction Ag, Cargill, Bunge, JGL
- * all use independent numbering), reconciliation uses multi-dimensional matching:
- *   1. Contract # (strongest signal)
- *   2. Net weight within tolerance (±2%)
- *   3. Date proximity (delivery date ± 3 days)
- *   4. Commodity match
- *   5. Location/origin hints
+ * Two-phase matching:
+ *   Phase 1 (deterministic): Ticket number is an exact match or nothing.
+ *     Buyer systems (Cargill, Richardson, Bunge, JGL) use precise, controlled
+ *     numbering — there is no "close" ticket number.
+ *   Phase 2 (scored fallback): For lines without a ticket-number match,
+ *     score on operational data: weight + commodity + date + contract.
  */
 
-const WEIGHT_TOLERANCE_PCT = 0.02; // 2% tolerance for weight matching
+const WEIGHT_TOLERANCE_PCT = 0.03; // 3% tolerance (settlement net includes dockage deductions)
 const DATE_TOLERANCE_DAYS = 3;     // ±3 days for date proximity
 
+// Map common western Canadian grain grade designations to commodity names
+const GRADE_TO_COMMODITY = {
+  '1 canada': 'canola', '2 canada': 'canola', '1 ce': 'canola',
+  '1 cw': 'durum', '2 cw': 'durum', '3 cw': 'durum', '1 cwad': 'durum', '2 cwad': 'durum',
+  '2 can': 'lentils', '1 can': 'lentils', 'no. 1': 'lentils',
+  '1 ca': 'chickpeas', '2 ca': 'chickpeas',
+  '1 cw red spring': 'wheat', '2 cw red spring': 'wheat',
+};
+
+function normalizeCommodity(value) {
+  if (!value) return null;
+  const lower = value.toLowerCase().trim();
+  return GRADE_TO_COMMODITY[lower] || lower;
+}
+
 /**
- * Compute a match score between a settlement line and a delivery ticket.
- * Returns { score: 0-1, dimensions: {...}, issues: [] }
+ * Score a settlement line against a delivery ticket on OPERATIONAL data only.
+ * Ticket number matching is handled deterministically before this runs —
+ * this function is only called for lines that didn't match by ticket number.
+ *
+ * Dimensions: weight (40%), date (30%), commodity (15%), contract (15%).
  */
 function computeMatchScore(line, ticket, contractNumber) {
   const dimensions = {};
@@ -25,82 +42,85 @@ function computeMatchScore(line, ticket, contractNumber) {
   let totalWeight = 0;
   let matchedWeight = 0;
 
-  // 1. Contract match (weight: 40%)
-  const contractWeight = 0.4;
-  totalWeight += contractWeight;
-  if (contractNumber && ticket.marketing_contract?.contract_number === contractNumber) {
-    dimensions.contract = { matched: true, score: 1 };
-    matchedWeight += contractWeight;
-  } else if (ticket.marketing_contract_id) {
-    dimensions.contract = { matched: false, score: 0 };
-    issues.push('contract_mismatch');
-  } else {
-    dimensions.contract = { matched: false, score: 0.2 }; // unlinked ticket gets partial
-    matchedWeight += contractWeight * 0.2;
-  }
-
-  // 2. Weight match (weight: 30%)
-  const weightWeight = 0.3;
-  totalWeight += weightWeight;
-  if (line.net_weight_mt && ticket.net_weight_mt) {
-    const diff = Math.abs(line.net_weight_mt - ticket.net_weight_mt);
-    const pctDiff = diff / Math.max(line.net_weight_mt, ticket.net_weight_mt);
+  // 1. Weight match (40%) — strongest operational signal
+  const weightDimWeight = 0.4;
+  totalWeight += weightDimWeight;
+  // Compare settlement gross_weight_mt (pre-dockage) against ticket net_weight_mt
+  const lineWeight = line.gross_weight_mt || line.net_weight_mt;
+  const ticketWeight = ticket.net_weight_mt;
+  if (lineWeight && ticketWeight) {
+    const diff = Math.abs(lineWeight - ticketWeight);
+    const pctDiff = diff / Math.max(lineWeight, ticketWeight);
     if (pctDiff <= WEIGHT_TOLERANCE_PCT) {
       dimensions.weight = { matched: true, score: 1, diff_pct: pctDiff * 100 };
-      matchedWeight += weightWeight;
-    } else if (pctDiff <= 0.05) {
-      const partialScore = 1 - ((pctDiff - WEIGHT_TOLERANCE_PCT) / 0.03);
+      matchedWeight += weightDimWeight;
+    } else if (pctDiff <= 0.08) {
+      const partialScore = 1 - ((pctDiff - WEIGHT_TOLERANCE_PCT) / 0.05);
       dimensions.weight = { matched: false, score: Math.max(0, partialScore), diff_pct: pctDiff * 100 };
-      matchedWeight += weightWeight * Math.max(0, partialScore);
+      matchedWeight += weightDimWeight * Math.max(0, partialScore);
       issues.push(`weight_diff_${(pctDiff * 100).toFixed(1)}%`);
     } else {
       dimensions.weight = { matched: false, score: 0, diff_pct: pctDiff * 100 };
       issues.push('weight_mismatch');
     }
   } else {
-    dimensions.weight = { matched: false, score: 0.1 }; // no data
-    matchedWeight += weightWeight * 0.1;
+    dimensions.weight = { matched: false, score: 0 };
+    issues.push('weight_missing');
   }
 
-  // 3. Date proximity (weight: 20%)
-  const dateWeight = 0.2;
-  totalWeight += dateWeight;
+  // 2. Date proximity (30%)
+  const dateDimWeight = 0.3;
+  totalWeight += dateDimWeight;
   if (line.delivery_date && ticket.delivery_date) {
     const lineDate = new Date(line.delivery_date);
     const ticketDate = new Date(ticket.delivery_date);
     const daysDiff = Math.abs((lineDate - ticketDate) / (1000 * 60 * 60 * 24));
     if (daysDiff <= 1) {
       dimensions.date = { matched: true, score: 1, days_diff: daysDiff };
-      matchedWeight += dateWeight;
+      matchedWeight += dateDimWeight;
     } else if (daysDiff <= DATE_TOLERANCE_DAYS) {
       const score = 1 - ((daysDiff - 1) / (DATE_TOLERANCE_DAYS - 1)) * 0.5;
       dimensions.date = { matched: true, score, days_diff: daysDiff };
-      matchedWeight += dateWeight * score;
+      matchedWeight += dateDimWeight * score;
     } else {
       dimensions.date = { matched: false, score: 0, days_diff: daysDiff };
       issues.push('date_mismatch');
     }
   } else {
-    dimensions.date = { matched: false, score: 0.1 };
-    matchedWeight += dateWeight * 0.1;
+    dimensions.date = { matched: false, score: 0 };
+    issues.push('date_missing');
   }
 
-  // 4. Commodity match (weight: 10%)
-  const commodityWeight = 0.1;
-  totalWeight += commodityWeight;
+  // 3. Commodity match (15%)
+  const commodityDimWeight = 0.15;
+  totalWeight += commodityDimWeight;
   if (line.commodity && ticket.commodity) {
-    const lineComm = line.commodity.toLowerCase();
-    const ticketComm = ticket.commodity.name.toLowerCase();
-    if (lineComm === ticketComm || lineComm.includes(ticketComm) || ticketComm.includes(lineComm)) {
+    const lineComm = normalizeCommodity(line.commodity);
+    const ticketComm = normalizeCommodity(ticket.commodity.name);
+    if (lineComm && ticketComm && (lineComm === ticketComm || lineComm.includes(ticketComm) || ticketComm.includes(lineComm))) {
       dimensions.commodity = { matched: true, score: 1 };
-      matchedWeight += commodityWeight;
+      matchedWeight += commodityDimWeight;
     } else {
       dimensions.commodity = { matched: false, score: 0 };
       issues.push('commodity_mismatch');
     }
   } else {
-    dimensions.commodity = { matched: false, score: 0.5 };
-    matchedWeight += commodityWeight * 0.5;
+    dimensions.commodity = { matched: false, score: 0.3 };
+    matchedWeight += commodityDimWeight * 0.3;
+  }
+
+  // 4. Contract match (15%)
+  const contractDimWeight = 0.15;
+  totalWeight += contractDimWeight;
+  if (contractNumber && ticket.marketing_contract?.contract_number === contractNumber) {
+    dimensions.contract = { matched: true, score: 1 };
+    matchedWeight += contractDimWeight;
+  } else if (ticket.marketing_contract_id) {
+    dimensions.contract = { matched: false, score: 0 };
+    issues.push('contract_mismatch');
+  } else {
+    dimensions.contract = { matched: false, score: 0.2 };
+    matchedWeight += contractDimWeight * 0.2;
   }
 
   const score = totalWeight > 0 ? matchedWeight / totalWeight : 0;
@@ -119,6 +139,10 @@ function computeMatchScore(line, ticket, contractNumber) {
  * 5. Return match results with confidence scores and exceptions
  */
 export async function reconcileSettlement(settlementId) {
+  console.log(`\n${'═'.repeat(70)}`);
+  console.log(`[RECON] Starting reconciliation for settlement ${settlementId}`);
+  console.log(`${'═'.repeat(70)}`);
+
   const settlement = await prisma.settlement.findUnique({
     where: { id: settlementId },
     include: {
@@ -129,6 +153,7 @@ export async function reconcileSettlement(settlementId) {
   });
 
   if (!settlement) throw new Error('Settlement not found');
+  console.log(`[RECON] Settlement #${settlement.settlement_number} | ${settlement.counterparty?.name || 'Unknown'} | ${settlement.lines.length} lines`);
 
   const farmId = settlement.farm_id;
   const contractNumber = settlement.marketing_contract?.contract_number;
@@ -157,23 +182,19 @@ export async function reconcileSettlement(settlementId) {
     ticketWhere.counterparty_id = settlement.counterparty_id;
   }
 
-  const candidateTickets = await prisma.deliveryTicket.findMany({
-    where: ticketWhere,
-    include: {
-      marketing_contract: true,
-      commodity: true,
-      location: true,
-    },
-  });
+  // Phase 1: Direct ticket-number lookup (deterministic matches)
+  // Settlement lines often carry the exact ticket # from the buyer system.
+  // When this matches a delivery ticket, it's the strongest possible signal.
+  const lineTicketNumbers = settlement.lines
+    .filter(l => l.ticket_number_on_settlement)
+    .map(l => l.ticket_number_on_settlement.trim());
 
-  // Also fetch tickets without contract/counterparty filter as fallback
-  let fallbackTickets = [];
-  if (candidateTickets.length < settlement.lines.length) {
-    fallbackTickets = await prisma.deliveryTicket.findMany({
+  let directMatchTickets = [];
+  if (lineTicketNumbers.length > 0) {
+    directMatchTickets = await prisma.deliveryTicket.findMany({
       where: {
         farm_id: farmId,
-        delivery_date: { gte: minDate, lte: maxDate },
-        id: { notIn: candidateTickets.map(t => t.id) },
+        ticket_number: { in: lineTicketNumbers },
       },
       include: {
         marketing_contract: true,
@@ -183,12 +204,93 @@ export async function reconcileSettlement(settlementId) {
     });
   }
 
-  const allTickets = [...candidateTickets, ...fallbackTickets];
+  console.log(`[RECON] Phase 1: ${lineTicketNumbers.length} lines have ticket numbers → found ${directMatchTickets.length} matching tickets in DB`);
+  if (directMatchTickets.length < lineTicketNumbers.length) {
+    const foundNums = new Set(directMatchTickets.map(t => t.ticket_number.trim()));
+    const missing = lineTicketNumbers.filter(n => !foundNums.has(n));
+    console.log(`[RECON]   Missing ticket numbers: ${missing.join(', ')}`);
+  }
 
-  // Score all line-ticket combinations
-  const scoredPairs = [];
+  // Build ticket number → ticket map for fast lookup
+  const ticketByNumber = new Map();
+  for (const t of directMatchTickets) {
+    ticketByNumber.set(t.ticket_number.trim(), t);
+  }
+
+  // Phase 2: Fetch additional candidate tickets for lines without ticket-number matches
+  const candidateTickets = await prisma.deliveryTicket.findMany({
+    where: {
+      ...ticketWhere,
+      id: { notIn: directMatchTickets.map(t => t.id) },
+    },
+    include: {
+      marketing_contract: true,
+      commodity: true,
+      location: true,
+    },
+  });
+
+  // Also fetch tickets without contract/counterparty filter as fallback
+  const alreadyFetched = new Set([...directMatchTickets.map(t => t.id), ...candidateTickets.map(t => t.id)]);
+  let fallbackTickets = [];
+  const unmatchableLines = settlement.lines.filter(l =>
+    !l.ticket_number_on_settlement || !ticketByNumber.has(l.ticket_number_on_settlement.trim())
+  );
+  if (unmatchableLines.length > candidateTickets.length) {
+    fallbackTickets = await prisma.deliveryTicket.findMany({
+      where: {
+        farm_id: farmId,
+        delivery_date: { gte: minDate, lte: maxDate },
+        id: { notIn: [...alreadyFetched] },
+      },
+      include: {
+        marketing_contract: true,
+        commodity: true,
+        location: true,
+      },
+    });
+  }
+
+  const allTickets = [...directMatchTickets, ...candidateTickets, ...fallbackTickets];
+  console.log(`[RECON] Phase 2: ${candidateTickets.length} contract-filtered candidates + ${fallbackTickets.length} fallback = ${allTickets.length} total tickets`);
+
+  // Phase 3: Deterministic matches first — lock in ticket-number matches before greedy
+  // This prevents the greedy algorithm from stealing tickets that have exact # matches.
+  const matchedLineIds = new Set();
+  const matchedTicketIds = new Set();
+  const matches = [];
+
   for (const line of settlement.lines) {
-    for (const ticket of allTickets) {
+    const lineNum = line.ticket_number_on_settlement?.trim();
+    if (!lineNum) continue;
+    const ticket = ticketByNumber.get(lineNum);
+    if (!ticket || matchedTicketIds.has(ticket.id)) continue;
+
+    const result = computeMatchScore(line, ticket, contractNumber);
+
+    matchedLineIds.add(line.id);
+    matchedTicketIds.add(ticket.id);
+    matches.push({
+      line_id: line.id,
+      ticket_id: ticket.id,
+      score: result.score,
+      match_status: 'matched',
+      exception_reason: null,
+      dimensions: result.dimensions,
+      issues: result.issues,
+    });
+    console.log(`[RECON]   ✓ Line ${line.line_number} (tkt# ${lineNum}) → Ticket ${ticket.ticket_number} [deterministic] score=${result.score.toFixed(3)}`);
+  }
+
+  console.log(`[RECON] Phase 3: ${matches.length} deterministic ticket-number matches`);
+
+  // Phase 4: Score remaining (non-deterministic) line-ticket combinations
+  const remainingLines = settlement.lines.filter(l => !matchedLineIds.has(l.id));
+  const remainingTickets = allTickets.filter(t => !matchedTicketIds.has(t.id));
+
+  const scoredPairs = [];
+  for (const line of remainingLines) {
+    for (const ticket of remainingTickets) {
       const result = computeMatchScore(line, ticket, contractNumber);
       scoredPairs.push({
         line_id: line.id,
@@ -201,11 +303,7 @@ export async function reconcileSettlement(settlementId) {
   // Sort by score descending (greedy assignment)
   scoredPairs.sort((a, b) => b.score - a.score);
 
-  // Greedy assignment: highest-scoring pairs first, no double-matching
-  const matchedLineIds = new Set();
-  const matchedTicketIds = new Set();
-  const matches = [];
-
+  // Greedy assignment for remaining lines
   for (const pair of scoredPairs) {
     if (matchedLineIds.has(pair.line_id) || matchedTicketIds.has(pair.ticket_id)) continue;
     if (pair.score < 0.3) continue; // minimum threshold
@@ -221,6 +319,8 @@ export async function reconcileSettlement(settlementId) {
       exceptionReason = pair.issues.join(', ') || 'low_confidence';
     }
 
+    const lineInfo = settlement.lines.find(l => l.id === pair.line_id);
+    const ticketInfo = allTickets.find(t => t.id === pair.ticket_id);
     matches.push({
       line_id: pair.line_id,
       ticket_id: pair.ticket_id,
@@ -230,6 +330,7 @@ export async function reconcileSettlement(settlementId) {
       dimensions: pair.dimensions,
       issues: pair.issues,
     });
+    console.log(`[RECON]   ${matchStatus === 'matched' ? '✓' : '⚠'} Line ${lineInfo?.line_number} → Ticket ${ticketInfo?.ticket_number} [scored] score=${pair.score.toFixed(3)} status=${matchStatus}${exceptionReason ? ` reason=${exceptionReason}` : ''}`);
   }
 
   // Handle unmatched lines
@@ -244,6 +345,7 @@ export async function reconcileSettlement(settlementId) {
       dimensions: {},
       issues: ['no_matching_ticket_found'],
     });
+    console.log(`[RECON]   ✗ Line ${line.line_number} (tkt# ${line.ticket_number_on_settlement || 'none'}) → UNMATCHED — no ticket found`);
   }
 
   // Save match results to database
@@ -269,20 +371,27 @@ export async function reconcileSettlement(settlementId) {
     data: { status: newStatus },
   });
 
+  const summary = {
+    total_lines: settlement.lines.length,
+    matched: matches.filter(m => m.match_status === 'matched').length,
+    exceptions: matches.filter(m => m.match_status === 'exception').length,
+    unmatched: unmatchedLines.length,
+    candidate_tickets: allTickets.length,
+    avg_confidence: matches.length > 0
+      ? matches.reduce((s, m) => s + m.score, 0) / matches.length
+      : 0,
+  };
+
+  console.log(`[RECON] ${'─'.repeat(50)}`);
+  console.log(`[RECON] RESULT: ${summary.matched} matched | ${summary.exceptions} exceptions | ${summary.unmatched} unmatched | avg conf ${(summary.avg_confidence * 100).toFixed(0)}%`);
+  console.log(`[RECON] Status: ${newStatus}`);
+  console.log(`${'═'.repeat(70)}\n`);
+
   return {
     settlement_id: settlementId,
     status: newStatus,
     matches,
-    summary: {
-      total_lines: settlement.lines.length,
-      matched: matches.filter(m => m.match_status === 'matched').length,
-      exceptions: matches.filter(m => m.match_status === 'exception').length,
-      unmatched: unmatchedLines.length,
-      candidate_tickets: allTickets.length,
-      avg_confidence: matches.length > 0
-        ? matches.reduce((s, m) => s + m.score, 0) / matches.length
-        : 0,
-    },
+    summary,
   };
 }
 
@@ -304,11 +413,20 @@ export async function manualMatch(lineId, ticketId, notes = null) {
 
 /**
  * Approve all matches for a settlement, setting status to "approved".
+ * Creates Delivery records, updates MarketingContracts, generates CashFlowEntry receipts,
+ * and stores a reconciliation report.
  */
-export async function approveSettlement(settlementId) {
+export async function approveSettlement(settlementId, userId = null) {
+  console.log(`\n[APPROVE] Starting approval for settlement ${settlementId} by user ${userId}`);
+
   // Verify all lines are matched or manually resolved
   const lines = await prisma.settlementLine.findMany({
     where: { settlement_id: settlementId },
+    include: {
+      delivery_ticket: {
+        include: { marketing_contract: true },
+      },
+    },
   });
 
   const unresolved = lines.filter(l =>
@@ -321,30 +439,176 @@ export async function approveSettlement(settlementId) {
     );
   }
 
-  // Mark matched tickets as settled
-  const ticketIds = lines
-    .filter(l => l.delivery_ticket_id)
-    .map(l => l.delivery_ticket_id);
-
-  if (ticketIds.length > 0) {
-    await prisma.deliveryTicket.updateMany({
-      where: { id: { in: ticketIds } },
-      data: { settled: true },
-    });
-  }
-
-  const settlement = await prisma.settlement.update({
+  // Fetch settlement for farm_id, total_amount, date
+  const settlementData = await prisma.settlement.findUnique({
     where: { id: settlementId },
-    data: { status: 'approved' },
-    include: {
-      lines: {
-        include: { delivery_ticket: true },
-        orderBy: { line_number: 'asc' },
+    include: { marketing_contract: true },
+  });
+  if (!settlementData) throw new Error('Settlement not found');
+
+  const farmId = settlementData.farm_id;
+
+  // Run all approval side effects in a transaction
+  const result = await prisma.$transaction(async (tx) => {
+    // 1. Mark matched tickets as settled
+    const ticketIds = lines
+      .filter(l => l.delivery_ticket_id)
+      .map(l => l.delivery_ticket_id);
+
+    if (ticketIds.length > 0) {
+      await tx.deliveryTicket.updateMany({
+        where: { id: { in: ticketIds } },
+        data: { settled: true },
+      });
+    }
+
+    // 2. Create Delivery records for matched lines with marketing contracts
+    let deliveriesCreated = 0;
+    const contractDeliveryMap = new Map(); // contractId → total MT delivered from this settlement
+
+    for (const line of lines) {
+      const ticket = line.delivery_ticket;
+      if (!ticket?.marketing_contract_id) continue;
+
+      // Prevent double-counting: skip if Delivery already exists for this ticket + contract
+      const existing = await tx.delivery.findFirst({
+        where: {
+          marketing_contract_id: ticket.marketing_contract_id,
+          ticket_number: ticket.ticket_number,
+          farm_id: farmId,
+        },
+      });
+      if (existing) continue;
+
+      const mtDelivered = line.net_weight_mt || ticket.net_weight_mt;
+      await tx.delivery.create({
+        data: {
+          farm_id: farmId,
+          marketing_contract_id: ticket.marketing_contract_id,
+          mt_delivered: mtDelivered,
+          delivery_date: ticket.delivery_date,
+          ticket_number: ticket.ticket_number,
+          notes: 'Auto-created from settlement approval',
+        },
+      });
+      deliveriesCreated++;
+
+      // Track per-contract MT for cash flow split
+      const prev = contractDeliveryMap.get(ticket.marketing_contract_id) || 0;
+      contractDeliveryMap.set(ticket.marketing_contract_id, prev + mtDelivered);
+    }
+
+    // 3. Update MarketingContracts — re-aggregate ALL deliveries per contract
+    const contractsUpdated = [];
+    for (const contractId of contractDeliveryMap.keys()) {
+      const agg = await tx.delivery.aggregate({
+        where: { marketing_contract_id: contractId },
+        _sum: { mt_delivered: true },
+      });
+      const totalDelivered = agg._sum.mt_delivered || 0;
+
+      const contract = await tx.marketingContract.findUnique({
+        where: { id: contractId },
+      });
+      if (!contract) continue;
+
+      const remaining = Math.max(0, contract.contracted_mt - totalDelivered);
+
+      // Auto-transition status
+      let newStatus = contract.status;
+      if (totalDelivered > 0 && contract.status === 'executed') {
+        newStatus = 'in_delivery';
+      }
+      if (remaining <= 0 && (contract.status === 'executed' || contract.status === 'in_delivery')) {
+        newStatus = 'delivered';
+      }
+
+      await tx.marketingContract.update({
+        where: { id: contractId },
+        data: {
+          delivered_mt: totalDelivered,
+          remaining_mt: remaining,
+          status: newStatus,
+        },
+      });
+
+      contractsUpdated.push({
+        contract_id: contractId,
+        contract_number: contract.contract_number,
+        delivered_mt: totalDelivered,
+        remaining_mt: remaining,
+        previous_status: contract.status,
+        new_status: newStatus,
+      });
+    }
+
+    // 4. Create CashFlowEntry receipts
+    let cashFlowEntriesCreated = 0;
+    let cashFlowTotal = 0;
+
+    if (settlementData.total_amount && settlementData.total_amount > 0 && contractDeliveryMap.size > 0) {
+      const periodDate = settlementData.settlement_date || new Date();
+      const totalMtFromSettlement = Array.from(contractDeliveryMap.values()).reduce((a, b) => a + b, 0);
+
+      for (const [contractId, mt] of contractDeliveryMap) {
+        // Split proportionally by MT delivered per contract
+        const proportion = totalMtFromSettlement > 0 ? mt / totalMtFromSettlement : 1 / contractDeliveryMap.size;
+        const amount = Math.round(settlementData.total_amount * proportion * 100) / 100;
+
+        const contractInfo = contractsUpdated.find(c => c.contract_id === contractId);
+        await tx.cashFlowEntry.create({
+          data: {
+            farm_id: farmId,
+            period_date: periodDate,
+            entry_type: 'receipt',
+            category: 'grain_sale',
+            description: `Settlement #${settlementData.settlement_number} — ${contractInfo?.contract_number || 'contract'}`,
+            amount: amount,
+            marketing_contract_id: contractId,
+            is_actual: true,
+            notes: `Auto-created from settlement approval`,
+          },
+        });
+        cashFlowEntriesCreated++;
+        cashFlowTotal += amount;
+      }
+    }
+
+    // 5. Build reconciliation report
+    const report = {
+      approved_by: userId,
+      approved_at: new Date().toISOString(),
+      total_lines: lines.length,
+      matched_lines: lines.filter(l => l.match_status === 'matched').length,
+      manual_lines: lines.filter(l => l.match_status === 'manual').length,
+      total_settlement_value: settlementData.total_amount || 0,
+      deliveries_created: deliveriesCreated,
+      contracts_updated: contractsUpdated,
+      cash_flow_entries_created: cashFlowEntriesCreated,
+      cash_flow_total: cashFlowTotal,
+    };
+
+    // 6. Save report and set status
+    const settlement = await tx.settlement.update({
+      where: { id: settlementId },
+      data: {
+        status: 'approved',
+        reconciliation_report: report,
       },
-      counterparty: true,
-      marketing_contract: true,
-    },
+      include: {
+        lines: {
+          include: { delivery_ticket: true },
+          orderBy: { line_number: 'asc' },
+        },
+        counterparty: true,
+        marketing_contract: true,
+      },
+    });
+
+    console.log(`[APPROVE] Report: ${JSON.stringify(report, null, 2)}`);
+    return { settlement, report, contracts_updated: contractsUpdated };
   });
 
-  return settlement;
+  console.log(`[APPROVE] Settlement approved successfully`);
+  return result;
 }

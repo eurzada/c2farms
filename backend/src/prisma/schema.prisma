@@ -625,6 +625,7 @@ model Settlement {
   extraction_json       Json?              // raw Claude extraction output for audit
   usage_json            Json?              // AI token usage and cost tracking
   notes                 String?
+  reconciliation_report Json?
   created_at            DateTime           @default(now())
   updated_at            DateTime           @updatedAt
   counterparty          Counterparty?      @relation(fields: [counterparty_id], references: [id])

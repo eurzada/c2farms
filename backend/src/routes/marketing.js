@@ -179,6 +179,27 @@ router.delete('/:farmId/marketing/contracts/:id', authenticate, requireRole('adm
   } catch (err) { next(err); }
 });
 
+// DELETE bulk delete (cancel) contracts
+router.delete('/:farmId/marketing/contracts', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids array is required' });
+    }
+    const result = await prisma.marketingContract.updateMany({
+      where: { id: { in: ids }, farm_id: req.params.farmId },
+      data: { status: 'cancelled' },
+    });
+    logAudit({
+      farmId: req.params.farmId, userId: req.userId,
+      entityType: 'MarketingContract', entityId: 'bulk_cancel',
+      action: 'cancel',
+      changes: { cancelled: result.count, requested: ids.length },
+    });
+    res.json({ cancelled: result.count });
+  } catch (err) { next(err); }
+});
+
 // ─── Prices ──────────────────────────────────────────────────────────
 
 router.get('/:farmId/marketing/prices', authenticate, async (req, res, next) => {

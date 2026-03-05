@@ -93,6 +93,32 @@ router.post('/:farmId/tickets/import/commit', authenticate, requireRole('admin',
   } catch (err) { next(err); }
 });
 
+// DELETE bulk delete tickets
+router.delete('/:farmId/tickets', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids array is required' });
+    }
+
+    // Only delete tickets belonging to this farm
+    const result = await prisma.deliveryTicket.deleteMany({
+      where: { id: { in: ids }, farm_id: req.params.farmId },
+    });
+
+    logAudit({
+      farmId: req.params.farmId,
+      userId: req.userId,
+      entityType: 'DeliveryTicket',
+      entityId: 'bulk_delete',
+      action: 'delete',
+      changes: { deleted: result.count, requested: ids.length },
+    });
+
+    res.json({ deleted: result.count });
+  } catch (err) { next(err); }
+});
+
 // GET ticket stats for a farm
 router.get('/:farmId/tickets/stats/summary', authenticate, async (req, res, next) => {
   try {

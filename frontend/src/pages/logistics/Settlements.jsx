@@ -165,7 +165,7 @@ export default function Settlements() {
             </IconButton>
           </Tooltip>
           <Tooltip title="Reconcile">
-            <IconButton size="small" color="primary" onClick={(e) => { e.stopPropagation(); navigate(`/inventory/settlement-recon?id=${p.data.id}`); }}>
+            <IconButton size="small" color="primary" onClick={(e) => { e.stopPropagation(); navigate(`/logistics/settlement-recon?id=${p.data.id}`); }}>
               <AutoFixHighIcon fontSize="small" />
             </IconButton>
           </Tooltip>
@@ -448,7 +448,7 @@ export default function Settlements() {
           {detail && (
             <Button
               startIcon={<AutoFixHighIcon />}
-              onClick={() => { setDetailOpen(false); navigate(`/inventory/settlement-recon?id=${detail.id}`); }}
+              onClick={() => { setDetailOpen(false); navigate(`/logistics/settlement-recon?id=${detail.id}`); }}
             >
               Reconcile
             </Button>

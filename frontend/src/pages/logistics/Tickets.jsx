@@ -7,6 +7,8 @@ import {
 import FileUploadIcon from '@mui/icons-material/FileUpload';
 import DeleteIcon from '@mui/icons-material/Delete';
 import CloseIcon from '@mui/icons-material/Close';
+import SearchIcon from '@mui/icons-material/Search';
+import InputAdornment from '@mui/material/InputAdornment';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { useFarm } from '../../contexts/FarmContext';
@@ -26,6 +28,7 @@ export default function Tickets() {
   const [settledFilter, setSettledFilter] = useState('');
   const [photoUrl, setPhotoUrl] = useState(null);
   const [selectedCount, setSelectedCount] = useState(0);
+  const [searchText, setSearchText] = useState('');
 
   // Listen for real-time mobile ticket uploads
   useEffect(() => {
@@ -181,6 +184,21 @@ export default function Tickets() {
           )}
         </Stack>
       </Stack>
+
+      <TextField
+        size="small"
+        placeholder="Search tickets (ticket #, buyer, operator, crop...)"
+        value={searchText}
+        onChange={(e) => {
+          setSearchText(e.target.value);
+          gridRef.current?.api?.setGridOption('quickFilterText', e.target.value);
+        }}
+        InputProps={{
+          startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" color="action" /></InputAdornment>,
+        }}
+        sx={{ mb: 1.5, maxWidth: 450 }}
+        fullWidth
+      />
 
       {stats?.by_counterparty?.length > 0 && (
         <Stack direction="row" spacing={1} sx={{ mb: 2 }} flexWrap="wrap">

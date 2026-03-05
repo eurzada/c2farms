@@ -10,6 +10,7 @@ import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import EditIcon from '@mui/icons-material/Edit';
 import CancelIcon from '@mui/icons-material/Cancel';
+import DeleteIcon from '@mui/icons-material/Delete';
 import SettingsIcon from '@mui/icons-material/Settings';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
@@ -68,6 +69,7 @@ export default function MarketingContracts() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [snack, setSnack] = useState({ open: false, message: '', severity: 'info' });
   const [importOpen, setImportOpen] = useState(false);
+  const [selectedCount, setSelectedCount] = useState(0);
 
   const fetchData = useCallback(() => {
     if (!currentFarm) return;
@@ -101,7 +103,37 @@ export default function MarketingContracts() {
     }
   };
 
+  const handleDeleteSelected = async () => {
+    const selectedRows = gridRef.current?.api?.getSelectedRows() || [];
+    if (selectedRows.length === 0) return;
+    if (!window.confirm(`Cancel ${selectedRows.length} contract${selectedRows.length !== 1 ? 's' : ''}? This will set them to "Cancelled" status.`)) return;
+    try {
+      const ids = selectedRows.map(r => r.id);
+      await api.delete(`/api/farms/${currentFarm.id}/marketing/contracts`, { data: { ids } });
+      setSelectedCount(0);
+      fetchData();
+      setSnack({ open: true, message: `${selectedRows.length} contract(s) cancelled.`, severity: 'info' });
+    } catch (err) {
+      setSnack({ open: true, message: err.response?.data?.error || 'Failed to cancel contracts', severity: 'error' });
+    }
+  };
+
+  const onSelectionChanged = useCallback(() => {
+    const count = gridRef.current?.api?.getSelectedRows()?.length || 0;
+    setSelectedCount(count);
+  }, []);
+
   const columnDefs = useMemo(() => [
+    {
+      headerCheckboxSelection: true,
+      checkboxSelection: true,
+      headerCheckboxSelectionFilteredOnly: true,
+      width: 44,
+      sortable: false,
+      filter: false,
+      resizable: false,
+      pinned: 'left',
+    },
     { field: 'contract_number', headerName: '#', width: 110, pinned: 'left' },
     { field: 'counterparty.name', headerName: 'Buyer', width: 140 },
     { field: 'commodity.name', headerName: 'Crop', width: 120 },
@@ -172,7 +204,18 @@ export default function MarketingContracts() {
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
         <Typography variant="h5" sx={{ fontWeight: 600 }}>Marketing Contracts</Typography>
-        <Stack direction="row" spacing={1}>
+        <Stack direction="row" spacing={1} alignItems="center">
+          {selectedCount > 0 && isAdmin && (
+            <Button
+              variant="outlined"
+              color="error"
+              size="small"
+              startIcon={<DeleteIcon />}
+              onClick={handleDeleteSelected}
+            >
+              Cancel {selectedCount} contract{selectedCount !== 1 ? 's' : ''}
+            </Button>
+          )}
           {isAdmin && (
             <Tooltip title="Settings">
               <IconButton onClick={() => setSettingsOpen(true)}><SettingsIcon /></IconButton>
@@ -219,7 +262,10 @@ export default function MarketingContracts() {
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           animateRows
+          rowSelection="multiple"
+          suppressRowClickSelection
           getRowId={p => p.data?.id}
+          onSelectionChanged={onSelectionChanged}
         />
       </Box>
 
