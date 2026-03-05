@@ -5,14 +5,22 @@ import InventoryIcon from '@mui/icons-material/Inventory2';
 import DescriptionIcon from '@mui/icons-material/Description';
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import CountertopsIcon from '@mui/icons-material/Countertops';
+import LocalShippingIcon from '@mui/icons-material/LocalShipping';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
+import PeopleIcon from '@mui/icons-material/People';
 import { useFarm } from '../../contexts/FarmContext';
 
 const TABS = [
   { label: 'Dashboard', path: '/inventory/dashboard', icon: <DashboardIcon /> },
   { label: 'Bin Inventory', path: '/inventory/bins', icon: <InventoryIcon /> },
+  { label: 'Tickets', path: '/inventory/tickets', icon: <LocalShippingIcon /> },
   { label: 'Contracts', path: '/inventory/contracts', icon: <DescriptionIcon /> },
+  { label: 'Settlements', path: '/inventory/settlements', icon: <ReceiptLongIcon /> },
   { label: 'Reconciliation', path: '/inventory/recon', icon: <CompareArrowsIcon /> },
+  { label: 'Settlement Recon', path: '/inventory/settlement-recon', icon: <AutoFixHighIcon />, roles: ['admin', 'manager'] },
   { label: 'Bin Count', path: '/inventory/count', icon: <CountertopsIcon />, roles: ['admin', 'manager'] },
+  { label: 'Truckers', path: '/inventory/truckers', icon: <PeopleIcon />, roles: ['admin'] },
 ];
 
 export default function InventoryLayout({ children }) {

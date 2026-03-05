@@ -6,19 +6,23 @@ import {
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 import SendIcon from '@mui/icons-material/Send';
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import UndoIcon from '@mui/icons-material/Undo';
+import AddIcon from '@mui/icons-material/Add';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { useFarm } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import { getGridColors } from '../../utils/gridColors';
 import api from '../../services/api';
+import NewPeriodDialog from '../../components/inventory/NewPeriodDialog';
+import ExcelImportDialog from '../../components/inventory/ExcelImportDialog';
 
-function CopyLastRenderer({ data, context }) {
-  if (!data) return null;
+function UndoRenderer({ data, context }) {
+  if (!data || !context.dirtyBinIds.has(data.id)) return null;
   return (
-    <IconButton size="small" onClick={() => context.onCopyLast(data.id)} title="Copy last count">
-      <ContentCopyIcon fontSize="small" />
+    <IconButton size="small" onClick={() => context.onUndo(data.id)} title="Undo changes">
+      <UndoIcon fontSize="small" />
     </IconButton>
   );
 }
@@ -32,12 +36,15 @@ export default function FarmManagerView() {
   const [locations, setLocations] = useState([]);
   const [commodities, setCommodities] = useState([]);
   const [selectedLocation, setSelectedLocation] = useState('');
-  const [period, setPeriod] = useState(null);
+  const [periods, setPeriods] = useState([]);
+  const [selectedPeriodId, setSelectedPeriodId] = useState('');
   const [rowData, setRowData] = useState([]);
   const [lastCounts, setLastCounts] = useState({});
   const [dirtyBinIds, setDirtyBinIds] = useState(new Set());
   const [saving, setSaving] = useState(false);
   const [snack, setSnack] = useState({ open: false, message: '', severity: 'info' });
+  const [newPeriodOpen, setNewPeriodOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   // Fetch locations, commodities, periods on mount
   useEffect(() => {
@@ -49,11 +56,20 @@ export default function FarmManagerView() {
     ]).then(([locRes, comRes, perRes]) => {
       setLocations(locRes.data.locations || []);
       setCommodities(comRes.data.commodities || []);
-      const periods = perRes.data.periods || [];
-      const openPeriod = periods.find(p => p.status === 'open') || periods[0];
-      setPeriod(openPeriod || null);
+      const p = perRes.data.periods || [];
+      setPeriods(p);
+      const openPeriod = p.find(pr => pr.status === 'open') || p[0];
+      setSelectedPeriodId(openPeriod?.id || '');
     });
   }, [currentFarm]);
+
+  const period = useMemo(() => periods.find(p => p.id === selectedPeriodId) || null, [periods, selectedPeriodId]);
+  const previousPeriod = useMemo(() => {
+    if (!period) return null;
+    const idx = periods.findIndex(p => p.id === period.id);
+    return idx >= 0 && idx < periods.length - 1 ? periods[idx + 1] : null;
+  }, [periods, period]);
+  const periodIsEditable = period?.status !== 'closed';
 
   // Commodity lookups
   const commodityNameToId = useMemo(() => {
@@ -106,8 +122,8 @@ export default function FarmManagerView() {
     setRowData(prev => [...prev]);
   }, [commodityNameToId]);
 
-  // Copy Last — restore row to its initial loaded values
-  const onCopyLast = useCallback((binId) => {
+  // Undo — restore row to its initial loaded values
+  const onUndo = useCallback((binId) => {
     const last = lastCounts[binId];
     if (!last) return;
     setRowData(prev => prev.map(row =>
@@ -115,13 +131,19 @@ export default function FarmManagerView() {
         ? { ...row, commodity_id: last.commodity_id, commodity_name: last.commodity_name, bushels: last.bushels, crop_year: last.crop_year }
         : row
     ));
-    setDirtyBinIds(prev => new Set(prev).add(binId));
+    setDirtyBinIds(prev => {
+      const next = new Set(prev);
+      next.delete(binId);
+      return next;
+    });
   }, [lastCounts]);
 
   // Progress
   const countedBins = rowData.filter(r => r.bushels > 0).length;
   const totalBins = rowData.length;
   const progress = totalBins > 0 ? (countedBins / totalBins) * 100 : 0;
+
+  const editable = canEdit && periodIsEditable;
 
   // Column definitions
   const columnDefs = useMemo(() => [
@@ -142,28 +164,28 @@ export default function FarmManagerView() {
     },
     {
       field: 'commodity_name', headerName: 'Commodity', width: 160,
-      editable: canEdit,
+      editable,
       cellEditor: 'agSelectCellEditor',
       cellEditorParams: { values: commodityNames },
     },
     {
       field: 'bushels', headerName: 'Bushels', width: 120,
-      editable: canEdit,
+      editable,
       valueParser: p => parseFloat(p.newValue) || 0,
       valueFormatter: p => p.value ? p.value.toLocaleString() : '0',
       cellStyle: { backgroundColor: colors.actualCell },
     },
     {
       field: 'crop_year', headerName: 'Crop Year', width: 110,
-      editable: canEdit,
+      editable,
       valueParser: p => p.newValue ? parseInt(p.newValue) : null,
     },
-    {
+    ...(editable ? [{
       headerName: '', width: 60,
-      cellRenderer: CopyLastRenderer,
+      cellRenderer: UndoRenderer,
       sortable: false, filter: false, suppressNavigable: true,
-    },
-  ], [canEdit, commodityNames, colors]);
+    }] : []),
+  ], [editable, commodityNames, colors]);
 
   const defaultColDef = useMemo(() => ({
     sortable: true,
@@ -219,13 +241,30 @@ export default function FarmManagerView() {
     <Box>
       <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>Farm Manager - Bin Count</Typography>
 
-      {period && (
-        <Alert severity="info" sx={{ mb: 2 }}>
-          Count Period: {new Date(period.period_date).toLocaleDateString('en-CA')} ({period.status})
-        </Alert>
-      )}
-
       <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
+        <FormControl size="small" sx={{ minWidth: 200 }}>
+          <InputLabel>Count Period</InputLabel>
+          <Select
+            value={selectedPeriodId}
+            label="Count Period"
+            onChange={e => setSelectedPeriodId(e.target.value)}
+          >
+            {periods.map(p => (
+              <MenuItem key={p.id} value={p.id}>
+                {new Date(p.period_date).toLocaleDateString('en-CA')} ({p.status})
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+
+        <Button variant="outlined" size="small" startIcon={<AddIcon />} onClick={() => setNewPeriodOpen(true)}>
+          New Period
+        </Button>
+
+        <Button variant="outlined" size="small" startIcon={<UploadFileIcon />} onClick={() => setImportOpen(true)}>
+          Import
+        </Button>
+
         <FormControl size="small" sx={{ minWidth: 200 }}>
           <InputLabel>Location</InputLabel>
           <Select value={selectedLocation} label="Location" onChange={e => setSelectedLocation(e.target.value)}>
@@ -253,7 +292,7 @@ export default function FarmManagerView() {
           defaultColDef={defaultColDef}
           animateRows
           getRowId={p => p.data?.id}
-          context={{ onCopyLast }}
+          context={{ onUndo, dirtyBinIds }}
           onCellValueChanged={onCellValueChanged}
           singleClickEdit
           enterNavigatesAfterEdit
@@ -261,14 +300,42 @@ export default function FarmManagerView() {
         />
       </Box>
 
-      <Stack direction="row" spacing={2} sx={{ mt: 2 }}>
-        <Button variant="outlined" startIcon={<SaveIcon />} onClick={() => handleSave(false)} disabled={saving}>
-          Save Draft
-        </Button>
-        <Button variant="contained" startIcon={<SendIcon />} onClick={() => handleSave(true)} disabled={saving}>
-          Submit for Approval
-        </Button>
-      </Stack>
+      {periodIsEditable && (
+        <Stack direction="row" spacing={2} sx={{ mt: 2 }}>
+          <Button variant="outlined" startIcon={<SaveIcon />} onClick={() => handleSave(false)} disabled={saving}>
+            Save Draft
+          </Button>
+          <Button variant="contained" startIcon={<SendIcon />} onClick={() => handleSave(true)} disabled={saving}>
+            Submit for Approval
+          </Button>
+        </Stack>
+      )}
+      {!periodIsEditable && period && (
+        <Alert severity="warning" sx={{ mt: 2 }}>This period is closed and read-only.</Alert>
+      )}
+
+      {currentFarm && (
+        <ExcelImportDialog
+          open={importOpen}
+          onClose={() => setImportOpen(false)}
+          farmId={currentFarm.id}
+          onImportComplete={fetchBins}
+        />
+      )}
+
+      {currentFarm && (
+        <NewPeriodDialog
+          open={newPeriodOpen}
+          onClose={() => setNewPeriodOpen(false)}
+          farmId={currentFarm.id}
+          previousPeriod={periods[0] || null}
+          onCreated={(newPeriod) => {
+            setPeriods(prev => [newPeriod, ...prev]);
+            setSelectedPeriodId(newPeriod.id);
+            setSnack({ open: true, message: 'New count period created!', severity: 'success' });
+          }}
+        />
+      )}
 
       <Snackbar open={snack.open} autoHideDuration={4000} onClose={() => setSnack(s => ({ ...s, open: false }))}>
         <Alert severity={snack.severity} onClose={() => setSnack(s => ({ ...s, open: false }))}>{snack.message}</Alert>

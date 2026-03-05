@@ -5,9 +5,11 @@ import {
   Snackbar, Alert, IconButton, Tooltip, Paper,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import FileUploadIcon from '@mui/icons-material/FileUpload';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import EditIcon from '@mui/icons-material/Edit';
+import CancelIcon from '@mui/icons-material/Cancel';
 import SettingsIcon from '@mui/icons-material/Settings';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
@@ -15,6 +17,7 @@ import { useFarm } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import api from '../../services/api';
 import ContractFormDialog from '../../components/marketing/ContractFormDialog';
+import ContractImportDialog from '../../components/marketing/ContractImportDialog';
 import DeliveryFormDialog from '../../components/marketing/DeliveryFormDialog';
 import SettlementDialog from '../../components/marketing/SettlementDialog';
 import MarketingSettingsDialog from '../../components/marketing/MarketingSettingsDialog';
@@ -64,6 +67,7 @@ export default function MarketingContracts() {
   const [settlementDialog, setSettlementDialog] = useState({ open: false, contract: null });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [snack, setSnack] = useState({ open: false, message: '', severity: 'info' });
+  const [importOpen, setImportOpen] = useState(false);
 
   const fetchData = useCallback(() => {
     if (!currentFarm) return;
@@ -85,6 +89,17 @@ export default function MarketingContracts() {
       unpriced: contracts.filter(c => c.pricing_status !== 'priced' && c.status !== 'cancelled').length,
     };
   }, [contracts]);
+
+  const handleCancelContract = async (c) => {
+    if (!window.confirm(`Cancel contract #${c.contract_number}? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/api/farms/${currentFarm.id}/marketing/contracts/${c.id}`);
+      fetchData();
+      setSnack({ open: true, message: `Contract #${c.contract_number} cancelled.`, severity: 'info' });
+    } catch (err) {
+      setSnack({ open: true, message: err.response?.data?.error || 'Failed to cancel contract', severity: 'error' });
+    }
+  };
 
   const columnDefs = useMemo(() => [
     { field: 'contract_number', headerName: '#', width: 110, pinned: 'left' },
@@ -138,11 +153,18 @@ export default function MarketingContracts() {
                 </IconButton>
               </Tooltip>
             )}
+            {c.status !== 'cancelled' && isAdmin && (
+              <Tooltip title="Cancel Contract">
+                <IconButton size="small" color="error" onClick={() => handleCancelContract(c)}>
+                  <CancelIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            )}
           </Stack>
         );
       },
     },
-  ], [canEdit]);
+  ], [canEdit, isAdmin]);
 
   const defaultColDef = useMemo(() => ({ sortable: true, resizable: true, filter: true }), []);
 
@@ -157,9 +179,14 @@ export default function MarketingContracts() {
             </Tooltip>
           )}
           {canEdit && (
-            <Button variant="contained" startIcon={<AddIcon />} onClick={() => setContractDialog({ open: true, initial: null })}>
-              New Contract
-            </Button>
+            <>
+              <Button variant="outlined" startIcon={<FileUploadIcon />} onClick={() => setImportOpen(true)}>
+                Import PDF
+              </Button>
+              <Button variant="contained" startIcon={<AddIcon />} onClick={() => setContractDialog({ open: true, initial: null })}>
+                New Contract
+              </Button>
+            </>
           )}
         </Stack>
       </Stack>
@@ -223,6 +250,13 @@ export default function MarketingContracts() {
         farmId={currentFarm?.id}
         contract={settlementDialog.contract}
         onSaved={() => { fetchData(); setSettlementDialog({ open: false, contract: null }); }}
+      />
+
+      <ContractImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        farmId={currentFarm?.id}
+        onImported={fetchData}
       />
 
       <MarketingSettingsDialog
