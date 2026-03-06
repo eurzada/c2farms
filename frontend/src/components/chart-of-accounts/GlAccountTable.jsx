@@ -8,9 +8,10 @@ import SaveIcon from '@mui/icons-material/Save';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import api from '../../services/api';
 
+import { formatCurrency } from '../../utils/formatting';
 const fmtCurrency = (v) => {
   if (v == null) return '$0';
-  return v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  return formatCurrency(v, 0);
 };
 
 export default function GlAccountTable({ glAccounts, categories, farmId, fiscalYear, onRefresh, canEdit }) {

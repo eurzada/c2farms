@@ -40,6 +40,7 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
   // Real-time updates
   useRealtime(farmId, useCallback((data) => {
     if (data.fiscalYear !== fiscalYear) return;
+    if (data.type === 'full_refresh') { fetchData(); return; }
     setRowData(prev => prev.map(row => {
       if (data.perUnitData && data.perUnitData[row.code] !== undefined) {
         return {
@@ -49,7 +50,7 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
       }
       return row;
     }));
-  }, [fiscalYear]));
+  }, [fiscalYear, fetchData]));
 
   const onCellValueChanged = useCallback(async (params) => {
     const { data, colDef } = params;

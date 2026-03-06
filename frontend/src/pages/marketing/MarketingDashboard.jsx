@@ -13,8 +13,7 @@ import api from '../../services/api';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ChartTooltip, Legend);
 
-const fmt = (v, d = 0) => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: d }) : '—';
-const fmtDollar = (v) => v != null ? `$${(v / 1000).toFixed(0)}K` : '—';
+import { fmt, fmtDollarK as fmtDollar } from '../../utils/formatting';
 
 const PRIORITY_COLORS = { high: 'error', medium: 'warning', low: 'default' };
 

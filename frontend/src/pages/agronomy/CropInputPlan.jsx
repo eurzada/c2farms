@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Paper, Button, Chip, Alert, IconButton, TextField, Stack,
   Accordion, AccordionSummary, AccordionDetails, Divider, Tooltip,
-  Dialog, DialogTitle, DialogContent, DialogActions,
+  Dialog, DialogTitle, DialogContent, DialogActions, Snackbar,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Select, MenuItem, FormControl, InputLabel,
 } from '@mui/material';
@@ -11,6 +11,7 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { useFarm } from '../../contexts/FarmContext';
 import api from '../../services/api';
+import { extractErrorMessage } from '../../utils/errorHelpers';
 
 function fmt(n) { return (n || 0).toLocaleString('en-CA', { maximumFractionDigits: 0 }); }
 function fmtDec(n, d = 2) { return (n || 0).toLocaleString('en-CA', { minimumFractionDigits: d, maximumFractionDigits: d }); }
@@ -162,6 +163,7 @@ export default function CropInputPlan() {
   const [loading, setLoading] = useState(true);
   const [addDialog, setAddDialog] = useState(null); // { allocId, category }
   const [newInput, setNewInput] = useState({ product_name: '', rate: '', rate_unit: 'lbs/acre', cost_per_unit: '', product_analysis: '', timing: '' });
+  const [error, setError] = useState('');
 
   const load = useCallback(async () => {
     if (!currentFarm) return;
@@ -217,7 +219,7 @@ export default function CropInputPlan() {
       setNewInput({ product_name: '', rate: '', rate_unit: 'lbs/acre', cost_per_unit: '', product_analysis: '', timing: '' });
       load();
     } catch (err) {
-      alert(err.response?.data?.error || 'Error adding input');
+      setError(extractErrorMessage(err, 'Error adding input'));
     }
   };
 
@@ -352,6 +354,10 @@ export default function CropInputPlan() {
           <Button variant="contained" onClick={addInput} disabled={!newInput.product_name}>Add</Button>
         </DialogActions>
       </Dialog>
+
+      <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+        <Alert severity="error" onClose={() => setError('')}>{error}</Alert>
+      </Snackbar>
     </Box>
   );
 }

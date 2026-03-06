@@ -18,7 +18,7 @@ function classifyError(err) {
   return data?.error || err.message;
 }
 
-const fmt = (v) => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—';
+import { fmt } from '../../utils/formatting';
 
 export default function ContractImportDialog({ open, onClose, farmId, onImported }) {
   const [step, setStep] = useState('upload'); // upload, preview, done

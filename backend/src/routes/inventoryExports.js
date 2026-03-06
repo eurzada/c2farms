@@ -1,34 +1,12 @@
 import { Router } from 'express';
 import PdfPrinter from 'pdfmake';
-import { existsSync } from 'fs';
 import { authenticate } from '../middleware/auth.js';
 import {
   generateInventoryExcel, generateInventoryPdf, generateInventoryCsv,
 } from '../services/inventoryExportService.js';
+import { getFontPaths } from '../utils/fontPaths.js';
 
 const router = Router();
-
-// Reuse font discovery from exports.js
-function getFontPaths() {
-  const candidates = [
-    {
-      normal: '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
-      bold: '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
-      italics: '/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf',
-      bolditalics: '/usr/share/fonts/truetype/liberation/LiberationSans-BoldItalic.ttf',
-    },
-    {
-      normal: '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-      bold: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-      italics: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf',
-      bolditalics: '/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf',
-    },
-  ];
-  for (const fonts of candidates) {
-    if (existsSync(fonts.normal)) return fonts;
-  }
-  return candidates[0];
-}
 
 const printer = new PdfPrinter({ Roboto: getFontPaths() });
 

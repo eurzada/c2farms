@@ -3,10 +3,7 @@ import { Box, Typography, Tabs, Tab } from '@mui/material';
 import UserFarmGrid from '../components/universalSettings/UserFarmGrid';
 import BulkInvitePanel from '../components/universalSettings/BulkInvitePanel';
 import PendingInvitesPanel from '../components/universalSettings/PendingInvitesPanel';
-
-function TabPanel({ children, value, index }) {
-  return value === index ? <Box sx={{ pt: 2 }}>{children}</Box> : null;
-}
+import TabPanel from '../components/shared/TabPanel';
 
 export default function UniversalSettings() {
   const [tab, setTab] = useState(0);

@@ -327,7 +327,7 @@ router.post('/:farmId/marketing/contracts/import-pdf/confirm', authenticate, req
     });
 
     const io = req.app.get('io');
-    if (io) broadcastMarketingEvent(io, req.params.farmId, 'contract-created', contract);
+    if (io) broadcastMarketingEvent(io, req.params.farmId, 'marketing:contract:created', { id: contract.id });
     res.status(201).json({ contract });
   } catch (err) { next(err); }
 });

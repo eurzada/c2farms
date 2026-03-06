@@ -79,6 +79,7 @@ model MonthlyData {
   updated_at    DateTime @updatedAt
 
   @@unique([farm_id, fiscal_year, month, type])
+  @@index([farm_id, fiscal_year])
   @@map("monthly_data")
 }
 
@@ -94,6 +95,7 @@ model MonthlyDataFrozen {
   created_at    DateTime @default(now())
 
   @@unique([farm_id, fiscal_year, month, type])
+  @@index([farm_id, fiscal_year])
   @@map("monthly_data_frozen")
 }
 

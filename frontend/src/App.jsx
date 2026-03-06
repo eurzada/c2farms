@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { FarmProvider, useFarm } from './contexts/FarmContext';
@@ -12,32 +13,37 @@ import OperationalData from './pages/OperationalData';
 import ChartOfAccounts from './pages/ChartOfAccounts';
 import Settings from './pages/Settings';
 import UniversalSettings from './pages/UniversalSettings';
-import InventoryLayout from './components/inventory/InventoryLayout';
-import InventoryDashboard from './pages/inventory/InventoryDashboard';
-import BinInventory from './pages/inventory/BinInventory';
-import Contracts from './pages/inventory/Contracts';
-import Reconciliation from './pages/inventory/Reconciliation';
-import FarmManagerView from './pages/inventory/FarmManagerView';
-import LogisticsLayout from './components/logistics/LogisticsLayout';
-import Tickets from './pages/logistics/Tickets';
-import Settlements from './pages/logistics/Settlements';
-import SettlementReconciliation from './pages/logistics/SettlementReconciliation';
-import TruckerAdmin from './pages/logistics/TruckerAdmin';
-import MarketingLayout from './components/marketing/MarketingLayout';
-import MarketingDashboard from './pages/marketing/MarketingDashboard';
-import MarketingContracts from './pages/marketing/MarketingContracts';
-import MarketingPrices from './pages/marketing/MarketingPrices';
-import MarketingCashFlow from './pages/marketing/MarketingCashFlow';
-import SellDecisionTool from './pages/marketing/SellDecisionTool';
-import MarketingBuyers from './pages/marketing/MarketingBuyers';
-import AgronomyLayout from './components/agronomy/AgronomyLayout';
-import AgronomyDashboard from './pages/agronomy/AgronomyDashboard';
-import PlanSetup from './pages/agronomy/PlanSetup';
-import CropInputPlan from './pages/agronomy/CropInputPlan';
-import EnterpriseForecast from './pages/enterprise/EnterpriseForecast';
-import EnterpriseAgronomy from './pages/enterprise/EnterpriseAgronomy';
 import ErrorBoundary from './components/shared/ErrorBoundary';
-import { Typography, Box } from '@mui/material';
+import { Typography, Box, CircularProgress } from '@mui/material';
+
+const InventoryLayout = lazy(() => import('./components/inventory/InventoryLayout'));
+const InventoryDashboard = lazy(() => import('./pages/inventory/InventoryDashboard'));
+const BinInventory = lazy(() => import('./pages/inventory/BinInventory'));
+const Contracts = lazy(() => import('./pages/inventory/Contracts'));
+const Reconciliation = lazy(() => import('./pages/inventory/Reconciliation'));
+const FarmManagerView = lazy(() => import('./pages/inventory/FarmManagerView'));
+const LogisticsLayout = lazy(() => import('./components/logistics/LogisticsLayout'));
+const Tickets = lazy(() => import('./pages/logistics/Tickets'));
+const Settlements = lazy(() => import('./pages/logistics/Settlements'));
+const SettlementReconciliation = lazy(() => import('./pages/logistics/SettlementReconciliation'));
+const TruckerAdmin = lazy(() => import('./pages/logistics/TruckerAdmin'));
+const MarketingLayout = lazy(() => import('./components/marketing/MarketingLayout'));
+const MarketingDashboard = lazy(() => import('./pages/marketing/MarketingDashboard'));
+const MarketingContracts = lazy(() => import('./pages/marketing/MarketingContracts'));
+const MarketingPrices = lazy(() => import('./pages/marketing/MarketingPrices'));
+const MarketingCashFlow = lazy(() => import('./pages/marketing/MarketingCashFlow'));
+const SellDecisionTool = lazy(() => import('./pages/marketing/SellDecisionTool'));
+const MarketingBuyers = lazy(() => import('./pages/marketing/MarketingBuyers'));
+const AgronomyLayout = lazy(() => import('./components/agronomy/AgronomyLayout'));
+const AgronomyDashboard = lazy(() => import('./pages/agronomy/AgronomyDashboard'));
+const PlanSetup = lazy(() => import('./pages/agronomy/PlanSetup'));
+const CropInputPlan = lazy(() => import('./pages/agronomy/CropInputPlan'));
+const EnterpriseForecast = lazy(() => import('./pages/enterprise/EnterpriseForecast'));
+const EnterpriseAgronomy = lazy(() => import('./pages/enterprise/EnterpriseAgronomy'));
+
+function LazyFallback() {
+  return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 8 }}><CircularProgress /></Box>;
+}
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -115,6 +121,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <AppLayout>
+                    <Suspense fallback={<LazyFallback />}>
                     <Routes>
                       <Route path="/" element={<SmartRedirect />} />
                       <Route path="/home" element={<Home />} />
@@ -162,6 +169,7 @@ export default function App() {
                       <Route path="/enterprise/agronomy" element={<EnterpriseRoute><EnterpriseAgronomy /></EnterpriseRoute>} />
                       <Route path="*" element={<NotFound />} />
                     </Routes>
+                    </Suspense>
                   </AppLayout>
                 </ProtectedRoute>
               }

@@ -98,7 +98,7 @@ describe('rollupGlActuals', () => {
     expect(result.perUnit.input_seed).toBe(5);
   });
 
-  it('falls back to 1 acre when assumption missing', async () => {
+  it('returns zero per-unit when assumption missing', async () => {
     prismaMock.assumption.findUnique.mockResolvedValue(null);
     prismaMock.glActualDetail.findMany.mockResolvedValue([
       { amount: 500, gl_account: { category: { code: 'input_seed' } } },
@@ -108,8 +108,7 @@ describe('rollupGlActuals', () => {
 
     const result = await rollupGlActuals(FARM_ID, FY, MONTH);
 
-    // Fallback: totalAcres || 1, so 500 / 1 = 500
-    expect(result.perUnit.input_seed).toBe(500);
+    expect(result.perUnit.input_seed).toBe(0);
   });
 
   it('zeroes leaf categories without GL data during rollup', async () => {

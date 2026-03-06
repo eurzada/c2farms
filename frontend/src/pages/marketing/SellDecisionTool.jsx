@@ -9,8 +9,7 @@ import api from '../../services/api';
 const SIGNAL_COLORS = { positive: 'success', negative: 'error', neutral: 'default' };
 const REC_COLORS = { 'STRONG SELL': 'error', 'MODERATE': 'warning', 'WEAK': 'default', 'HOLD': 'success' };
 
-const fmt = (v, d = 2) => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: d }) : '—';
-const fmtDollar = (v) => v != null ? `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—';
+import { fmt, fmtDollar } from '../../utils/formatting';
 
 export default function SellDecisionTool() {
   const { currentFarm, canEdit } = useFarm();

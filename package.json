@@ -3,6 +3,6 @@
   "private": true,
   "scripts": {
     "build": "cd frontend && npm install --include=dev && npm run build && cd ../backend && npm install && npx prisma generate --schema=src/prisma/schema.prisma",
-    "start": "cd backend && npx prisma db push --accept-data-loss --schema=src/prisma/schema.prisma && node src/server.js"
+    "start": "cd backend && npx prisma db push --schema=src/prisma/schema.prisma && node src/server.js"
   }
 }

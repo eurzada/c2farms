@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Paper, Button, Chip, Alert, IconButton, TextField, Stack,
-  Dialog, DialogTitle, DialogContent, DialogActions,
+  Dialog, DialogTitle, DialogContent, DialogActions, Snackbar,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Select, MenuItem, FormControl, InputLabel, Tooltip,
 } from '@mui/material';
@@ -12,6 +12,9 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import LockIcon from '@mui/icons-material/Lock';
 import { useFarm } from '../../contexts/FarmContext';
 import api from '../../services/api';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import { useConfirmDialog } from '../../hooks/useConfirmDialog';
+import { extractErrorMessage } from '../../utils/errorHelpers';
 
 function fmt(n) { return (n || 0).toLocaleString('en-CA', { maximumFractionDigits: 0 }); }
 function fmtDec(n) { return (n || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -33,6 +36,8 @@ export default function PlanSetup() {
   const [newAcres, setNewAcres] = useState('');
   const [newYield, setNewYield] = useState('');
   const [newPrice, setNewPrice] = useState('');
+  const [error, setError] = useState('');
+  const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
   const load = useCallback(async () => {
     if (!currentFarm) return;
@@ -55,7 +60,7 @@ export default function PlanSetup() {
       await api.post(`/api/farms/${currentFarm.id}/agronomy/plans`, { crop_year: year });
       load();
     } catch (err) {
-      alert(err.response?.data?.error || 'Error creating plan');
+      setError(extractErrorMessage(err, 'Error creating plan'));
     }
   };
 
@@ -64,7 +69,7 @@ export default function PlanSetup() {
       await api.patch(`/api/farms/${currentFarm.id}/agronomy/plans/${plan.id}/status`, { status });
       load();
     } catch (err) {
-      alert(err.response?.data?.error || 'Error updating status');
+      setError(extractErrorMessage(err, 'Error updating status'));
     }
   };
 
@@ -82,7 +87,7 @@ export default function PlanSetup() {
       setNewCrop(''); setNewAcres(''); setNewYield(''); setNewPrice('');
       load();
     } catch (err) {
-      alert(err.response?.data?.error || 'Error adding crop');
+      setError(extractErrorMessage(err, 'Error adding crop'));
     }
   };
 
@@ -96,12 +101,18 @@ export default function PlanSetup() {
   };
 
   const deleteAllocation = async (id) => {
-    if (!confirm('Delete this crop allocation and all its inputs?')) return;
+    const ok = await confirm({
+      title: 'Delete Allocation',
+      message: 'Delete this crop allocation and all its inputs?',
+      confirmText: 'Delete',
+      confirmColor: 'error',
+    });
+    if (!ok) return;
     try {
       await api.delete(`/api/farms/${currentFarm.id}/agronomy/allocations/${id}`);
       load();
     } catch (err) {
-      alert(err.response?.data?.error || 'Error deleting allocation');
+      setError(extractErrorMessage(err, 'Error deleting allocation'));
     }
   };
 
@@ -301,6 +312,11 @@ export default function PlanSetup() {
           <Button variant="contained" onClick={addAllocation} disabled={!newCrop || !newAcres}>Add</Button>
         </DialogActions>
       </Dialog>
+
+      <ConfirmDialog {...confirmDialogProps} />
+      <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+        <Alert severity="error" onClose={() => setError('')}>{error}</Alert>
+      </Snackbar>
     </Box>
   );
 }

@@ -19,6 +19,10 @@ import { useFarm } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import api from '../../services/api';
 import SettlementUploadDialog from '../../components/inventory/SettlementUploadDialog';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import { useConfirmDialog } from '../../hooks/useConfirmDialog';
+import { extractErrorMessage } from '../../utils/errorHelpers';
+import { fmt, fmtDollar } from '../../utils/formatting';
 
 const STATUS_COLORS = {
   pending: 'warning',
@@ -26,9 +30,6 @@ const STATUS_COLORS = {
   disputed: 'error',
   approved: 'success',
 };
-
-const fmt = (v, d = 2) => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: d }) : '—';
-const fmtDollar = (v) => v != null ? `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
 
 export default function Settlements() {
   const { currentFarm, canEdit, isAdmin } = useFarm();
@@ -47,6 +48,7 @@ export default function Settlements() {
   const [editForm, setEditForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [snack, setSnack] = useState({ open: false, message: '', severity: 'success' });
+  const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
   const fetchData = useCallback(() => {
     if (!currentFarm) return;
@@ -75,13 +77,19 @@ export default function Settlements() {
   }, [currentFarm]);
 
   const handleDelete = async (id, number) => {
-    if (!window.confirm(`Delete settlement #${number}? This will permanently remove it and all its lines.`)) return;
+    const ok = await confirm({
+      title: 'Delete Settlement',
+      message: `Delete settlement #${number}? This will permanently remove it and all its lines.`,
+      confirmText: 'Delete',
+      confirmColor: 'error',
+    });
+    if (!ok) return;
     try {
       await api.delete(`/api/farms/${currentFarm.id}/settlements/${id}`);
       fetchData();
       if (detail?.id === id) { setDetailOpen(false); setDetail(null); }
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to delete settlement');
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to delete settlement'), severity: 'error' });
     }
   };
 
@@ -467,6 +475,7 @@ export default function Settlements() {
           {snack.message}
         </Alert>
       </Snackbar>
+      <ConfirmDialog {...confirmDialogProps} />
     </Box>
   );
 }

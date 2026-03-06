@@ -3,35 +3,11 @@ import { authenticate } from '../middleware/auth.js';
 import { generateExcel, generatePdf } from '../services/exportService.js';
 import { parseYear } from '../utils/fiscalYear.js';
 import PdfPrinter from 'pdfmake';
-import { existsSync } from 'fs';
+import { getFontPaths } from '../utils/fontPaths.js';
 
 const router = Router();
 
-// Find available system font
-function getFontPaths() {
-  const candidates = [
-    {
-      normal: '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
-      bold: '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
-      italics: '/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf',
-      bolditalics: '/usr/share/fonts/truetype/liberation/LiberationSans-BoldItalic.ttf',
-    },
-    {
-      normal: '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-      bold: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-      italics: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf',
-      bolditalics: '/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf',
-    },
-  ];
-
-  for (const fonts of candidates) {
-    if (existsSync(fonts.normal)) return fonts;
-  }
-  return candidates[0]; // Fallback
-}
-
-const fontPaths = getFontPaths();
-const printer = new PdfPrinter({ Roboto: fontPaths });
+const printer = new PdfPrinter({ Roboto: getFontPaths() });
 
 router.post('/:farmId/export/excel/:year', authenticate, async (req, res, next) => {
   try {

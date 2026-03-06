@@ -21,6 +21,7 @@ import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import { useSearchParams } from 'react-router-dom';
 import { useFarm } from '../../contexts/FarmContext';
 import api from '../../services/api';
+import { fmt, fmtDollar } from '../../utils/formatting';
 
 const MATCH_STATUS_CONFIG = {
   matched: { color: 'success', icon: <CheckCircleIcon />, label: 'Matched' },
@@ -28,9 +29,6 @@ const MATCH_STATUS_CONFIG = {
   exception: { color: 'error', icon: <WarningIcon />, label: 'Exception' },
   unmatched: { color: 'warning', icon: <ErrorIcon />, label: 'Unmatched' },
 };
-
-const fmt = (v, d = 2) => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: d }) : '—';
-const fmtDollar = (v) => v != null ? `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
 
 function parseExceptionType(reason) {
   if (!reason) return { type: 'Unknown', detail: reason };

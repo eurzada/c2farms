@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button,
-  TextField, FormControl, InputLabel, Select, MenuItem, Stack,
+  TextField, FormControl, InputLabel, Select, MenuItem, Stack, Alert,
 } from '@mui/material';
 import api from '../../services/api';
+import { extractErrorMessage } from '../../utils/errorHelpers';
 
 export default function ContractFormDialog({ open, onClose, farmId, onSaved }) {
   const [commodities, setCommodities] = useState([]);
@@ -11,6 +12,7 @@ export default function ContractFormDialog({ open, onClose, farmId, onSaved }) {
     buyer: '', commodity_id: '', contracted_mt: '', price_per_mt: '', contract_number: '', notes: '',
   });
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (!farmId || !open) return;
@@ -24,11 +26,12 @@ export default function ContractFormDialog({ open, onClose, farmId, onSaved }) {
 
   const handleSave = async () => {
     setSaving(true);
+    setError('');
     try {
       const res = await api.post(`/api/farms/${farmId}/contracts`, form);
       onSaved(res.data.warning);
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to create contract');
+      setError(extractErrorMessage(err, 'Failed to create contract'));
     } finally {
       setSaving(false);
     }
@@ -38,6 +41,7 @@ export default function ContractFormDialog({ open, onClose, farmId, onSaved }) {
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>Add Contract</DialogTitle>
       <DialogContent>
+        {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
         <Stack spacing={2} sx={{ mt: 1 }}>
           <TextField label="Buyer" value={form.buyer} onChange={e => setForm(f => ({ ...f, buyer: e.target.value }))} fullWidth required />
           <FormControl fullWidth required>

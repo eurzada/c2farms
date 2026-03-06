@@ -10,11 +10,7 @@ import api from '../../services/api';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, ChartTooltip, Legend);
 
-const fmt = (v) => `$${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-const fmtSigned = (v) => {
-  const s = v >= 0 ? '+' : '-';
-  return `${s}$${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-};
+import { fmtDollar as fmt, fmtSigned } from '../../utils/formatting';
 
 export default function MarketingCashFlow() {
   const { currentFarm } = useFarm();

@@ -3,10 +3,7 @@ import { Box, Typography, Tabs, Tab, Alert } from '@mui/material';
 import { useFarm } from '../contexts/FarmContext';
 import UserManagement from '../components/settings/UserManagement';
 import BackupPanel from '../components/settings/BackupPanel';
-
-function TabPanel({ children, value, index }) {
-  return value === index ? <Box sx={{ pt: 2 }}>{children}</Box> : null;
-}
+import TabPanel from '../components/shared/TabPanel';
 
 export default function Settings() {
   const { currentFarm, isAdmin } = useFarm();

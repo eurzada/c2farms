@@ -22,6 +22,10 @@ import ContractImportDialog from '../../components/marketing/ContractImportDialo
 import DeliveryFormDialog from '../../components/marketing/DeliveryFormDialog';
 import SettlementDialog from '../../components/marketing/SettlementDialog';
 import MarketingSettingsDialog from '../../components/marketing/MarketingSettingsDialog';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import { useConfirmDialog } from '../../hooks/useConfirmDialog';
+import { extractErrorMessage } from '../../utils/errorHelpers';
+import { fmt, fmtDollar } from '../../utils/formatting';
 
 const STATUS_TABS = ['All', 'Executed', 'In Delivery', 'Delivered', 'Settled', 'Cancelled'];
 const STATUS_MAP = { 'All': null, 'Executed': 'executed', 'In Delivery': 'in_delivery', 'Delivered': 'delivered', 'Settled': 'settled', 'Cancelled': 'cancelled' };
@@ -53,9 +57,6 @@ function ProgressCell({ value }) {
   );
 }
 
-const fmt = (v, d = 1) => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: d }) : '—';
-const fmtDollar = (v) => v != null ? `$${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '—';
-
 export default function MarketingContracts() {
   const { currentFarm, canEdit, isAdmin } = useFarm();
   const { mode } = useThemeMode();
@@ -70,6 +71,7 @@ export default function MarketingContracts() {
   const [snack, setSnack] = useState({ open: false, message: '', severity: 'info' });
   const [importOpen, setImportOpen] = useState(false);
   const [selectedCount, setSelectedCount] = useState(0);
+  const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
   const fetchData = useCallback(() => {
     if (!currentFarm) return;
@@ -93,20 +95,32 @@ export default function MarketingContracts() {
   }, [contracts]);
 
   const handleCancelContract = async (c) => {
-    if (!window.confirm(`Cancel contract #${c.contract_number}? This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: 'Cancel Contract',
+      message: `Cancel contract #${c.contract_number}? This cannot be undone.`,
+      confirmText: 'Cancel Contract',
+      confirmColor: 'error',
+    });
+    if (!ok) return;
     try {
       await api.delete(`/api/farms/${currentFarm.id}/marketing/contracts/${c.id}`);
       fetchData();
       setSnack({ open: true, message: `Contract #${c.contract_number} cancelled.`, severity: 'info' });
     } catch (err) {
-      setSnack({ open: true, message: err.response?.data?.error || 'Failed to cancel contract', severity: 'error' });
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to cancel contract'), severity: 'error' });
     }
   };
 
   const handleDeleteSelected = async () => {
     const selectedRows = gridRef.current?.api?.getSelectedRows() || [];
     if (selectedRows.length === 0) return;
-    if (!window.confirm(`Cancel ${selectedRows.length} contract${selectedRows.length !== 1 ? 's' : ''}? This will set them to "Cancelled" status.`)) return;
+    const ok = await confirm({
+      title: 'Cancel Contracts',
+      message: `Cancel ${selectedRows.length} contract${selectedRows.length !== 1 ? 's' : ''}? This will set them to "Cancelled" status.`,
+      confirmText: 'Cancel All',
+      confirmColor: 'error',
+    });
+    if (!ok) return;
     try {
       const ids = selectedRows.map(r => r.id);
       await api.delete(`/api/farms/${currentFarm.id}/marketing/contracts`, { data: { ids } });
@@ -114,7 +128,7 @@ export default function MarketingContracts() {
       fetchData();
       setSnack({ open: true, message: `${selectedRows.length} contract(s) cancelled.`, severity: 'info' });
     } catch (err) {
-      setSnack({ open: true, message: err.response?.data?.error || 'Failed to cancel contracts', severity: 'error' });
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to cancel contracts'), severity: 'error' });
     }
   };
 
@@ -314,6 +328,7 @@ export default function MarketingContracts() {
       <Snackbar open={snack.open} autoHideDuration={6000} onClose={() => setSnack(s => ({ ...s, open: false }))}>
         <Alert severity={snack.severity} onClose={() => setSnack(s => ({ ...s, open: false }))}>{snack.message}</Alert>
       </Snackbar>
+      <ConfirmDialog {...confirmDialogProps} />
     </Box>
   );
 }

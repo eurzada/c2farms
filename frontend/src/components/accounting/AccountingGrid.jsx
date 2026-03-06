@@ -6,6 +6,7 @@ import 'ag-grid-community/styles/ag-theme-alpine.css';
 import api from '../../services/api';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import { useFarm } from '../../contexts/FarmContext';
+import { useRealtime } from '../../hooks/useRealtime';
 import { getGridColors } from '../../utils/gridColors';
 import { FISCAL_MONTHS, isPastMonth } from '../../utils/fiscalYear';
 import { formatCurrency, formatNumber, formatPercent } from '../../utils/formatting';
@@ -39,6 +40,20 @@ export default function AccountingGrid({ farmId, fiscalYear, onSummaryLoaded }) 
   }, [farmId, fiscalYear]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  useRealtime(farmId, useCallback((data) => {
+    if (data.fiscalYear !== fiscalYear) return;
+    if (data.type === 'full_refresh') { fetchData(); return; }
+    setRowData(prev => prev.map(row => {
+      if (data.accountingData && data.accountingData[row.code] !== undefined) {
+        return {
+          ...row,
+          months: { ...row.months, [data.month]: data.accountingData[row.code] },
+        };
+      }
+      return row;
+    }));
+  }, [fiscalYear, fetchData]));
 
   const onCellValueChanged = useCallback(async (params) => {
     const { data, colDef } = params;

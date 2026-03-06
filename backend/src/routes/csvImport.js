@@ -5,6 +5,10 @@ import { getFarmLeafCategories } from '../services/categoryService.js';
 import { rollupGlActuals } from '../services/glRollupService.js';
 import { isValidMonth } from '../utils/fiscalYear.js';
 import { emitDataChange, aiEvents } from '../socket/aiEvents.js';
+import { broadcastCellChange } from '../socket/handler.js';
+import createLogger from '../utils/logger.js';
+
+const log = createLogger('csv-import');
 
 const router = Router();
 
@@ -25,7 +29,7 @@ router.post('/:farmId/accounting/import-csv', authenticate, requireRole('admin',
     }
 
     const fy = parseInt(fiscal_year);
-    console.log(`[CSV Import] farmId=${farmId}, FY=${fy}, ${accounts.length} account(s)`);
+    log.info(`farmId=${farmId}, FY=${fy}, ${accounts.length} account(s)`);
 
     // Validate that assumptions exist for this fiscal year (needed for per-unit calculations)
     const assumption = await prisma.assumption.findUnique({
@@ -51,7 +55,7 @@ router.post('/:farmId/accounting/import-csv', authenticate, requireRole('admin',
       categoryMap[cat.code] = cat.id;
     }
 
-    console.log(`[CSV Import] ${leafCodes.size} valid leaf categories for farm`);
+    log.debug(`${leafCodes.size} valid leaf categories for farm`);
 
     const monthsAffected = new Set();
     const skippedDetails = [];
@@ -114,13 +118,16 @@ router.post('/:farmId/accounting/import-csv', authenticate, requireRole('admin',
       await rollupGlActuals(farmId, fy, month);
     }
 
-    console.log(`[CSV Import] Done: ${accountsProcessed} accounts, ${monthsAffected.size} months, ${skippedDetails.length} skipped`);
+    log.info(`Done: ${accountsProcessed} accounts, ${monthsAffected.size} months, ${skippedDetails.length} skipped`);
     if (skippedDetails.length > 0) {
-      console.warn('[CSV Import] Skipped details:', JSON.stringify(skippedDetails));
+      log.warn('Skipped details', skippedDetails);
     }
 
     const io = req.app.get('io');
-    if (io) emitDataChange(io, farmId, aiEvents.actualImport(monthsAffected.size, accountsProcessed));
+    if (io) {
+      emitDataChange(io, farmId, aiEvents.actualImport(monthsAffected.size, accountsProcessed));
+      broadcastCellChange(io, farmId, { fiscalYear: fy, type: 'full_refresh' });
+    }
 
     res.json({
       message: `Imported ${accountsProcessed} account(s) across ${monthsAffected.size} month(s)`,
@@ -130,7 +137,7 @@ router.post('/:farmId/accounting/import-csv', authenticate, requireRole('admin',
       skippedDetails,
     });
   } catch (err) {
-    console.error('[CSV Import] Error:', err);
+    log.error('Import error', err.message);
     next(err);
   }
 });
@@ -148,7 +155,7 @@ router.delete('/:farmId/accounting/clear-year', authenticate, requireRole('admin
     }
 
     const fy = parseInt(fiscal_year);
-    console.log(`[Clear Year] farmId=${farmId}, FY=${fy}`);
+    log.info(`Clear year: farmId=${farmId}, FY=${fy}`);
 
     // Delete all GL actual detail records for this farm + year
     const deletedDetails = await prisma.glActualDetail.deleteMany({
@@ -161,7 +168,10 @@ router.delete('/:farmId/accounting/clear-year', authenticate, requireRole('admin
       data: { data_json: {}, is_actual: false },
     });
 
-    console.log(`[Clear Year] Deleted ${deletedDetails.count} GL details, reset ${updatedMonthly.count} monthly records`);
+    log.info(`Deleted ${deletedDetails.count} GL details, reset ${updatedMonthly.count} monthly records`);
+
+    const io = req.app.get('io');
+    if (io) broadcastCellChange(io, farmId, { fiscalYear: fy, type: 'full_refresh' });
 
     res.json({
       message: `Cleared FY ${fy}: ${deletedDetails.count} GL detail(s) removed, ${updatedMonthly.count} monthly record(s) reset`,
@@ -169,7 +179,7 @@ router.delete('/:farmId/accounting/clear-year', authenticate, requireRole('admin
       resetMonthly: updatedMonthly.count,
     });
   } catch (err) {
-    console.error('[Clear Year] Error:', err);
+    log.error('Clear year error', err.message);
     next(err);
   }
 });

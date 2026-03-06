@@ -124,7 +124,8 @@ describe('PATCH /api/farms/:farmId/accounting/:year/:month', () => {
       .send({ value: 1000 });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/required/i);
+    const msg = res.body.error || res.body.errors?.[0] || '';
+    expect(msg).toMatch(/required/i);
   });
 
   it('rejects parent category edit — 400', async () => {

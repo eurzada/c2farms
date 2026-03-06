@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
 import PdfPrinter from 'pdfmake';
-import { existsSync } from 'fs';
 import prisma from '../config/database.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { extractSettlementFromPdf, saveSettlement, queueBatchExtraction, checkBatchStatus } from '../services/settlementService.js';
@@ -9,31 +8,11 @@ import { reconcileSettlement, manualMatch, approveSettlement } from '../services
 import { generateExceptionExcel, generateExceptionPdf } from '../services/settlementExportService.js';
 import { logAudit } from '../services/auditService.js';
 import { broadcastMarketingEvent } from '../socket/handler.js';
+import { getFontPaths } from '../utils/fontPaths.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
-// PDF printer setup
-function getFontPaths() {
-  const candidates = [
-    {
-      normal: '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
-      bold: '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
-      italics: '/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf',
-      bolditalics: '/usr/share/fonts/truetype/liberation/LiberationSans-BoldItalic.ttf',
-    },
-    {
-      normal: '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-      bold: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-      italics: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf',
-      bolditalics: '/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf',
-    },
-  ];
-  for (const fonts of candidates) {
-    if (existsSync(fonts.normal)) return fonts;
-  }
-  return candidates[0];
-}
 const printer = new PdfPrinter({ Roboto: getFontPaths() });
 
 // GET all settlements for a farm

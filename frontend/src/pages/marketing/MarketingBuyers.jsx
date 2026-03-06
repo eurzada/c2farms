@@ -15,7 +15,7 @@ import CounterpartyFormDialog from '../../components/marketing/CounterpartyFormD
 
 const TYPE_COLORS = { buyer: 'primary', broker: 'secondary', elevator: 'info', terminal: 'warning' };
 
-const fmt = (v, d = 0) => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: d }) : '—';
+import { fmt } from '../../utils/formatting';
 
 export default function MarketingBuyers() {
   const { currentFarm, canEdit, isAdmin } = useFarm();

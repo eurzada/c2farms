@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button,
-  TextField, Stack, Typography,
+  TextField, Stack, Typography, Alert,
 } from '@mui/material';
 import api from '../../services/api';
+import { extractErrorMessage } from '../../utils/errorHelpers';
 
 export default function DeliveryFormDialog({ open, contract, onClose, farmId, onSaved }) {
   const [form, setForm] = useState({ mt_delivered: '', delivery_date: '', ticket_number: '', notes: '' });
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (open) {
@@ -23,11 +25,12 @@ export default function DeliveryFormDialog({ open, contract, onClose, farmId, on
   const handleSave = async () => {
     if (!contract || !farmId) return;
     setSaving(true);
+    setError('');
     try {
       await api.post(`/api/farms/${farmId}/contracts/${contract.id}/deliveries`, form);
       onSaved();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to record delivery');
+      setError(extractErrorMessage(err, 'Failed to record delivery'));
     } finally {
       setSaving(false);
     }
@@ -42,6 +45,7 @@ export default function DeliveryFormDialog({ open, contract, onClose, farmId, on
             {contract.buyer} — {contract.commodity?.name} ({contract.contracted_mt?.toLocaleString()} MT contracted)
           </Typography>
         )}
+        {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
         <Stack spacing={2} sx={{ mt: 1 }}>
           <TextField label="MT Delivered" type="number" value={form.mt_delivered} onChange={e => setForm(f => ({ ...f, mt_delivered: e.target.value }))} fullWidth required />
           <TextField label="Delivery Date" type="date" value={form.delivery_date} onChange={e => setForm(f => ({ ...f, delivery_date: e.target.value }))} fullWidth InputLabelProps={{ shrink: true }} required />

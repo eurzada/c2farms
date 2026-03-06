@@ -3,6 +3,7 @@ import prisma from '../config/database.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { generateFiscalMonths, CALENDAR_MONTHS, parseYear } from '../utils/fiscalYear.js';
 import { emitDataChange, aiEvents } from '../socket/aiEvents.js';
+import { broadcastCellChange } from '../socket/handler.js';
 
 const router = Router();
 
@@ -127,6 +128,11 @@ router.post('/:farmId/assumptions', authenticate, requireRole('admin', 'manager'
           data: { data_json: accountingData },
         });
       }
+    }
+
+    if (oldAcres && oldAcres !== newAcres) {
+      const io = req.app.get('io');
+      if (io) broadcastCellChange(io, farmId, { fiscalYear: fy, type: 'full_refresh' });
     }
 
     res.json(assumption);

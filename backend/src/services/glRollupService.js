@@ -65,13 +65,13 @@ export async function rollupGlActuals(farmId, fiscalYear, month) {
     where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: fiscalYear } },
   });
   if (!assumption) {
-    console.warn(`[GL Rollup] No assumption record for farm=${farmId} FY=${fiscalYear}. Per-unit will divide by 1 (showing raw dollar amounts).`);
+    console.warn(`[GL Rollup] No assumption record for farm=${farmId} FY=${fiscalYear}. Per-unit values will be zero.`);
   }
-  const totalAcres = assumption?.total_acres || 1;
+  const totalAcres = assumption?.total_acres ?? 0;
 
   const perUnitData = {};
   for (const [key, val] of Object.entries(withParents)) {
-    perUnitData[key] = val / totalAcres;
+    perUnitData[key] = totalAcres > 0 ? val / totalAcres : 0;
   }
 
   await prisma.monthlyData.upsert({

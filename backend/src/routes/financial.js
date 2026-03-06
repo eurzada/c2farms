@@ -6,6 +6,7 @@ import { getFarmCategories, getFarmLeafCategories, recalcParentSums } from '../s
 import { broadcastCellChange } from '../socket/handler.js';
 import { emitDataChange, aiEvents } from '../socket/aiEvents.js';
 import { generateFiscalMonths, parseYear, isValidMonth } from '../utils/fiscalYear.js';
+import { validateBody } from '../middleware/validation.js';
 
 const router = Router();
 
@@ -169,17 +170,15 @@ router.get('/:farmId/per-unit/:year', authenticate, async (req, res, next) => {
 });
 
 // PATCH per-unit cell
-router.patch('/:farmId/per-unit/:year/:month', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+router.patch('/:farmId/per-unit/:year/:month', authenticate, requireRole('admin', 'manager'),
+  validateBody({ category_code: { required: true, type: 'string' }, value: { required: true, type: 'number' } }),
+  async (req, res, next) => {
   try {
     const { farmId, year, month } = req.params;
     const { category_code, value, comment } = req.body;
     const fiscalYear = parseYear(year);
     if (!fiscalYear) return res.status(400).json({ error: 'Invalid fiscal year' });
     if (!isValidMonth(month)) return res.status(400).json({ error: 'Invalid month' });
-
-    if (!category_code || value === undefined) {
-      return res.status(400).json({ error: 'category_code and value are required' });
-    }
 
     // Only allow editing leaf categories
     const leafCategories = await getFarmLeafCategories(farmId);
@@ -383,17 +382,15 @@ router.get('/:farmId/accounting/:year', authenticate, async (req, res, next) => 
 });
 
 // PATCH single accounting cell (used by AccountingGrid inline editing)
-router.patch('/:farmId/accounting/:year/:month', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+router.patch('/:farmId/accounting/:year/:month', authenticate, requireRole('admin', 'manager'),
+  validateBody({ category_code: { required: true, type: 'string' }, value: { required: true, type: 'number' } }),
+  async (req, res, next) => {
   try {
     const { farmId, year, month } = req.params;
     const { category_code, value } = req.body;
     const fiscalYear = parseYear(year);
     if (!fiscalYear) return res.status(400).json({ error: 'Invalid fiscal year' });
     if (!isValidMonth(month)) return res.status(400).json({ error: 'Invalid month' });
-
-    if (!category_code || value === undefined) {
-      return res.status(400).json({ error: 'category_code and value are required' });
-    }
 
     // Only allow editing leaf categories
     const leafCategories = await getFarmLeafCategories(farmId);
@@ -496,6 +493,16 @@ router.post('/:farmId/financial/manual-actual', authenticate, requireRole('admin
         data_json: perUnitData, is_actual: true, comments_json: {},
       },
     });
+
+    const io = req.app.get('io');
+    if (io) {
+      broadcastCellChange(io, farmId, {
+        fiscalYear: parseInt(fiscal_year),
+        month,
+        perUnitData,
+        accountingData: withParents,
+      });
+    }
 
     res.json({ message: 'Actuals saved', data: withParents });
   } catch (err) {

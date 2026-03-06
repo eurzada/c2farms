@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
   Box, Typography, Button, Stack, Chip, TextField, MenuItem,
-  Dialog, DialogContent, IconButton,
+  Dialog, DialogContent, IconButton, Snackbar, Alert,
 } from '@mui/material';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -14,8 +14,11 @@ import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { useFarm } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import api from '../../services/api';
-import { getSocket } from '../../services/socket';
+import { connectSocket } from '../../services/socket';
 import TicketImportDialog from '../../components/inventory/TicketImportDialog';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import { useConfirmDialog } from '../../hooks/useConfirmDialog';
+import { extractErrorMessage } from '../../utils/errorHelpers';
 
 export default function Tickets() {
   const { currentFarm, canEdit, isAdmin } = useFarm();
@@ -29,19 +32,25 @@ export default function Tickets() {
   const [photoUrl, setPhotoUrl] = useState(null);
   const [selectedCount, setSelectedCount] = useState(0);
   const [searchText, setSearchText] = useState('');
+  const [snack, setSnack] = useState({ open: false, message: '', severity: 'error' });
+  const { confirm, dialogProps } = useConfirmDialog();
 
   // Listen for real-time mobile ticket uploads
   useEffect(() => {
     if (!currentFarm) return;
+    const s = connectSocket();
+    s.emit('join-farm', currentFarm.id);
     const handler = (data) => {
       if (data?.ticket) {
         setTickets(prev => [data.ticket, ...prev]);
         setTotal(prev => prev + 1);
       }
     };
-    const s = getSocket();
     s.on('ticket-created', handler);
-    return () => s.off('ticket-created', handler);
+    return () => {
+      s.off('ticket-created', handler);
+      s.emit('leave-farm', currentFarm.id);
+    };
   }, [currentFarm]);
 
   const fetchData = useCallback(() => {
@@ -65,7 +74,13 @@ export default function Tickets() {
   const handleDeleteSelected = async () => {
     const selectedRows = gridRef.current?.api?.getSelectedRows() || [];
     if (selectedRows.length === 0) return;
-    if (!window.confirm(`Delete ${selectedRows.length} ticket${selectedRows.length !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: 'Delete Tickets',
+      message: `Delete ${selectedRows.length} ticket${selectedRows.length !== 1 ? 's' : ''}? This cannot be undone.`,
+      confirmText: 'Delete',
+      confirmColor: 'error',
+    });
+    if (!ok) return;
 
     try {
       const ids = selectedRows.map(r => r.id);
@@ -73,7 +88,7 @@ export default function Tickets() {
       setSelectedCount(0);
       fetchData();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to delete tickets');
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to delete tickets'), severity: 'error' });
     }
   };
 
@@ -236,6 +251,11 @@ export default function Tickets() {
         farmId={currentFarm?.id}
         onImported={fetchData}
       />
+
+      <ConfirmDialog {...dialogProps} />
+      <Snackbar open={snack.open} autoHideDuration={4000} onClose={() => setSnack(s => ({ ...s, open: false }))} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+        <Alert severity={snack.severity} onClose={() => setSnack(s => ({ ...s, open: false }))}>{snack.message}</Alert>
+      </Snackbar>
 
       {/* Full-size photo viewer */}
       <Dialog open={!!photoUrl} onClose={() => setPhotoUrl(null)} maxWidth="md">
