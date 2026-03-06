@@ -51,25 +51,11 @@ These must be resolved before any production deployment.
 
 Address these before handling real user data.
 
-### 5. Rate Limiting on Auth Endpoints
-**Risk**: Brute-force password attacks.
+### 5. Rate Limiting on Auth Endpoints ✅ IMPLEMENTED
+**Status**: `express-rate-limit` is installed and applied in `app.js`. Global rate limit is configured. Auth-specific tighter limits should still be considered.
 
-**Remediation**:
-```bash
-npm install express-rate-limit
-```
-Apply to `/api/auth/login` and `/api/auth/register`:
-- 5 attempts per IP per 15-minute window for login
-- 3 attempts per IP per hour for registration
-
-### 6. Security Headers (Helmet.js)
-**Risk**: Missing headers leave the app vulnerable to clickjacking, MIME sniffing, etc.
-
-**Remediation**:
-```bash
-npm install helmet
-```
-Add to `app.js`: `app.use(helmet())` before route registration.
+### 6. Security Headers (Helmet.js) ✅ IMPLEMENTED
+**Status**: `helmet` is installed and applied in `app.js` (`helmet({ contentSecurityPolicy: false })`).
 
 ### 7. TLS/HTTPS Enforcement
 **Risk**: Credentials and tokens transmitted in plaintext.
@@ -143,13 +129,12 @@ Recommended for production maturity.
 - Implement refresh token rotation (stored in httpOnly cookie)
 - Add `/api/auth/refresh` endpoint
 
-### 15. Structured Error Logging
-**Purpose**: Production debugging without exposing internals to clients.
+### 15. Structured Error Logging — PARTIALLY IMPLEMENTED
+**Status**: Custom structured logger exists at `backend/src/utils/logger.js`. Outputs JSON in production, human-readable in dev. Currently used by `csvImport.js`; adoption across all routes is still in progress.
 
-**Remediation**:
-- Install `winston` or `pino` for structured JSON logging
-- Log to file or logging service (not just stdout)
-- Ensure error handler never returns stack traces in production
+**Remaining work**:
+- Adopt `createLogger()` in all route files and services (replace remaining `console.log`)
+- Consider log aggregation for production (CloudWatch, Datadog, etc.)
 
 ---
 

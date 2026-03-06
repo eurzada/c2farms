@@ -44,8 +44,8 @@ User edits cell in ag-Grid
     → Auto-calculates accounting = per_unit × total_acres
     → Recalculates parent category sums
     → Saves both MonthlyData rows
-    → Socket.io broadcasts change to other clients
-    → AI event emitter fires dataChanged
+    → Socket.io broadcasts cell-changed to farm:{farmId} room
+    → AI event emitter fires ai:data-change to farm-ai:{farmId} room
 ```
 
 ### Actuals Import (CSV)
@@ -59,7 +59,7 @@ User uploads CSV via CsvImportDialog
     → Creates GlActualDetail records (per GL account, per month)
     → glRollupService aggregates GL → category totals
     → Updates MonthlyData with is_actual=true for imported months
-    → Socket.io broadcasts dataImported event
+    → Socket.io broadcasts cell-changed (type: full_refresh) + ai:data-change
 ```
 
 ### Budget Freeze
@@ -69,7 +69,7 @@ POST /assumptions/:year/freeze
   → Copies all MonthlyData rows → MonthlyDataFrozen
   → Sets assumption.is_frozen = true
   → Frozen data is used for variance comparison (budget vs forecast)
-  → Socket.io broadcasts budgetFrozen event
+  → Socket.io broadcasts ai:data-change (budgetFrozen) to farm-ai room
 ```
 
 ## Two-Layer Reporting
@@ -185,13 +185,34 @@ This design allows the category structure to evolve without schema migrations. N
 
 ## Real-Time Sync (Socket.io)
 
-Socket.io provides live updates when multiple users work on the same farm:
+Socket.io provides live updates when multiple users work on the same farm. Three socket rooms per farm provide event isolation:
 
-- **Cell edits**: When a user updates a per-unit or accounting cell, the change is broadcast to all connected clients on the same farm
-- **Data imports**: CSV imports trigger a `dataImported` event so other clients refresh
-- **Budget freeze/unfreeze**: Broadcasts `budgetFrozen`/`budgetUnfrozen` events
+| Room | Purpose | Joined via |
+|------|---------|------------|
+| `farm:{farmId}` | Cell edits, full data refreshes, ticket events | `join-farm` |
+| `farm-ai:{farmId}` | AI-relevant data change notifications | `join-farm-ai` |
+| `farm-marketing:{farmId}` | Marketing contract/delivery/price events | `join-farm-marketing` |
 
-Socket events are emitted from route handlers via `req.app.get('io')`. The `aiEvents.js` module provides `emitDataChange()` for AI-relevant events.
+### Events Catalog
+
+| Event | Room | Trigger | Frontend Listener |
+|-------|------|---------|-------------------|
+| `cell-changed` | `farm:` | Per-unit/accounting cell edit, CSV import, clear year, acres change | `useRealtime` hook (PerUnitGrid, AccountingGrid) |
+| `ticket-created` | `farm:` | Mobile ticket upload | `Tickets.jsx` |
+| `marketing:contract:created` | `farm-marketing:` | Contract creation (manual or PDF import) | `useMarketingSocket` hook |
+| `marketing:contract:updated` | `farm-marketing:` | Contract edit | `useMarketingSocket` hook |
+| `marketing:delivery:created` | `farm-marketing:` | Delivery recorded | `useMarketingSocket` hook |
+| `marketing:price:updated` | `farm-marketing:` | Price update | `useMarketingSocket` hook |
+| `settlement:approved` | `farm-marketing:` | Settlement approved | `useMarketingSocket` hook |
+| `ai:data-change` | `farm-ai:` | Any financial data mutation (import, freeze, cell edit) | AI conversation context |
+
+### Broadcast Helpers
+
+- `broadcastCellChange(io, farmId, data)` — emits `cell-changed` to `farm:{farmId}`. Used by financial routes for cell edits, CSV import (`type: 'full_refresh'`), clear year, and acres changes.
+- `broadcastMarketingEvent(io, farmId, event, data)` — emits a named event to `farm-marketing:{farmId}`.
+- `emitDataChange(io, farmId, event)` — emits `ai:data-change` to `farm-ai:{farmId}`. Used for AI context awareness.
+
+Socket events are emitted from route handlers via `req.app.get('io')`.
 
 ## Authentication & Authorization
 

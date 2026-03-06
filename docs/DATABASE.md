@@ -66,6 +66,7 @@ Links users to farms with a role. This is the source of truth for RBAC.
 | user_id | UUID | FK → users. Cascade delete |
 | farm_id | UUID | FK → farms. Cascade delete |
 | role | String | `admin`, `manager`, or `viewer` |
+| modules | Json | Enabled modules, default: `["forecast","inventory","marketing","logistics"]` |
 
 **Unique**: `(user_id, farm_id)`
 
@@ -134,6 +135,7 @@ Stores both per-unit and accounting data for each month of a fiscal year.
 | updated_at | DateTime | Auto-updated |
 
 **Unique**: `(farm_id, fiscal_year, month, type)`
+**Index**: `(farm_id, fiscal_year)`
 
 **`data_json` structure**:
 ```json
@@ -166,6 +168,7 @@ Snapshot of MonthlyData at freeze time. Same structure, no `updated_at`.
 | created_at | DateTime | When frozen |
 
 **Unique**: `(farm_id, fiscal_year, month, type)`
+**Index**: `(farm_id, fiscal_year)`
 
 ### FarmCategory
 Table: `farm_categories`
@@ -332,3 +335,58 @@ QuickBooks OAuth tokens.
 | refresh_token | String | Should be encrypted in production |
 | realm_id | String | QB company ID |
 | expires_at | DateTime | |
+
+---
+
+## Additional Model Groups
+
+The following models were added as modules matured. See `backend/src/prisma/schema.prisma` for full column definitions.
+
+### Inventory Models
+| Model | Table | Purpose |
+|-------|-------|---------|
+| `Commodity` | `commodities` | Grain types (Canola, Durum, etc.) |
+| `InventoryLocation` | `inventory_locations` | Physical bin locations |
+| `InventoryBin` | `inventory_bins` | Individual bins with capacity |
+| `CountPeriod` | `count_periods` | Inventory count windows |
+| `CountSubmission` | `count_submissions` | User-submitted bin counts |
+| `BinCount` | `bin_counts` | Per-bin count records |
+| `Contract` | `contracts` | Inventory-side delivery contracts |
+| `Delivery` | `deliveries` | Contract deliveries |
+
+### Marketing Models
+| Model | Table | Purpose |
+|-------|-------|---------|
+| `Counterparty` | `counterparties` | Buyers/brokers |
+| `MarketingContract` | `marketing_contracts` | Grain sales contracts |
+| `MarketPrice` | `market_prices` | Commodity price history |
+| `PriceAlert` | `price_alerts` | Price threshold notifications |
+| `CashFlowEntry` | `cash_flow_entries` | Projected cash flow line items |
+| `MarketingSettings` | `marketing_settings` | Per-farm marketing config |
+
+**Key indexes**: `marketing_contracts(farm_id, commodity_id)`, `marketing_contracts(farm_id, status)`, `price_alerts(farm_id, commodity_id, is_active)`, `cash_flow_entries(farm_id, period_date, entry_type)`
+
+### Logistics Models
+| Model | Table | Purpose |
+|-------|-------|---------|
+| `DeliveryTicket` | `delivery_tickets` | Grain delivery tickets (scale tickets) |
+| `Settlement` | `settlements` | Grain buyer settlement documents |
+| `SettlementLine` | `settlement_lines` | Individual settlement line items |
+| `AiBatch` | `ai_batches` | AI batch processing for settlement OCR |
+
+**Key indexes**: `delivery_tickets(farm_id, delivery_date)`, `delivery_tickets(farm_id, marketing_contract_id)`, `settlements(farm_id, status)`, `ai_batches(farm_id, status)`
+
+### Agronomy Models
+| Model | Table | Purpose |
+|-------|-------|---------|
+| `AgroPlan` | `agro_plans` | Season crop plans |
+| `CropAllocation` | `crop_allocations` | Acres per crop per plan |
+| `CropInput` | `crop_inputs` | Input products assigned to crops |
+| `AgroProduct` | `agro_products` | Product catalog (seed, chem, fert) |
+| `SeasonProfile` | `season_profiles` | Reusable season templates |
+
+### Other Models
+| Model | Table | Purpose |
+|-------|-------|---------|
+| `AuditLog` | `audit_logs` | Who changed what, when. Indexed on `(farm_id, entity_type, entity_id)` and `(farm_id, created_at)` |
+| `FieldOpsToken` | `field_ops_tokens` | FieldOps integration OAuth tokens |

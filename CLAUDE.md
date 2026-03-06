@@ -79,25 +79,47 @@ backend/src/
 ├── server.js              # HTTP + Socket.io entry
 ├── app.js                 # Express app, middleware, route registration
 ├── config/database.js     # Prisma client singleton
-├── middleware/auth.js      # JWT auth + RBAC (requireRole, requireFarmAccess)
-├── routes/                # 19+ route files (~54 endpoints)
+├── middleware/
+│   ├── auth.js            # JWT auth + RBAC (requireRole, requireFarmAccess)
+│   ├── errorHandler.js    # Global error handler (Prisma errors, status codes)
+│   └── validation.js      # validateBody(schema) middleware for request body validation
+├── routes/                # 29 route files (~80+ endpoints)
 ├── services/              # Business logic (calculation, forecast, GL rollup, exports, QB, inventory, marketing)
 ├── socket/                # Socket.io handler + AI events
-├── prisma/schema.prisma   # 25+ models
+├── prisma/schema.prisma   # 35+ models
 ├── prisma/seed.js         # Demo data seeder
-└── utils/                 # Fiscal year helpers, category constants, crypto
+└── utils/
+    ├── fiscalYear.js      # Nov-Oct fiscal year helpers
+    ├── categories.js       # Legacy category hierarchy (FinancialCategory seeding)
+    ├── defaultCategoryTemplate.js  # Farm category template
+    ├── crypto.js           # AES encryption for QB/FieldOps tokens
+    ├── fontPaths.js        # Shared font discovery for PDF generation (pdfmake)
+    └── logger.js           # Structured logger factory (JSON in production)
 ```
 
 ### Frontend Structure
 ```
 frontend/src/
-├── App.jsx                # Routes with auth guards (ProtectedRoute, AdminRoute, ModuleRoute)
-├── pages/                 # Page components (Login, Assumptions, PerUnit, Accounting, Dashboard, inventory/, marketing/)
-├── components/            # Shared + layout components
+├── App.jsx                # Routes with auth guards + React.lazy code splitting
+├── pages/                 # Page components (Login, Assumptions, PerUnit, Accounting, Dashboard, inventory/, marketing/, logistics/, agronomy/, enterprise/)
+├── components/
+│   ├── shared/            # ConfirmDialog, ErrorBoundary, TabPanel
+│   ├── layout/            # AppLayout, Header, Sidebar
+│   └── (feature)/         # per-unit/, accounting/, marketing/, inventory/, etc.
 ├── contexts/              # AuthContext (user/JWT), FarmContext (farm selection/roles), ThemeContext
-├── services/api.js        # Axios client (baseURL /api, JWT interceptor)
-├── services/socket.js     # Socket.io client
-└── utils/                 # Calculations, formatting, fiscal year, grid colors
+├── hooks/
+│   ├── useRealtime.js     # Socket.io cell-changed listener (joins farm room)
+│   ├── useMarketingSocket.js  # Marketing event listener
+│   └── useConfirmDialog.js    # Promise-based confirm dialog hook
+├── services/
+│   ├── api.js             # Axios client (baseURL /api, JWT interceptor, 401 handling)
+│   └── socket.js          # Socket.io client (getSocket, connectSocket, disconnectSocket)
+└── utils/
+    ├── formatting.js      # formatCurrency (CAD), formatNumber, fmt, fmtDollar, fmtSigned
+    ├── errorHelpers.js    # extractErrorMessage(err, fallback)
+    ├── fiscalYear.js      # Nov-Oct fiscal year helpers (mirrors backend)
+    ├── gridColors.js      # ag-Grid theme-aware cell colors
+    └── validation.js      # Assumptions validation helpers
 ```
 
 ### Key Services
@@ -123,6 +145,15 @@ Farm-specific hierarchical structure: Revenue, Inputs, Labour & Professional Man
 - Fiscal year utilities in both `backend/src/utils/fiscalYear.js` and `frontend/src/utils/fiscalYear.js`
 - Dev DB credentials: `postgresql://c2farms:c2farms_dev@localhost:5432/c2farms`
 - Seed accounts: `farmer@c2farms.com` / `manager@c2farms.com` / `viewer@c2farms.com` (all `password123`)
+
+### Shared Utilities (Always Reuse, Never Duplicate)
+- **Backend logger**: `import createLogger from '../utils/logger.js'` — use `createLogger('tag')` instead of raw `console.log`
+- **Backend font paths**: `import { getFontPaths } from '../utils/fontPaths.js'` — for pdfmake font config
+- **Backend validation**: `import { validateBody } from '../middleware/validation.js'` — Zod-like schema middleware
+- **Frontend formatting**: `import { formatCurrency, fmt, fmtDollar, fmtSigned } from '../utils/formatting.js'` — CAD currency, never local `const fmt =`
+- **Frontend errors**: `import { extractErrorMessage } from '../utils/errorHelpers.js'` — extract user-friendly error from Axios responses
+- **Frontend confirm**: `import { useConfirmDialog } from '../hooks/useConfirmDialog.js'` — promise-based MUI confirm, never `window.confirm`
+- **Frontend tabs**: `import TabPanel from '../components/shared/TabPanel.jsx'` — reusable tab panel, never inline `{value === index && ...}`
 
 ## Documentation
 Comprehensive docs in `/docs/`: ARCHITECTURE.md, API.md, DATABASE.md, RBAC.md, DEPLOYMENT.md, plus per-module docs in `docs/modules/`.

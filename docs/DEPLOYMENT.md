@@ -73,8 +73,15 @@ npm run build    # outputs to frontend/dist/
 
 ### 2. Start the backend
 
+From the repo root:
+```bash
+npm run start   # runs: prisma db push + node src/server.js
+```
+
+Or manually:
 ```bash
 cd backend
+npx prisma db push --schema=src/prisma/schema.prisma
 NODE_ENV=production node src/server.js
 ```
 
