@@ -12,6 +12,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import InviteDialog from './InviteDialog';
 
 const ROLE_COLORS = { admin: 'error', manager: 'warning', viewer: 'default' };
+const DEFAULT_MODULES = ['forecast', 'inventory', 'marketing', 'logistics', 'agronomy', 'enterprise'];
 
 export default function UserManagement() {
   const { currentFarm } = useFarm();
@@ -125,19 +126,20 @@ export default function UserManagement() {
                   </Select>
                 </TableCell>
                 <TableCell>
-                  <Stack direction="row" spacing={0}>
-                    <FormControlLabel
-                      control={<Checkbox size="small" checked={(u.modules || ['forecast', 'inventory', 'marketing']).includes('forecast')} onChange={() => handleModuleToggle(u.id, 'forecast', u.modules || ['forecast', 'inventory', 'marketing'])} />}
-                      label={<Typography variant="caption">Forecast</Typography>}
-                    />
-                    <FormControlLabel
-                      control={<Checkbox size="small" checked={(u.modules || ['forecast', 'inventory', 'marketing']).includes('inventory')} onChange={() => handleModuleToggle(u.id, 'inventory', u.modules || ['forecast', 'inventory', 'marketing'])} />}
-                      label={<Typography variant="caption">Inventory</Typography>}
-                    />
-                    <FormControlLabel
-                      control={<Checkbox size="small" checked={(u.modules || ['forecast', 'inventory', 'marketing']).includes('marketing')} onChange={() => handleModuleToggle(u.id, 'marketing', u.modules || ['forecast', 'inventory', 'marketing'])} />}
-                      label={<Typography variant="caption">Marketing</Typography>}
-                    />
+                  <Stack direction="row" spacing={0} flexWrap="wrap">
+                    {['forecast', 'inventory', 'marketing', 'logistics', 'agronomy', 'enterprise'].map(mod => (
+                      <FormControlLabel
+                        key={mod}
+                        control={
+                          <Checkbox
+                            size="small"
+                            checked={(u.modules || DEFAULT_MODULES).includes(mod)}
+                            onChange={() => handleModuleToggle(u.id, mod, u.modules || DEFAULT_MODULES)}
+                          />
+                        }
+                        label={<Typography variant="caption" sx={{ textTransform: 'capitalize' }}>{mod}</Typography>}
+                      />
+                    ))}
                   </Stack>
                 </TableCell>
                 <TableCell align="right">

@@ -40,7 +40,7 @@ model UserFarmRole {
   user_id String
   farm_id String
   role    String @default("admin")
-  modules Json   @default("[\"forecast\",\"inventory\",\"marketing\",\"logistics\"]") // which modules this user can access
+  modules Json   @default("[\"forecast\",\"inventory\",\"marketing\",\"logistics\",\"agronomy\",\"enterprise\"]") // which modules this user can access
   user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
   farm    Farm   @relation(fields: [farm_id], references: [id], onDelete: Cascade)
 
@@ -728,6 +728,9 @@ model CropAllocation {
   k_rate_per_bu   Float?
   s_rate_per_bu   Float?
   available_n     Float?
+  cu_target       Float?      // Cu target lbs/acre (flat, agronomist-set)
+  b_target        Float?      // B target lbs/acre (flat, agronomist-set)
+  zn_target       Float?      // Zn target lbs/acre (flat, agronomist-set)
 
   plan            AgroPlan    @relation(fields: [plan_id], references: [id], onDelete: Cascade)
   inputs          CropInput[]
@@ -762,6 +765,7 @@ model AgroProduct {
   sub_type      String? // herbicide, fungicide, insecticide, growth_reg
   crop_filter   String? // comma-separated crops or null for all
   analysis_code String? // "46-0-0" (fertilizers)
+  form          String? // dry, liquid, nh3, micro_nutrient
   default_unit  String?
   default_rate  Float?
   default_cost  Float?

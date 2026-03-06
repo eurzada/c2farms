@@ -21,7 +21,7 @@ const FARMS = [
 // { crop, acres, yield, price, nutrients: [n_rate, p_rate, k_rate, s_rate], available_n }
 const ALLOCATIONS = {
   Lewvan: [
-    { crop: 'Canola', acres: 10607, yield: 55, price: 15.50, nutrients: [2.75, -0.8, -0.45, 0.25], available_n: 18 },
+    { crop: 'Canola', acres: 10607, yield: 55, price: 15.50, nutrients: [2.75, -0.8, -0.45, 0.25], available_n: 18, cu_target: 0.5, b_target: 0.3, zn_target: 0.2 },
     { crop: 'Spring Durum Wheat', acres: 9981, yield: 70, price: 7.75, nutrients: [2.15, -0.6, -0.45, 0.25], available_n: 17 },
     { crop: 'Chickpeas', acres: 3796, yield: 50, price: 18.00, nutrients: [0, 0, 0, 0], available_n: 0 },
   ],
@@ -69,7 +69,7 @@ const CANOLA_INPUTS_LEWVAN = [
   { category: 'fertilizer', product_name: 'MAP', product_analysis: '11-52-0', form: 'dry', rate: 100, rate_unit: 'lbs/acre', cost_per_unit: 0.5299, sort_order: 12 },
   { category: 'fertilizer', product_name: 'Potash', product_analysis: '0-0-60', form: 'dry', rate: 100, rate_unit: 'lbs/acre', cost_per_unit: 0.294, sort_order: 13 },
   { category: 'fertilizer', product_name: 'Urea', product_analysis: '46-0-0', form: 'dry', rate: 100, rate_unit: 'lbs/acre', cost_per_unit: 0.3448, sort_order: 14 },
-  { category: 'fertilizer', product_name: 'Cropplex', product_analysis: '12-40-0-10', form: 'dry', rate: 100, rate_unit: 'lbs/acre', cost_per_unit: 0.5309, sort_order: 15 },
+  { category: 'fertilizer', product_name: 'Cropplex', product_analysis: '12-40-0-10-1', form: 'dry', rate: 100, rate_unit: 'lbs/acre', cost_per_unit: 0.5309, sort_order: 15 },
   // Chemical
   { category: 'chemical', product_name: 'Avadex', timing: 'fall_residual', rate: 2.5, rate_unit: 'L/acre', cost_per_unit: 8.50, sort_order: 20 },
   { category: 'chemical', product_name: 'Bromo', timing: 'preburn', rate: 0.5, rate_unit: 'L/acre', cost_per_unit: 42.00, sort_order: 21 },
@@ -85,7 +85,7 @@ const CANOLA_INPUTS_STANDARD = [
   { category: 'fertilizer', product_name: 'MAP', product_analysis: '11-52-0', form: 'dry', rate: 20, rate_unit: 'lbs/acre', cost_per_unit: 0.5299, sort_order: 11 },
   { category: 'fertilizer', product_name: 'Potash', product_analysis: '0-0-60', form: 'dry', rate: 40, rate_unit: 'lbs/acre', cost_per_unit: 0.294, sort_order: 12 },
   { category: 'fertilizer', product_name: 'Urea', product_analysis: '46-0-0', form: 'dry', rate: 90, rate_unit: 'lbs/acre', cost_per_unit: 0.3448, sort_order: 13 },
-  { category: 'fertilizer', product_name: 'Cropplex', product_analysis: '12-40-0-10', form: 'dry', rate: 85, rate_unit: 'lbs/acre', cost_per_unit: 0.5309, sort_order: 14 },
+  { category: 'fertilizer', product_name: 'Cropplex', product_analysis: '12-40-0-10-1', form: 'dry', rate: 85, rate_unit: 'lbs/acre', cost_per_unit: 0.5309, sort_order: 14 },
   { category: 'chemical', product_name: 'Avadex', timing: 'fall_residual', rate: 2.5, rate_unit: 'L/acre', cost_per_unit: 8.50, sort_order: 20 },
   { category: 'chemical', product_name: 'Bromo', timing: 'preburn', rate: 0.5, rate_unit: 'L/acre', cost_per_unit: 42.00, sort_order: 21 },
   { category: 'chemical', product_name: 'Liberty', timing: 'incrop', rate: 0.5, rate_unit: 'L/acre', cost_per_unit: 85.00, sort_order: 22 },
@@ -194,14 +194,19 @@ const PRODUCTS = [
   { name: 'CDC Maxim CL', type: 'seed', crop_filter: 'Small Red Lentils', default_unit: 'lbs/acre', default_rate: 55, default_cost: 1.85 },
   { name: 'CDC Meadow', type: 'seed', crop_filter: 'Yellow Field Peas', default_unit: 'lbs/acre', default_rate: 175, default_cost: 0.65 },
   // Fertilizers
-  { name: 'NH3', type: 'fertilizer', analysis_code: '82-0-0', default_unit: 'lbs/acre', default_cost: 0.6497 },
-  { name: 'Treated Urea', type: 'fertilizer', analysis_code: '46-0-0', default_unit: 'lbs/acre', default_cost: 0.3834 },
-  { name: 'Urea', type: 'fertilizer', analysis_code: '46-0-0', default_unit: 'lbs/acre', default_cost: 0.3448 },
-  { name: 'MAP', type: 'fertilizer', analysis_code: '11-52-0', default_unit: 'lbs/acre', default_cost: 0.5299 },
-  { name: 'Potash', type: 'fertilizer', analysis_code: '0-0-60', default_unit: 'lbs/acre', default_cost: 0.294 },
-  { name: 'Cropplex', type: 'fertilizer', analysis_code: '12-40-0-10', default_unit: 'lbs/acre', default_cost: 0.5309 },
-  { name: 'AMS', type: 'fertilizer', analysis_code: '21-0-0-24', default_unit: 'lbs/acre', default_cost: 0.30 },
-  { name: 'UAN', type: 'fertilizer', analysis_code: '28-0-0', default_unit: 'US Gal/Acre', default_cost: 0.40 },
+  { name: 'NH3', type: 'fertilizer', analysis_code: '82-0-0', form: 'nh3', default_unit: 'lbs/acre', default_cost: 0.6497 },
+  { name: 'Treated Urea', type: 'fertilizer', analysis_code: '46-0-0', form: 'dry', default_unit: 'lbs/acre', default_cost: 0.3834 },
+  { name: 'Urea', type: 'fertilizer', analysis_code: '46-0-0', form: 'dry', default_unit: 'lbs/acre', default_cost: 0.3448 },
+  { name: 'MAP', type: 'fertilizer', analysis_code: '11-52-0', form: 'dry', default_unit: 'lbs/acre', default_cost: 0.5299 },
+  { name: 'Potash', type: 'fertilizer', analysis_code: '0-0-60', form: 'dry', default_unit: 'lbs/acre', default_cost: 0.294 },
+  { name: 'Cropplex', type: 'fertilizer', analysis_code: '12-40-0-10-1', form: 'dry', default_unit: 'lbs/acre', default_cost: 0.5309 },
+  { name: 'AMS', type: 'fertilizer', analysis_code: '21-0-0-24', form: 'dry', default_unit: 'lbs/acre', default_cost: 0.30 },
+  { name: 'UAN', type: 'fertilizer', analysis_code: '28-0-0', form: 'liquid', default_unit: 'US Gal/Acre', default_cost: 0.40 },
+  { name: '10-34-0', type: 'fertilizer', analysis_code: '10-34-0', form: 'liquid', default_unit: 'US Gal/Acre', default_cost: 0.45 },
+  { name: 'ATS', type: 'fertilizer', analysis_code: '12-0-0-26', form: 'liquid', default_unit: 'US Gal/Acre', default_cost: 0.35 },
+  { name: 'Nexus Cu', type: 'fertilizer', analysis_code: '0-0-0-0-9', form: 'micro_nutrient', default_unit: 'lbs/acre', default_cost: 2.50 },
+  { name: 'Micro B', type: 'fertilizer', analysis_code: '0-0-0-0-0-15', form: 'micro_nutrient', default_unit: 'lbs/acre', default_cost: 3.00 },
+  { name: 'Micro Zn', type: 'fertilizer', analysis_code: '0-0-0-0-0-0-36', form: 'micro_nutrient', default_unit: 'lbs/acre', default_cost: 2.75 },
   // Chemicals - Herbicides
   { name: 'Avadex', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 8.50 },
   { name: 'Bromo', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 42.00 },
@@ -297,6 +302,9 @@ async function seed() {
         k_rate_per_bu: alloc.nutrients[2] || null,
         s_rate_per_bu: alloc.nutrients[3] || null,
         available_n: alloc.available_n || null,
+        cu_target: alloc.cu_target || null,
+        b_target: alloc.b_target || null,
+        zn_target: alloc.zn_target || null,
       },
     });
 

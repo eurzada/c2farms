@@ -4,42 +4,67 @@ import ExcelJS from 'exceljs';
 // ─── Nutrient Calculations ──────────────────────────────────────────
 
 export function parseAnalysis(code) {
-  if (!code) return { n: 0, p: 0, k: 0, s: 0 };
+  if (!code) return { n: 0, p: 0, k: 0, s: 0, cu: 0, b: 0, zn: 0 };
   const parts = code.split('-').map(Number);
   return {
     n: parts[0] || 0,
     p: parts[1] || 0,
     k: parts[2] || 0,
     s: parts[3] || 0,
+    cu: parts[4] || 0,
+    b: parts[5] || 0,
+    zn: parts[6] || 0,
   };
 }
 
 export function computeNutrientBalance(allocation, fertInputs) {
   const yld = allocation.target_yield_bu || 0;
+  // N/P/K/S: yield-based. Cu/B/Zn: flat targets from allocation
   const required = {
-    n: yld * (allocation.n_rate_per_bu || 0) - (allocation.available_n || 0),
+    n: yld * (allocation.n_rate_per_bu || 0),
     p: yld * (allocation.p_rate_per_bu || 0),
     k: yld * (allocation.k_rate_per_bu || 0),
     s: yld * (allocation.s_rate_per_bu || 0),
+    cu: allocation.cu_target || 0,
+    b: allocation.b_target || 0,
+    zn: allocation.zn_target || 0,
   };
 
-  const applied = { n: 0, p: 0, k: 0, s: 0 };
+  const toApply = {
+    n: required.n - (allocation.available_n || 0),
+    p: required.p,
+    k: required.k,
+    s: required.s,
+    cu: required.cu,
+    b: required.b,
+    zn: required.zn,
+  };
+
+  const applied = { n: 0, p: 0, k: 0, s: 0, cu: 0, b: 0, zn: 0 };
   for (const input of fertInputs) {
     const a = parseAnalysis(input.product_analysis);
     applied.n += input.rate * (a.n / 100);
     applied.p += input.rate * (a.p / 100);
     applied.k += input.rate * (a.k / 100);
     applied.s += input.rate * (a.s / 100);
+    applied.cu += input.rate * (a.cu / 100);
+    applied.b += input.rate * (a.b / 100);
+    applied.zn += input.rate * (a.zn / 100);
   }
 
   return {
     required,
+    toApply,
     applied,
+    available_n: allocation.available_n || 0,
     surplus: {
-      n: applied.n - required.n,
-      p: applied.p - required.p,
-      k: applied.k - required.k,
-      s: applied.s - required.s,
+      n: applied.n - toApply.n,
+      p: applied.p - toApply.p,
+      k: applied.k - toApply.k,
+      s: applied.s - toApply.s,
+      cu: applied.cu - toApply.cu,
+      b: applied.b - toApply.b,
+      zn: applied.zn - toApply.zn,
     },
   };
 }
@@ -116,6 +141,43 @@ export async function upsertInput(allocationId, data) {
 
 export async function deleteInput(inputId) {
   return prisma.cropInput.delete({ where: { id: inputId } });
+}
+
+// ─── Bulk Fertilizer Save ───────────────────────────────────────────
+
+export async function bulkSaveFertilizers(allocationId, fertRows) {
+  // Delete all existing fertilizer inputs for this allocation
+  await prisma.cropInput.deleteMany({
+    where: { allocation_id: allocationId, category: 'fertilizer' },
+  });
+
+  // Create new records only where rate > 0
+  const toCreate = fertRows
+    .filter(r => r.rate > 0)
+    .map((r, i) => ({
+      allocation_id: allocationId,
+      category: 'fertilizer',
+      product_name: r.product_name,
+      product_analysis: r.product_analysis || null,
+      form: r.form || null,
+      rate: r.rate,
+      rate_unit: r.rate_unit || 'lbs/acre',
+      cost_per_unit: r.cost_per_unit || 0,
+      sort_order: r.sort_order ?? (10 + i),
+    }));
+
+  if (toCreate.length > 0) {
+    await prisma.cropInput.createMany({ data: toCreate });
+  }
+
+  // Return updated allocation with inputs + nutrient balance
+  const alloc = await prisma.cropAllocation.findUnique({
+    where: { id: allocationId },
+    include: { inputs: { orderBy: { sort_order: 'asc' } } },
+  });
+  const fertInputs = alloc.inputs.filter(i => i.category === 'fertilizer');
+  const balance = computeNutrientBalance(alloc, fertInputs);
+  return { allocation: alloc, balance };
 }
 
 // ─── Dashboard Aggregation ──────────────────────────────────────────

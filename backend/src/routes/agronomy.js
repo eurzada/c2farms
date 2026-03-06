@@ -151,6 +151,17 @@ router.delete('/:farmId/agronomy/inputs/:id', requireRole('manager'), async (req
   } catch (err) { next(err); }
 });
 
+// ─── Bulk Fertilizer Save ───────────────────────────────────────────
+
+router.put('/:farmId/agronomy/allocations/:allocId/fertilizers', requireRole('manager'), async (req, res, next) => {
+  try {
+    const { rows } = req.body;
+    if (!Array.isArray(rows)) return res.status(400).json({ error: 'rows array required' });
+    const result = await svc.bulkSaveFertilizers(req.params.allocId, rows);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 // ─── Nutrients ──────────────────────────────────────────────────────
 
 router.get('/:farmId/agronomy/nutrients/:allocId', async (req, res, next) => {

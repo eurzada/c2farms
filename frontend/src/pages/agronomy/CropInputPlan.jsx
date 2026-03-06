@@ -12,6 +12,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import { useFarm } from '../../contexts/FarmContext';
 import api from '../../services/api';
 import { extractErrorMessage } from '../../utils/errorHelpers';
+import FertilizerMatrix from '../../components/agronomy/FertilizerMatrix';
 
 function fmt(n) { return (n || 0).toLocaleString('en-CA', { maximumFractionDigits: 0 }); }
 function fmtDec(n, d = 2) { return (n || 0).toLocaleString('en-CA', { minimumFractionDigits: d, maximumFractionDigits: d }); }
@@ -30,58 +31,6 @@ const TIMING_LABELS = {
   fungicide: 'Fungicide',
   desiccation: 'Desiccation',
 };
-
-function NutrientPanel({ allocation }) {
-  const [balance, setBalance] = useState(null);
-  const { currentFarm } = useFarm();
-
-  useEffect(() => {
-    if (!currentFarm || !allocation) return;
-    api.get(`/api/farms/${currentFarm.id}/agronomy/nutrients/${allocation.id}`)
-      .then(res => setBalance(res.data))
-      .catch(() => {});
-  }, [currentFarm, allocation]);
-
-  if (!balance || !allocation.n_rate_per_bu) return null;
-
-  const nutrients = ['n', 'p', 'k', 's'];
-  const labels = { n: 'N', p: 'P', k: 'K', s: 'S' };
-
-  return (
-    <Paper variant="outlined" sx={{ p: 1.5, mb: 1, bgcolor: 'lightyellow' }}>
-      <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Nutrient Balance (lbs/acre)</Typography>
-      <Table size="small">
-        <TableHead>
-          <TableRow>
-            <TableCell sx={{ py: 0.5, fontWeight: 'bold' }} />
-            {nutrients.map(n => <TableCell key={n} align="right" sx={{ py: 0.5, fontWeight: 'bold' }}>{labels[n]}</TableCell>)}
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          <TableRow>
-            <TableCell sx={{ py: 0.25 }}>Required</TableCell>
-            {nutrients.map(n => <TableCell key={n} align="right" sx={{ py: 0.25 }}>{fmtDec(balance.required[n], 1)}</TableCell>)}
-          </TableRow>
-          <TableRow>
-            <TableCell sx={{ py: 0.25 }}>Applied</TableCell>
-            {nutrients.map(n => <TableCell key={n} align="right" sx={{ py: 0.25 }}>{fmtDec(balance.applied[n], 1)}</TableCell>)}
-          </TableRow>
-          <TableRow>
-            <TableCell sx={{ py: 0.25, fontWeight: 'bold' }}>Surplus</TableCell>
-            {nutrients.map(n => (
-              <TableCell key={n} align="right" sx={{
-                py: 0.25, fontWeight: 'bold',
-                color: balance.surplus[n] >= 0 ? 'success.main' : 'error.main',
-              }}>
-                {balance.surplus[n] >= 0 ? '+' : ''}{fmtDec(balance.surplus[n], 1)}
-              </TableCell>
-            ))}
-          </TableRow>
-        </TableBody>
-      </Table>
-    </Paper>
-  );
-}
 
 function InputSection({ title, inputs, allocation, canEdit, onAdd, onDelete, onUpdate }) {
   const costPerAcre = inputs.reduce((s, i) => s + i.rate * i.cost_per_unit, 0);
@@ -164,13 +113,18 @@ export default function CropInputPlan() {
   const [addDialog, setAddDialog] = useState(null); // { allocId, category }
   const [newInput, setNewInput] = useState({ product_name: '', rate: '', rate_unit: 'lbs/acre', cost_per_unit: '', product_analysis: '', timing: '' });
   const [error, setError] = useState('');
+  const [fertProducts, setFertProducts] = useState([]);
 
   const load = useCallback(async () => {
     if (!currentFarm) return;
     setLoading(true);
     try {
-      const res = await api.get(`/api/farms/${currentFarm.id}/agronomy/plans?year=${year}`);
-      setPlan(res.data);
+      const [planRes, prodRes] = await Promise.all([
+        api.get(`/api/farms/${currentFarm.id}/agronomy/plans?year=${year}`),
+        api.get(`/api/farms/${currentFarm.id}/agronomy/products?type=fertilizer`),
+      ]);
+      setPlan(planRes.data);
+      setFertProducts(prodRes.data);
     } catch (err) {
       console.error(err);
     } finally {
@@ -179,6 +133,22 @@ export default function CropInputPlan() {
   }, [currentFarm, year]);
 
   useEffect(() => { load(); }, [load]);
+
+  const saveFertilizers = useCallback(async (allocId, rows) => {
+    try {
+      await api.put(`/api/farms/${currentFarm.id}/agronomy/allocations/${allocId}/fertilizers`, { rows });
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Error saving fertilizers'));
+    }
+  }, [currentFarm]);
+
+  const updateAllocTargets = useCallback(async (allocId, fields) => {
+    try {
+      await api.patch(`/api/farms/${currentFarm.id}/agronomy/allocations/${allocId}`, fields);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Error updating targets'));
+    }
+  }, [currentFarm]);
 
   const status = plan?.status || 'draft';
   const canEdit = userCanEdit && plan && (status === 'draft' || status === 'submitted');
@@ -282,23 +252,23 @@ export default function CropInputPlan() {
                   canEdit={canEdit} onAdd={() => setAddDialog({ allocId: alloc.id, category: 'seeding' })}
                   onDelete={deleteInput} onUpdate={updateInput} />
               )}
-              {(fertInputs.length > 0 || alloc.n_rate_per_bu) && (
-                <>
-                  <NutrientPanel allocation={alloc} />
-                  <InputSection title="FERTILIZER" inputs={fertInputs} allocation={alloc}
-                    canEdit={canEdit} onAdd={() => setAddDialog({ allocId: alloc.id, category: 'fertilizer' })}
-                    onDelete={deleteInput} onUpdate={updateInput} />
-                </>
+              {(fertInputs.length > 0 || fertProducts.length > 0 || canEdit) && (
+                <FertilizerMatrix
+                  allocation={alloc}
+                  products={fertProducts}
+                  canEdit={canEdit}
+                  onSave={saveFertilizers}
+                  onAllocUpdate={updateAllocTargets}
+                />
               )}
               {chemInputs.length > 0 && (
                 <InputSection title="CHEMICALS" inputs={chemInputs} allocation={alloc}
                   canEdit={canEdit} onAdd={() => setAddDialog({ allocId: alloc.id, category: 'chemicals' })}
                   onDelete={deleteInput} onUpdate={updateInput} />
               )}
-              {seedInputs.length === 0 && fertInputs.length === 0 && chemInputs.length === 0 && canEdit && (
+              {seedInputs.length === 0 && chemInputs.length === 0 && canEdit && (
                 <Stack direction="row" spacing={1}>
                   <Button size="small" onClick={() => setAddDialog({ allocId: alloc.id, category: 'seeding' })}>Add Seed</Button>
-                  <Button size="small" onClick={() => setAddDialog({ allocId: alloc.id, category: 'fertilizer' })}>Add Fertilizer</Button>
                   <Button size="small" onClick={() => setAddDialog({ allocId: alloc.id, category: 'chemicals' })}>Add Chemical</Button>
                 </Stack>
               )}
@@ -315,13 +285,10 @@ export default function CropInputPlan() {
 
       {/* Add Input Dialog */}
       <Dialog open={!!addDialog} onClose={() => setAddDialog(null)} maxWidth="sm" fullWidth>
-        <DialogTitle>Add {addDialog?.category === 'seeding' ? 'Seed' : addDialog?.category === 'fertilizer' ? 'Fertilizer' : 'Chemical'} Input</DialogTitle>
+        <DialogTitle>Add {addDialog?.category === 'seeding' ? 'Seed' : 'Chemical'} Input</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField label="Product Name" value={newInput.product_name} onChange={e => setNewInput({ ...newInput, product_name: e.target.value })} fullWidth />
-            {addDialog?.category === 'fertilizer' && (
-              <TextField label="Analysis Code (e.g. 46-0-0)" value={newInput.product_analysis} onChange={e => setNewInput({ ...newInput, product_analysis: e.target.value })} fullWidth />
-            )}
             {addDialog?.category === 'chemicals' && (
               <FormControl fullWidth>
                 <InputLabel>Timing</InputLabel>

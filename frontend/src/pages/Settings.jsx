@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Box, Typography, Tabs, Tab, Alert } from '@mui/material';
 import { useFarm } from '../contexts/FarmContext';
-import UserManagement from '../components/settings/UserManagement';
 import BackupPanel from '../components/settings/BackupPanel';
 import TabPanel from '../components/shared/TabPanel';
 
@@ -32,14 +31,10 @@ export default function Settings() {
       </Typography>
 
       <Tabs value={tab} onChange={(_, v) => setTab(v)}>
-        <Tab label="Users" />
         <Tab label="Backup" />
       </Tabs>
 
       <TabPanel value={tab} index={0}>
-        <UserManagement />
-      </TabPanel>
-      <TabPanel value={tab} index={1}>
         <BackupPanel />
       </TabPanel>
     </Box>
