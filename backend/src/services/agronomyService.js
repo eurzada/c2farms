@@ -1,5 +1,9 @@
 import prisma from '../config/database.js';
 import ExcelJS from 'exceljs';
+import { updatePerUnitCell } from './calculationService.js';
+import createLogger from '../utils/logger.js';
+
+const log = createLogger('agronomy');
 
 // ─── Nutrient Calculations ──────────────────────────────────────────
 
@@ -106,6 +110,159 @@ export async function updatePlanStatus(planId, status, userId) {
     data: updates,
     include: { allocations: { include: { inputs: true } } },
   });
+}
+
+// ─── Agronomy → Forecast Push ────────────────────────────────────────
+
+// Seasonal distribution: maps category (and chemical timing) to fiscal months + weights
+const SEASONAL_DISTRIBUTION = {
+  seed: [
+    { month: 'Apr', pct: 0.50 },
+    { month: 'May', pct: 0.50 },
+  ],
+  fertilizer: [
+    { month: 'Apr', pct: 0.25 },
+    { month: 'May', pct: 0.25 },
+    { month: 'Jun', pct: 0.25 },
+    { month: 'Sep', pct: 0.25 },
+  ],
+  // Chemical timing → months
+  chemical_preburn: [
+    { month: 'May', pct: 1.0 },
+  ],
+  chemical_incrop: [
+    { month: 'Jun', pct: 0.50 },
+    { month: 'Jul', pct: 0.50 },
+  ],
+  chemical_fungicide: [
+    { month: 'Aug', pct: 1.0 },
+  ],
+  chemical_fall_residual: [
+    { month: 'Oct', pct: 1.0 },
+  ],
+  chemical_desiccation: [
+    { month: 'Sep', pct: 1.0 },
+  ],
+  // Default for chemicals with no timing specified
+  chemical_default: [
+    { month: 'Jun', pct: 1.0 },
+  ],
+};
+
+// Category code mapping for Forecast MonthlyData
+const CATEGORY_CODES = {
+  seed: 'input_seed',
+  fertilizer: 'input_fert',
+  chemical: 'input_chem',
+};
+
+function getChemicalDistribution(timing) {
+  const key = `chemical_${timing || 'default'}`;
+  return SEASONAL_DISTRIBUTION[key] || SEASONAL_DISTRIBUTION.chemical_default;
+}
+
+// Compute per-acre costs broken down by month for a single allocation
+function computeMonthlyInputCosts(alloc) {
+  // monthCosts: { 'Apr': { input_seed: X, input_fert: Y, input_chem: Z }, ... }
+  const monthCosts = {};
+
+  for (const inp of alloc.inputs || []) {
+    const costPerAcre = inp.rate * inp.cost_per_unit;
+    if (costPerAcre === 0) continue;
+
+    let categoryCode;
+    let distribution;
+
+    if (inp.category === 'seed' || inp.category === 'seed_treatment') {
+      categoryCode = CATEGORY_CODES.seed;
+      distribution = SEASONAL_DISTRIBUTION.seed;
+    } else if (inp.category === 'fertilizer') {
+      categoryCode = CATEGORY_CODES.fertilizer;
+      distribution = SEASONAL_DISTRIBUTION.fertilizer;
+    } else if (inp.category === 'chemical') {
+      categoryCode = CATEGORY_CODES.chemical;
+      distribution = getChemicalDistribution(inp.timing);
+    } else {
+      continue;
+    }
+
+    for (const { month, pct } of distribution) {
+      if (!monthCosts[month]) monthCosts[month] = {};
+      monthCosts[month][categoryCode] = (monthCosts[month][categoryCode] || 0) + costPerAcre * pct;
+    }
+  }
+
+  return monthCosts;
+}
+
+// Push approved agronomy plan costs into Forecast MonthlyData
+// Crop year 2026 → FY2026 (Nov 2025 – Oct 2026); all input months (Apr–Oct) fall within FY2026
+export async function pushToForecast(farmId, cropYear) {
+  const plan = await getPlan(farmId, cropYear);
+  if (!plan) throw new Error(`No agronomy plan found for crop year ${cropYear}`);
+
+  const fiscalYear = cropYear; // Apr–Oct of crop year falls within same fiscal year
+
+  // Check that assumptions exist for this fiscal year
+  const assumption = await prisma.assumption.findUnique({
+    where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: fiscalYear } },
+  });
+  if (!assumption) {
+    log.warn(`No assumptions for farm ${farmId} FY${fiscalYear} — skipping forecast push`);
+    return { pushed: false, reason: 'No forecast assumptions for this fiscal year' };
+  }
+
+  // Aggregate monthly costs across all allocations (weighted by acres)
+  // Since per-unit in forecast is farm-wide $/acre, we need weighted average
+  const totalAcres = plan.allocations.reduce((s, a) => s + a.acres, 0);
+  if (totalAcres === 0) {
+    return { pushed: false, reason: 'No acres allocated' };
+  }
+
+  // Accumulate total $ by month, then divide by totalAcres for $/acre
+  const monthTotals = {}; // { 'Apr': { input_seed: total$, ... }, ... }
+
+  for (const alloc of plan.allocations) {
+    const monthlyCosts = computeMonthlyInputCosts(alloc);
+    for (const [month, costs] of Object.entries(monthlyCosts)) {
+      if (!monthTotals[month]) monthTotals[month] = {};
+      for (const [catCode, costPerAcre] of Object.entries(costs)) {
+        // costPerAcre is per acre for THIS crop; scale by this crop's acres
+        monthTotals[month][catCode] = (monthTotals[month][catCode] || 0) + costPerAcre * alloc.acres;
+      }
+    }
+  }
+
+  // Write to forecast — skip months that already have actuals
+  const updated = [];
+  for (const [month, costs] of Object.entries(monthTotals)) {
+    // Check if this month already has actual data
+    const existing = await prisma.monthlyData.findUnique({
+      where: {
+        farm_id_fiscal_year_month_type: {
+          farm_id: farmId, fiscal_year: fiscalYear, month, type: 'per_unit',
+        },
+      },
+    });
+
+    if (existing?.is_actual) {
+      log.info(`Skipping ${month} — already has actuals`);
+      continue;
+    }
+
+    // Write each category as $/acre (total$ / totalAcres)
+    for (const [catCode, totalDollars] of Object.entries(costs)) {
+      const perAcre = totalDollars / totalAcres;
+      await updatePerUnitCell(
+        farmId, fiscalYear, month, catCode, perAcre,
+        `From approved agronomy plan (crop year ${cropYear})`
+      );
+    }
+    updated.push(month);
+  }
+
+  log.info(`Pushed agronomy costs to forecast: farm=${farmId}, FY=${fiscalYear}, months=${updated.join(',')}`);
+  return { pushed: true, fiscalYear, monthsUpdated: updated };
 }
 
 // ─── Allocation CRUD ────────────────────────────────────────────────

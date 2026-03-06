@@ -28,7 +28,7 @@ const FARM_UNIT_ITEMS = [
   { label: 'Per-Unit', path: '/per-unit', icon: <TableChartIcon />, module: 'forecast' },
   { label: 'Operations', path: '/operations', icon: <PrecisionManufacturingIcon />, module: 'forecast' },
   { label: 'Dashboard', path: '/dashboard', icon: <DashboardIcon />, module: 'forecast' },
-  { label: 'Chart of Accounts', path: '/chart-of-accounts', icon: <ListAltIcon />, module: 'forecast' },
+  { label: 'Chart of Accounts', path: '/chart-of-accounts', icon: <ListAltIcon />, module: 'forecast', adminOnly: true },
   { section: 'Operations' },
   { label: 'Bin Inventory', path: '/inventory/bins', icon: <WarehouseIcon />, module: 'inventory' },
 ];
@@ -62,7 +62,12 @@ export default function Sidebar({ width }) {
   const isAnyFarmAdmin = farms.some(f => f.role === 'admin');
 
   const items = isEnterprise ? ENTERPRISE_ITEMS : FARM_UNIT_ITEMS;
-  const visibleItems = items.filter(item => item.section || !item.module || hasModule(item.module));
+  const visibleItems = items.filter(item => {
+    if (item.section) return true;
+    if (item.module && !hasModule(item.module)) return false;
+    if (item.adminOnly && !isAdmin) return false;
+    return true;
+  });
 
   const isSelected = (path) => {
     if (location.pathname === path) return true;
@@ -84,11 +89,11 @@ export default function Sidebar({ width }) {
         '& .MuiDrawer-paper': { width, boxSizing: 'border-box', borderRight: (theme) => `1px solid ${theme.palette.divider}`, display: 'flex', flexDirection: 'column' },
       }}
     >
-      <Box sx={{ p: 2, textAlign: 'center', cursor: 'pointer' }} onClick={() => navigate('/home')}>
+      <Box sx={{ p: 2, textAlign: 'center', cursor: 'pointer', bgcolor: 'secondary.dark', borderRadius: 0 }} onClick={() => navigate('/home')}>
         <img
           src="/logo.png"
           alt="C2 Farms"
-          style={{ width: 40, height: 'auto', objectFit: 'contain' }}
+          style={{ width: 150, height: 'auto', objectFit: 'contain' }}
         />
       </Box>
       <Divider />

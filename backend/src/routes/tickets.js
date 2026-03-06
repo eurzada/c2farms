@@ -41,6 +41,45 @@ router.get('/:farmId/tickets', authenticate, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GET ticket stats for a farm (must be before /:id route)
+router.get('/:farmId/tickets/stats/summary', authenticate, async (req, res, next) => {
+  try {
+    const farmId = req.params.farmId;
+    const [total, settled, unsettled, byCounterparty] = await Promise.all([
+      prisma.deliveryTicket.count({ where: { farm_id: farmId } }),
+      prisma.deliveryTicket.count({ where: { farm_id: farmId, settled: true } }),
+      prisma.deliveryTicket.count({ where: { farm_id: farmId, settled: false } }),
+      prisma.deliveryTicket.groupBy({
+        by: ['counterparty_id'],
+        where: { farm_id: farmId },
+        _count: true,
+        _sum: { net_weight_mt: true },
+      }),
+    ]);
+
+    const counterpartyIds = byCounterparty.map(g => g.counterparty_id).filter(Boolean);
+    const counterparties = counterpartyIds.length > 0
+      ? await prisma.counterparty.findMany({
+            where: { id: { in: counterpartyIds } },
+            select: { id: true, name: true },
+          })
+      : [];
+    const cpMap = Object.fromEntries(counterparties.map(cp => [cp.id, cp.name]));
+
+    res.json({
+      total,
+      settled,
+      unsettled,
+      by_counterparty: byCounterparty.map(g => ({
+        counterparty_id: g.counterparty_id,
+        counterparty_name: cpMap[g.counterparty_id] || 'Unknown',
+        count: g._count,
+        total_mt: g._sum.net_weight_mt || 0,
+      })),
+    });
+  } catch (err) { next(err); }
+});
+
 // GET single ticket
 router.get('/:farmId/tickets/:id', authenticate, async (req, res, next) => {
   try {
@@ -116,46 +155,6 @@ router.delete('/:farmId/tickets', authenticate, requireRole('admin'), async (req
     });
 
     res.json({ deleted: result.count });
-  } catch (err) { next(err); }
-});
-
-// GET ticket stats for a farm
-router.get('/:farmId/tickets/stats/summary', authenticate, async (req, res, next) => {
-  try {
-    const farmId = req.params.farmId;
-    const [total, settled, unsettled, byCounterparty] = await Promise.all([
-      prisma.deliveryTicket.count({ where: { farm_id: farmId } }),
-      prisma.deliveryTicket.count({ where: { farm_id: farmId, settled: true } }),
-      prisma.deliveryTicket.count({ where: { farm_id: farmId, settled: false } }),
-      prisma.deliveryTicket.groupBy({
-        by: ['counterparty_id'],
-        where: { farm_id: farmId },
-        _count: true,
-        _sum: { net_weight_mt: true },
-      }),
-    ]);
-
-    // Enrich counterparty stats
-    const counterpartyIds = byCounterparty.map(g => g.counterparty_id).filter(Boolean);
-    const counterparties = counterpartyIds.length > 0
-      ? await prisma.counterparty.findMany({
-          where: { id: { in: counterpartyIds } },
-          select: { id: true, name: true },
-        })
-      : [];
-    const cpMap = Object.fromEntries(counterparties.map(cp => [cp.id, cp.name]));
-
-    res.json({
-      total,
-      settled,
-      unsettled,
-      by_counterparty: byCounterparty.map(g => ({
-        counterparty_id: g.counterparty_id,
-        counterparty_name: cpMap[g.counterparty_id] || 'Unknown',
-        count: g._count,
-        total_mt: g._sum.net_weight_mt || 0,
-      })),
-    });
   } catch (err) { next(err); }
 });
 

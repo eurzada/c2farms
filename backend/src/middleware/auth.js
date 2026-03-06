@@ -23,15 +23,22 @@ export async function requireFarmAccess(req, res, next) {
   if (!farmId) return next();
 
   try {
-    const role = await prisma.userFarmRole.findUnique({
-      where: { user_id_farm_id: { user_id: req.userId, farm_id: farmId } },
-    });
+    const [role, user] = await Promise.all([
+      prisma.userFarmRole.findUnique({
+        where: { user_id_farm_id: { user_id: req.userId, farm_id: farmId } },
+      }),
+      prisma.user.findUnique({
+        where: { id: req.userId },
+        select: { id: true, name: true, email: true, role: true },
+      }),
+    ]);
 
     if (!role) {
       return res.status(403).json({ error: 'Access denied: no access to this farm' });
     }
 
     req.farmRole = role.role;
+    req.user = user;
     next();
   } catch (err) {
     next(err);
@@ -72,6 +79,22 @@ export async function requireAnyFarmAdmin(req, res, next) {
   } catch (err) {
     next(err);
   }
+}
+
+// Module access check — must be used AFTER requireFarmAccess (which sets req.user)
+// Checks that the user's global modules list includes the required module.
+export function requireModule(module) {
+  return async (req, res, next) => {
+    const user = req.user || await prisma.user.findUnique({
+      where: { id: req.userId },
+      select: { modules: true },
+    });
+    const modules = user?.modules || ['forecast', 'inventory', 'marketing', 'logistics', 'agronomy', 'enterprise'];
+    if (!modules.includes(module)) {
+      return res.status(403).json({ error: `Access denied: ${module} module not enabled` });
+    }
+    next();
+  };
 }
 
 // Farm-level role check — must be used AFTER requireFarmAccess (which sets req.farmRole)

@@ -93,10 +93,22 @@ export default function PlanSetup() {
 
   const updateAllocation = async (id, field, value) => {
     try {
-      await api.patch(`/api/farms/${currentFarm.id}/agronomy/allocations/${id}`, { [field]: parseFloat(value) || 0 });
-      load();
+      const parsed = field === 'crop' ? value : (parseFloat(value) || 0);
+      // Optimistic local update — avoids re-render that kills focus/tab navigation
+      setPlan(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          allocations: prev.allocations.map(a =>
+            a.id === id ? { ...a, [field]: parsed } : a
+          ),
+        };
+      });
+      const payload = { [field]: parsed };
+      await api.patch(`/api/farms/${currentFarm.id}/agronomy/allocations/${id}`, payload);
     } catch (err) {
       console.error('Update error:', err);
+      load(); // Re-fetch on error to revert
     }
   };
 
@@ -215,7 +227,7 @@ export default function PlanSetup() {
             <TableContainer component={Paper}>
               <Table size="small">
                 <TableHead>
-                  <TableRow sx={{ '& th': { fontWeight: 'bold', bgcolor: 'grey.100' } }}>
+                  <TableRow sx={{ '& th': { fontWeight: 'bold', bgcolor: (theme) => theme.palette.mode === 'dark' ? 'grey.800' : 'grey.100' } }}>
                     <TableCell>Crop</TableCell>
                     <TableCell align="right">Acres</TableCell>
                     <TableCell align="right">Target Yield (bu/ac)</TableCell>
@@ -233,37 +245,47 @@ export default function PlanSetup() {
                     const inputCount = alloc.inputs?.length || 0;
                     return (
                       <TableRow key={alloc.id} hover>
-                        <TableCell sx={{ fontWeight: 'bold' }}>{alloc.crop}</TableCell>
+                        <TableCell sx={{ fontWeight: 'bold' }}>
+                          {isEditable ? (
+                            <Select size="small" value={alloc.crop}
+                              onChange={e => updateAllocation(alloc.id, 'crop', e.target.value)}
+                              sx={{ minWidth: 160, fontWeight: 'bold' }}>
+                              {CROP_OPTIONS.filter(c => c === alloc.crop || !plan?.allocations?.some(a => a.crop === c)).map(c => (
+                                <MenuItem key={c} value={c}>{c}</MenuItem>
+                              ))}
+                            </Select>
+                          ) : alloc.crop}
+                        </TableCell>
                         <TableCell align="right">
                           {isEditable ? (
-                            <TextField size="small" type="number" defaultValue={alloc.acres}
-                              onBlur={e => updateAllocation(alloc.id, 'acres', e.target.value)}
+                            <TextField size="small" type="number" key={`${alloc.id}-acres`} defaultValue={alloc.acres}
+                              onBlur={e => { if (parseFloat(e.target.value) !== alloc.acres) updateAllocation(alloc.id, 'acres', e.target.value); }}
                               sx={{ width: 100 }} inputProps={{ style: { textAlign: 'right' } }} />
                           ) : fmt(alloc.acres)}
                         </TableCell>
                         <TableCell align="right">
                           {isEditable ? (
-                            <TextField size="small" type="number" defaultValue={alloc.target_yield_bu}
-                              onBlur={e => updateAllocation(alloc.id, 'target_yield_bu', e.target.value)}
+                            <TextField size="small" type="number" key={`${alloc.id}-yield`} defaultValue={alloc.target_yield_bu}
+                              onBlur={e => { if (parseFloat(e.target.value) !== alloc.target_yield_bu) updateAllocation(alloc.id, 'target_yield_bu', e.target.value); }}
                               sx={{ width: 80 }} inputProps={{ style: { textAlign: 'right' } }} />
                           ) : fmtDec(alloc.target_yield_bu)}
                         </TableCell>
                         <TableCell align="right">
                           {isEditable ? (
-                            <TextField size="small" type="number" defaultValue={alloc.commodity_price}
-                              onBlur={e => updateAllocation(alloc.id, 'commodity_price', e.target.value)}
+                            <TextField size="small" type="number" key={`${alloc.id}-price`} defaultValue={alloc.commodity_price}
+                              onBlur={e => { if (parseFloat(e.target.value) !== alloc.commodity_price) updateAllocation(alloc.id, 'commodity_price', e.target.value); }}
                               sx={{ width: 80 }} inputProps={{ style: { textAlign: 'right' } }} />
                           ) : `$${fmtDec(alloc.commodity_price)}`}
                         </TableCell>
                         <TableCell align="right">{fmt(prod)}</TableCell>
                         <TableCell align="right">${fmt(rev)}</TableCell>
                         <TableCell align="right">
-                          <Chip label={`${inputCount} items`} size="small" variant="outlined" />
+                          <Chip label={`${inputCount} items`} size="small" variant="outlined" tabIndex={-1} />
                         </TableCell>
                         {isEditable && (
                           <TableCell>
                             <Tooltip title="Delete">
-                              <IconButton size="small" color="error" onClick={() => deleteAllocation(alloc.id)}>
+                              <IconButton size="small" color="error" tabIndex={-1} onClick={() => deleteAllocation(alloc.id)}>
                                 <DeleteIcon fontSize="small" />
                               </IconButton>
                             </Tooltip>

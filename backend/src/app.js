@@ -34,7 +34,7 @@ import { fieldOpsGeneralRouter, fieldOpsFarmRouter } from './routes/fieldOps.js'
 import mobileTicketRoutes from './routes/mobileTickets.js';
 
 import { errorHandler } from './middleware/errorHandler.js';
-import { authenticate, requireFarmAccess } from './middleware/auth.js';
+import { authenticate, requireFarmAccess, requireModule } from './middleware/auth.js';
 
 const app = express();
 
@@ -89,6 +89,7 @@ app.use('/api/auth', authRoutes);
 // Enforce farm-level authorization on all /:farmId/* routes
 app.use('/api/farms/:farmId', authenticate, requireFarmAccess);
 
+// Forecast module
 app.use('/api/farms', assumptionsRoutes);
 app.use('/api/farms', financialRoutes);
 app.use('/api/farms', forecastRoutes);
@@ -98,24 +99,39 @@ app.use('/api/fieldops', fieldOpsGeneralRouter);
 app.use('/api/farms', fieldOpsFarmRouter);
 app.use('/api/farms', dashboardRoutes);
 app.use('/api/farms', exportsRoutes);
-app.use('/api/agronomy', agronomyGeneralRouter);
-app.use('/api/farms', agronomyRoutes);
-app.use('/api/farms', farmRoutes);
 app.use('/api/farms', csvImportRoutes);
+app.use('/api/farms', operationalDataRoutes);
+
+// Agronomy module
+app.use('/api/agronomy', agronomyGeneralRouter);
+app.use('/api/farms/:farmId/agronomy', requireModule('agronomy'));
+app.use('/api/farms', agronomyRoutes);
+
+// Core farm management (no module gate — always accessible)
+app.use('/api/farms', farmRoutes);
 app.use('/api/farms', chartOfAccountsRoutes);
 app.use('/api/farms', settingsRoutes);
 app.use('/api/farms', aiRoutes);
-app.use('/api/farms', operationalDataRoutes);
 app.use('/api/admin', universalSettingsRoutes);
+
+// Inventory module
+app.use('/api/farms/:farmId/inventory', requireModule('inventory'));
 app.use('/api/farms', inventoryRoutes);
 app.use('/api/farms', contractRoutes);
 app.use('/api/farms', reconciliationRoutes);
 app.use('/api/farms', inventoryDashboardRoutes);
 app.use('/api/farms', inventoryExportsRoutes);
+
+// Marketing module
+app.use('/api/farms/:farmId/marketing', requireModule('marketing'));
 app.use('/api/farms', marketingRoutes);
 app.use('/api/farms', counterpartyRoutes);
 app.use('/api/farms', cashFlowRoutes);
 app.use('/api/farms', priceAlertRoutes);
+
+// Logistics module
+app.use('/api/farms/:farmId/tickets', requireModule('logistics'));
+app.use('/api/farms/:farmId/settlements', requireModule('logistics'));
 app.use('/api/farms', ticketRoutes);
 app.use('/api/farms', settlementRoutes);
 app.use('/api/farms', mobileTicketRoutes);

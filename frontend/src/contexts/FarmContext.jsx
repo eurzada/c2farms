@@ -4,8 +4,7 @@ import { useAuth } from './AuthContext';
 const FarmContext = createContext(null);
 
 const ENTERPRISE_ID = '__enterprise__';
-const ENTERPRISE_MODULES = ['marketing', 'logistics', 'inventory', 'forecast', 'agronomy'];
-const FARM_UNIT_MODULES = ['forecast', 'agronomy', 'inventory'];
+const DEFAULT_MODULES = ['forecast', 'inventory', 'marketing', 'logistics', 'agronomy', 'enterprise'];
 
 export function FarmProvider({ children }) {
   const { user, farms: authFarms, refreshAuthFarms } = useAuth();
@@ -41,8 +40,8 @@ export function FarmProvider({ children }) {
   const isAdmin = currentRole === 'admin';
   const canEdit = !isEnterprise ? (currentRole === 'admin' || currentRole === 'manager') : true;
 
-  // Module visibility depends on enterprise vs farm-unit mode
-  const modules = isEnterprise ? ENTERPRISE_MODULES : FARM_UNIT_MODULES;
+  // Module visibility from user's global modules setting
+  const modules = user?.modules || DEFAULT_MODULES;
   const hasModule = useCallback((mod) => modules.includes(mod), [modules]);
 
   // Wrapper for setCurrentFarm that accepts a farm object (from dropdown)

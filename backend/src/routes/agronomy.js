@@ -86,7 +86,20 @@ router.patch('/:farmId/agronomy/plans/:planId/status', requireRole('manager'), a
       return res.status(403).json({ error: 'Only admin can approve or lock plans' });
     }
     const plan = await svc.updatePlanStatus(req.params.planId, status, req.user.name);
-    res.json(plan);
+
+    // On approval, push input costs to Forecast module
+    let forecastResult = null;
+    if (status === 'approved') {
+      try {
+        forecastResult = await svc.pushToForecast(req.params.farmId, plan.crop_year);
+      } catch (forecastErr) {
+        // Don't fail the approval if forecast push fails — log and continue
+        console.error('Forecast push failed:', forecastErr.message);
+        forecastResult = { pushed: false, reason: forecastErr.message };
+      }
+    }
+
+    res.json({ ...plan, forecastSync: forecastResult });
   } catch (err) { next(err); }
 });
 

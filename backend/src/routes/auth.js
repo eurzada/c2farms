@@ -129,7 +129,7 @@ router.get('/me', authenticate, async (req, res, next) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.userId },
-      select: { id: true, email: true, name: true, role: true },
+      select: { id: true, email: true, name: true, role: true, modules: true },
     });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
@@ -139,7 +139,7 @@ router.get('/me', authenticate, async (req, res, next) => {
       include: { farm: true },
     });
 
-    res.json({ user, farms: farmRoles.map(fr => ({ ...fr.farm, role: fr.role, modules: fr.modules || ['forecast', 'inventory', 'marketing'] })) });
+    res.json({ user, farms: farmRoles.map(fr => ({ ...fr.farm, role: fr.role })) });
   } catch (err) {
     next(err);
   }

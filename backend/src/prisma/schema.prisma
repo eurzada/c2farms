@@ -13,6 +13,7 @@ model User {
   password_hash String
   name          String
   role          String         @default("farm_manager")
+  modules       Json           @default("[\"forecast\",\"inventory\",\"marketing\",\"logistics\",\"agronomy\",\"enterprise\"]")
   created_at    DateTime       @default(now())
   updated_at    DateTime       @updatedAt
   farm_roles    UserFarmRole[]

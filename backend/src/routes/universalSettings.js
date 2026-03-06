@@ -11,7 +11,7 @@ router.get('/users-grid', ...adminGuard, async (req, res, next) => {
   try {
     const [users, farms, roles, invites] = await Promise.all([
       prisma.user.findMany({
-        select: { id: true, email: true, name: true },
+        select: { id: true, email: true, name: true, modules: true },
         orderBy: { name: 'asc' },
       }),
       prisma.farm.findMany({
@@ -80,6 +80,31 @@ router.patch('/users/:userId/farms/:farmId/role', ...adminGuard, async (req, res
   } catch (err) {
     if (err.code === 'P2025') {
       return res.status(404).json({ error: 'User not found on this farm' });
+    }
+    next(err);
+  }
+});
+
+// PATCH /users/:userId/modules — update user's global module access
+router.patch('/users/:userId/modules', ...adminGuard, async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    const { modules } = req.body;
+
+    if (!Array.isArray(modules)) {
+      return res.status(400).json({ error: 'modules array required' });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { modules },
+      select: { id: true, modules: true },
+    });
+
+    res.json({ message: 'Modules updated', modules: updated.modules });
+  } catch (err) {
+    if (err.code === 'P2025') {
+      return res.status(404).json({ error: 'User not found' });
     }
     next(err);
   }
