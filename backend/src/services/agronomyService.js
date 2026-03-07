@@ -271,15 +271,6 @@ export async function pushToForecast(farmId, cropYear) {
 
   const fiscalYear = cropYear; // Apr–Oct of crop year falls within same fiscal year
 
-  // Check that assumptions exist for this fiscal year
-  const assumption = await prisma.assumption.findUnique({
-    where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: fiscalYear } },
-  });
-  if (!assumption) {
-    log.warn(`No assumptions for farm ${farmId} FY${fiscalYear} — skipping forecast push`);
-    return { pushed: false, reason: 'No forecast assumptions for this fiscal year' };
-  }
-
   // Aggregate monthly costs across all allocations (weighted by acres)
   // Since per-unit in forecast is farm-wide $/acre, we need weighted average
   const totalAcres = plan.allocations.reduce((s, a) => s + a.acres, 0);
@@ -287,14 +278,13 @@ export async function pushToForecast(farmId, cropYear) {
     return { pushed: false, reason: 'No acres allocated' };
   }
 
-  // Sync total_acres from agronomy plan to forecast assumptions
-  if (assumption.total_acres !== totalAcres) {
-    await prisma.assumption.update({
-      where: { id: assumption.id },
-      data: { total_acres: totalAcres },
-    });
-    log.info(`Updated assumption total_acres: ${assumption.total_acres} → ${totalAcres}`);
-  }
+  // Upsert assumption record — agronomy is the source of truth for total_acres
+  const assumption = await prisma.assumption.upsert({
+    where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: fiscalYear } },
+    update: { total_acres: totalAcres },
+    create: { farm_id: farmId, fiscal_year: fiscalYear, total_acres: totalAcres, start_month: 'Nov' },
+  });
+  log.info(`Assumption upserted for farm ${farmId} FY${fiscalYear}: total_acres=${totalAcres}`);
 
   // Accumulate total $ by month, then divide by totalAcres for $/acre
   const monthTotals = {}; // { 'Apr': { input_seed: total$, ... }, ... }
