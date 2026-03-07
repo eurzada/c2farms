@@ -10,6 +10,9 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import SendIcon from '@mui/icons-material/Send';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import LockIcon from '@mui/icons-material/Lock';
+import LockOpenIcon from '@mui/icons-material/LockOpen';
+import CancelIcon from '@mui/icons-material/Cancel';
+import ReplayIcon from '@mui/icons-material/Replay';
 import { useFarm } from '../../contexts/FarmContext';
 import api from '../../services/api';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
@@ -24,7 +27,7 @@ const CROP_OPTIONS = [
   'Chickpeas', 'Small Red Lentils', 'Yellow Field Peas', 'Flax',
 ];
 
-const STATUS_COLORS = { draft: 'default', submitted: 'warning', approved: 'success', locked: 'info' };
+const STATUS_COLORS = { draft: 'default', submitted: 'warning', approved: 'success', locked: 'info', rejected: 'error' };
 
 export default function PlanSetup() {
   const { currentFarm, canEdit, isAdmin } = useFarm();
@@ -37,6 +40,8 @@ export default function PlanSetup() {
   const [newYield, setNewYield] = useState('');
   const [newPrice, setNewPrice] = useState('');
   const [error, setError] = useState('');
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectNotes, setRejectNotes] = useState('');
   const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
   const load = useCallback(async () => {
@@ -64,13 +69,29 @@ export default function PlanSetup() {
     }
   };
 
-  const updateStatus = async (status) => {
+  const updateStatus = async (status, extra = {}) => {
     try {
-      await api.patch(`/api/farms/${currentFarm.id}/agronomy/plans/${plan.id}/status`, { status });
+      await api.patch(`/api/farms/${currentFarm.id}/agronomy/plans/${plan.id}/status`, { status, ...extra });
       load();
     } catch (err) {
       setError(extractErrorMessage(err, 'Error updating status'));
     }
+  };
+
+  const handleReject = async () => {
+    if (!rejectNotes.trim()) return;
+    await updateStatus('rejected', { rejection_notes: rejectNotes.trim() });
+    setRejectOpen(false);
+    setRejectNotes('');
+  };
+
+  const handleUnlock = async () => {
+    const ok = await confirm({
+      title: 'Unlock Plan',
+      message: 'This will revert the plan to draft status, allowing edits. Continue?',
+      confirmText: 'Unlock',
+    });
+    if (ok) await updateStatus('draft');
   };
 
   const addAllocation = async () => {
@@ -131,7 +152,7 @@ export default function PlanSetup() {
   if (loading) return <Typography>Loading...</Typography>;
 
   const status = plan?.status || 'draft';
-  const isEditable = canEdit && plan && (status === 'draft' || status === 'submitted');
+  const isEditable = canEdit && plan && (status === 'draft' || status === 'submitted' || status === 'rejected');
   const totalAcres = plan?.allocations?.reduce((s, a) => s + a.acres, 0) || 0;
   const totalRevenue = plan?.allocations?.reduce((s, a) => s + a.acres * a.target_yield_bu * a.commodity_price, 0) || 0;
   const totalProduction = plan?.allocations?.reduce((s, a) => s + a.acres * a.target_yield_bu, 0) || 0;
@@ -158,16 +179,43 @@ export default function PlanSetup() {
           </Button>
         )}
         {plan && isAdmin && status === 'submitted' && (
-          <Button variant="contained" color="success" startIcon={<CheckCircleIcon />} onClick={() => updateStatus('approved')}>
-            Approve Plan
-          </Button>
+          <>
+            <Button variant="contained" color="success" startIcon={<CheckCircleIcon />} onClick={() => updateStatus('approved')}>
+              Approve Plan
+            </Button>
+            <Button variant="outlined" color="error" startIcon={<CancelIcon />} onClick={() => setRejectOpen(true)}>
+              Reject
+            </Button>
+          </>
         )}
         {plan && isAdmin && status === 'approved' && (
-          <Button variant="outlined" startIcon={<LockIcon />} onClick={() => updateStatus('locked')}>
-            Lock Plan
+          <>
+            <Button variant="outlined" startIcon={<LockIcon />} onClick={() => updateStatus('locked')}>
+              Lock Plan
+            </Button>
+            <Button variant="outlined" color="warning" startIcon={<LockOpenIcon />} onClick={handleUnlock}>
+              Unlock
+            </Button>
+          </>
+        )}
+        {plan && isAdmin && status === 'locked' && (
+          <Button variant="outlined" color="warning" startIcon={<LockOpenIcon />} onClick={handleUnlock}>
+            Unlock Plan
+          </Button>
+        )}
+        {plan && canEdit && status === 'rejected' && (
+          <Button variant="outlined" startIcon={<ReplayIcon />} onClick={() => updateStatus('submitted')}>
+            Resubmit for Review
           </Button>
         )}
       </Box>
+
+      {plan && status === 'rejected' && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          <Typography fontWeight="bold">Plan Rejected{plan.rejected_by ? ` by ${plan.rejected_by}` : ''}</Typography>
+          {plan.rejection_notes && <Typography variant="body2" sx={{ mt: 0.5 }}>{plan.rejection_notes}</Typography>}
+        </Alert>
+      )}
 
       {!plan && (
         <Paper sx={{ p: 4, textAlign: 'center' }}>
@@ -332,6 +380,31 @@ export default function PlanSetup() {
         <DialogActions>
           <Button onClick={() => setAddOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={addAllocation} disabled={!newCrop || !newAcres}>Add</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Reject Plan Dialog */}
+      <Dialog open={rejectOpen} onClose={() => setRejectOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Reject Plan</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Provide notes explaining why the plan is being rejected. These will be sent to the submitting agronomist.
+          </Typography>
+          <TextField
+            label="Rejection Notes"
+            multiline
+            rows={3}
+            value={rejectNotes}
+            onChange={e => setRejectNotes(e.target.value)}
+            fullWidth
+            autoFocus
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { setRejectOpen(false); setRejectNotes(''); }}>Cancel</Button>
+          <Button variant="contained" color="error" onClick={handleReject} disabled={!rejectNotes.trim()}>
+            Reject Plan
+          </Button>
         </DialogActions>
       </Dialog>
 

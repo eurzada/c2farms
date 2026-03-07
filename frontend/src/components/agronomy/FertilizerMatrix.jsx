@@ -37,8 +37,8 @@ function computeBalance(allocation, rows) {
   const yld = allocation.target_yield_bu || 0;
   const required = {
     n: yld * (allocation.n_rate_per_bu || 0),
-    p: yld * (allocation.p_rate_per_bu || 0),
-    k: yld * (allocation.k_rate_per_bu || 0),
+    p: Math.abs(yld * (allocation.p_rate_per_bu || 0)),
+    k: Math.abs(yld * (allocation.k_rate_per_bu || 0)),
     s: yld * (allocation.s_rate_per_bu || 0),
     cu: allocation.cu_target || 0,
     b: allocation.b_target || 0,

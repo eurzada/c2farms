@@ -24,10 +24,11 @@ export function parseAnalysis(code) {
 export function computeNutrientBalance(allocation, fertInputs) {
   const yld = allocation.target_yield_bu || 0;
   // N/P/K/S: yield-based. Cu/B/Zn: flat targets from allocation
+  // P and K rates are entered as negative (removal lbs), use absolute value for required
   const required = {
     n: yld * (allocation.n_rate_per_bu || 0),
-    p: yld * (allocation.p_rate_per_bu || 0),
-    k: yld * (allocation.k_rate_per_bu || 0),
+    p: Math.abs(yld * (allocation.p_rate_per_bu || 0)),
+    k: Math.abs(yld * (allocation.k_rate_per_bu || 0)),
     s: yld * (allocation.s_rate_per_bu || 0),
     cu: allocation.cu_target || 0,
     b: allocation.b_target || 0,
@@ -87,6 +88,10 @@ export async function getPlan(farmId, cropYear) {
   });
 }
 
+export async function getPlanById(planId) {
+  return prisma.agroPlan.findUnique({ where: { id: planId } });
+}
+
 export async function createPlan(farmId, cropYear, data = {}) {
   return prisma.agroPlan.create({
     data: {
@@ -99,16 +104,79 @@ export async function createPlan(farmId, cropYear, data = {}) {
   });
 }
 
-export async function updatePlanStatus(planId, status, userId) {
+export async function updatePlanStatus(planId, status, userName, { rejectionNotes, userEmail } = {}) {
   const updates = { status };
+  if (status === 'submitted') {
+    updates.submitted_by = userEmail || null;
+  }
   if (status === 'approved') {
-    updates.approved_by = userId;
+    updates.approved_by = userName;
     updates.approved_at = new Date();
+    updates.rejected_by = null;
+    updates.rejected_at = null;
+    updates.rejection_notes = null;
+  }
+  if (status === 'rejected') {
+    updates.rejected_by = userName;
+    updates.rejected_at = new Date();
+    updates.rejection_notes = rejectionNotes || null;
+  }
+  if (status === 'draft') {
+    // Unlock — clear approval/rejection state
+    updates.approved_by = null;
+    updates.approved_at = null;
+    updates.rejected_by = null;
+    updates.rejected_at = null;
+    updates.rejection_notes = null;
   }
   return prisma.agroPlan.update({
     where: { id: planId },
     data: updates,
     include: { allocations: { include: { inputs: true } } },
+  });
+}
+
+// ─── Copy Inputs Between Allocations ─────────────────────────────────
+
+export async function copyInputs(sourceAllocId, targetAllocId) {
+  const source = await prisma.cropAllocation.findUnique({
+    where: { id: sourceAllocId },
+    include: { inputs: { orderBy: { sort_order: 'asc' } } },
+  });
+  if (!source) throw Object.assign(new Error('Source allocation not found'), { status: 404 });
+
+  const target = await prisma.cropAllocation.findUnique({
+    where: { id: targetAllocId },
+    include: { inputs: true },
+  });
+  if (!target) throw Object.assign(new Error('Target allocation not found'), { status: 404 });
+
+  // Delete existing inputs on target
+  if (target.inputs.length > 0) {
+    await prisma.cropInput.deleteMany({ where: { allocation_id: targetAllocId } });
+  }
+
+  // Copy source inputs (product/rate/cost only, not nutrient balance)
+  const newInputs = source.inputs.map((inp, i) => ({
+    allocation_id: targetAllocId,
+    category: inp.category,
+    product_name: inp.product_name,
+    product_analysis: inp.product_analysis,
+    form: inp.form,
+    timing: inp.timing,
+    rate: inp.rate,
+    rate_unit: inp.rate_unit,
+    cost_per_unit: inp.cost_per_unit,
+    sort_order: i,
+  }));
+
+  if (newInputs.length > 0) {
+    await prisma.cropInput.createMany({ data: newInputs });
+  }
+
+  return prisma.cropAllocation.findUnique({
+    where: { id: targetAllocId },
+    include: { inputs: { orderBy: { sort_order: 'asc' } } },
   });
 }
 

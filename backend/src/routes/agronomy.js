@@ -78,14 +78,31 @@ router.post('/:farmId/agronomy/plans', requireRole('manager'), async (req, res, 
 
 router.patch('/:farmId/agronomy/plans/:planId/status', requireRole('manager'), async (req, res, next) => {
   try {
-    const { status } = req.body;
-    const allowed = ['draft', 'submitted', 'approved', 'locked'];
+    const { status, rejection_notes } = req.body;
+    const allowed = ['draft', 'submitted', 'approved', 'locked', 'rejected'];
     if (!allowed.includes(status)) return res.status(400).json({ error: `status must be one of: ${allowed.join(', ')}` });
-    // Only admin can approve or lock
-    if ((status === 'approved' || status === 'locked') && req.farmRole !== 'admin') {
-      return res.status(403).json({ error: 'Only admin can approve or lock plans' });
+
+    // Only admin can approve, lock, reject, or unlock (revert to draft)
+    if (['approved', 'locked', 'rejected'].includes(status) && req.farmRole !== 'admin') {
+      return res.status(403).json({ error: 'Only admin can approve, reject, or lock plans' });
     }
-    const plan = await svc.updatePlanStatus(req.params.planId, status, req.user.name);
+
+    // Unlock: only admin can revert approved/locked back to draft
+    if (status === 'draft') {
+      const currentPlan = await svc.getPlanById(req.params.planId);
+      if (currentPlan && ['approved', 'locked'].includes(currentPlan.status) && req.farmRole !== 'admin') {
+        return res.status(403).json({ error: 'Only admin can unlock plans' });
+      }
+    }
+
+    if (status === 'rejected' && !rejection_notes) {
+      return res.status(400).json({ error: 'Rejection notes are required' });
+    }
+
+    const plan = await svc.updatePlanStatus(req.params.planId, status, req.user.name, {
+      rejectionNotes: rejection_notes,
+      userEmail: req.user.email,
+    });
 
     // On approval, push input costs to Forecast module
     let forecastResult = null;
@@ -93,10 +110,16 @@ router.patch('/:farmId/agronomy/plans/:planId/status', requireRole('manager'), a
       try {
         forecastResult = await svc.pushToForecast(req.params.farmId, plan.crop_year);
       } catch (forecastErr) {
-        // Don't fail the approval if forecast push fails — log and continue
         console.error('Forecast push failed:', forecastErr.message);
         forecastResult = { pushed: false, reason: forecastErr.message };
       }
+    }
+
+    // On rejection, notify the submitter (email stub — logs for now)
+    if (status === 'rejected' && plan.submitted_by) {
+      console.log(`[NOTIFICATION] Plan rejected — notify ${plan.submitted_by}: "${rejection_notes}"`);
+      // TODO: Send email when email service is configured
+      // await sendEmail(plan.submitted_by, 'Agronomy Plan Rejected', `Your plan was rejected: ${rejection_notes}`);
     }
 
     res.json({ ...plan, forecastSync: forecastResult });
@@ -130,6 +153,16 @@ router.post('/:farmId/agronomy/plans/:planId/allocations', requireRole('manager'
 router.patch('/:farmId/agronomy/allocations/:id', requireRole('manager'), async (req, res, next) => {
   try {
     const alloc = await svc.upsertAllocation(null, { id: req.params.id, ...req.body });
+    res.json(alloc);
+  } catch (err) { next(err); }
+});
+
+// POST copy inputs from another allocation
+router.post('/:farmId/agronomy/allocations/:id/copy-inputs', requireRole('manager'), async (req, res, next) => {
+  try {
+    const { sourceAllocId } = req.body;
+    if (!sourceAllocId) return res.status(400).json({ error: 'sourceAllocId required' });
+    const alloc = await svc.copyInputs(sourceAllocId, req.params.id);
     res.json(alloc);
   } catch (err) { next(err); }
 });

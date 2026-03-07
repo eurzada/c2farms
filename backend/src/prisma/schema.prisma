@@ -701,11 +701,15 @@ model AgroPlan {
   id          String           @id @default(uuid())
   farm_id     String
   crop_year   Int
-  status      String           @default("draft") // draft, submitted, approved, locked
-  prepared_by String?
-  approved_by String?
-  approved_at DateTime?
-  notes       String?
+  status          String           @default("draft") // draft, submitted, approved, locked, rejected
+  prepared_by     String?
+  submitted_by    String?          // email of user who submitted (for rejection notification)
+  approved_by     String?
+  approved_at     DateTime?
+  rejected_by     String?
+  rejected_at     DateTime?
+  rejection_notes String?
+  notes           String?
   created_at  DateTime         @default(now())
   updated_at  DateTime         @updatedAt
 
