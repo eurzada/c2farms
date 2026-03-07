@@ -141,7 +141,7 @@ export default function EnterpriseAgroPlan() {
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
-        <Typography variant="h5" fontWeight="bold">Agronomic Plan</Typography>
+        <Typography variant="h5" fontWeight="bold">Agronomic Costs $</Typography>
         <FormControl size="small" sx={{ minWidth: 120 }}>
           <InputLabel>Crop Year</InputLabel>
           <Select value={year} label="Crop Year" onChange={e => setYear(e.target.value)}>

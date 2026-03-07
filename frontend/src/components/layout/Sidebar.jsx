@@ -43,7 +43,7 @@ const ENTERPRISE_ITEMS = [
   { section: 'Rollups (Read-Only)' },
   { label: 'Forecast Rollup', path: '/enterprise/forecast', icon: <DashboardIcon />, module: 'forecast', readOnly: true },
   { label: 'Agronomy Rollup', path: '/enterprise/agronomy', icon: <GrassIcon />, module: 'agronomy', readOnly: true },
-  { label: 'Agronomic Plan', path: '/enterprise/agro-plan', icon: <AgricultureIcon />, module: 'agronomy', readOnly: true },
+  { label: 'Agronomic Costs $', path: '/enterprise/agro-plan', icon: <AgricultureIcon />, module: 'agronomy', readOnly: true },
 ];
 
 function SectionHeader({ label }) {
