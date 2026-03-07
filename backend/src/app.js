@@ -32,6 +32,7 @@ import ticketRoutes from './routes/tickets.js';
 import settlementRoutes from './routes/settlements.js';
 import { fieldOpsGeneralRouter, fieldOpsFarmRouter } from './routes/fieldOps.js';
 import mobileTicketRoutes from './routes/mobileTickets.js';
+import labourRoutes, { labourGeneralRouter } from './routes/labour.js';
 
 import { errorHandler } from './middleware/errorHandler.js';
 import { authenticate, requireFarmAccess, requireModule } from './middleware/auth.js';
@@ -106,6 +107,10 @@ app.use('/api/farms', operationalDataRoutes);
 app.use('/api/agronomy', agronomyGeneralRouter);
 app.use('/api/farms/:farmId/agronomy', requireModule('agronomy'));
 app.use('/api/farms', agronomyRoutes);
+
+// Labour planning module
+app.use('/api/labour', labourGeneralRouter);
+app.use('/api/farms', labourRoutes);
 
 // Core farm management (no module gate — always accessible)
 app.use('/api/farms', farmRoutes);
