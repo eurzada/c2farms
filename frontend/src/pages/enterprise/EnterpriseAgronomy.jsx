@@ -1,10 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
-  Box, Typography, Paper, Alert, Chip, Stack,
+  Box, Typography, Paper, Alert, Chip, Stack, Button,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   FormControl, InputLabel, Select, MenuItem, useTheme,
 } from '@mui/material';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import LockOpenIcon from '@mui/icons-material/LockOpen';
+import LockIcon from '@mui/icons-material/Lock';
+import { useConfirmDialog } from '../../hooks/useConfirmDialog';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { Chart as ChartJS, ArcElement, CategoryScale, LinearScale, BarElement, Tooltip as ChartTooltip, Legend } from 'chart.js';
 import { Doughnut, Bar } from 'react-chartjs-2';
 import { useFarm } from '../../contexts/FarmContext';
@@ -35,12 +39,14 @@ function KpiCard({ label, value, sub, color }) {
 
 export default function EnterpriseAgronomy() {
   const theme = useTheme();
-  const { farmUnits } = useFarm();
+  const { farmUnits, isAdmin } = useFarm();
   const [year, setYear] = useState(2026);
   const [farmData, setFarmData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
-  useEffect(() => {
+  const loadData = () => {
     if (!farmUnits?.length) return;
     setLoading(true);
     Promise.all(
@@ -50,7 +56,29 @@ export default function EnterpriseAgronomy() {
           .catch(() => ({ farm, data: null }))
       )
     ).then(setFarmData).finally(() => setLoading(false));
-  }, [farmUnits, year]);
+  };
+
+  useEffect(() => { loadData(); }, [farmUnits, year]);
+
+  const handleBulkStatus = async (status) => {
+    const action = status === 'draft' ? 'unlock' : 'lock';
+    const ok = await confirm({
+      title: `${action === 'unlock' ? 'Unlock' : 'Lock'} All Plans?`,
+      message: `This will ${action} all agronomy plans for crop year ${year} across all farms. ${action === 'unlock' ? 'Plans will revert to draft status and become editable.' : 'Plans will be locked and no further edits allowed.'}`,
+      confirmText: `${action === 'unlock' ? 'Unlock' : 'Lock'} All`,
+      confirmColor: action === 'unlock' ? 'warning' : 'primary',
+    });
+    if (!ok) return;
+    setBulkLoading(true);
+    try {
+      await api.post('/api/agronomy/bulk-status', { crop_year: year, status });
+      loadData();
+    } catch (err) {
+      console.error('Bulk status update failed:', err);
+    } finally {
+      setBulkLoading(false);
+    }
+  };
 
   const { farmsWithPlans, cropList, gt } = useMemo(() => {
     const withPlans = farmData.filter(r => r.data?.farm);
@@ -88,6 +116,8 @@ export default function EnterpriseAgronomy() {
   }, [farmData]);
 
   const farmsWithoutPlans = farmData.filter(r => !r.data?.farm);
+  const hasLockedPlans = farmsWithPlans.some(r => ['approved', 'locked'].includes(r.data?.plan_status));
+  const hasDraftPlans = farmsWithPlans.some(r => ['draft', 'submitted'].includes(r.data?.plan_status));
   const isDark = theme.palette.mode === 'dark';
   const textColor = theme.palette.text.primary;
 
@@ -174,6 +204,30 @@ export default function EnterpriseAgronomy() {
         </FormControl>
         <Chip icon={<VisibilityIcon />} label="Read-Only" size="small" variant="outlined" />
         <Chip label={`${farmsWithPlans.length} of ${farmData.length} farms`} size="small" color="info" variant="outlined" />
+        {isAdmin && farmsWithPlans.length > 0 && (
+          <Box sx={{ ml: 'auto', display: 'flex', gap: 1 }}>
+            {hasLockedPlans && (
+              <Button
+                size="small" variant="outlined" color="warning"
+                startIcon={<LockOpenIcon />}
+                disabled={bulkLoading}
+                onClick={() => handleBulkStatus('draft')}
+              >
+                Unlock All Plans
+              </Button>
+            )}
+            {hasDraftPlans && (
+              <Button
+                size="small" variant="outlined"
+                startIcon={<LockIcon />}
+                disabled={bulkLoading}
+                onClick={() => handleBulkStatus('locked')}
+              >
+                Lock All Plans
+              </Button>
+            )}
+          </Box>
+        )}
       </Box>
 
       {farmsWithPlans.length === 0 ? (
@@ -348,6 +402,7 @@ export default function EnterpriseAgronomy() {
           )}
         </>
       )}
+      <ConfirmDialog {...confirmDialogProps} />
     </Box>
   );
 }

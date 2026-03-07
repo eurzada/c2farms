@@ -51,6 +51,25 @@ agronomyGeneralRouter.post('/import/commit', authenticate, async (req, res, next
   } catch (err) { next(err); }
 });
 
+// Bulk unlock/lock all plans for a crop year (admin only)
+agronomyGeneralRouter.post('/bulk-status', authenticate, async (req, res, next) => {
+  try {
+    const { crop_year, status } = req.body;
+    if (!crop_year || !['draft', 'locked'].includes(status)) {
+      return res.status(400).json({ error: 'crop_year and status (draft or locked) required' });
+    }
+    // Verify user is admin on at least one farm
+    const { default: prisma } = await import('../config/database.js');
+    const adminRole = await prisma.userFarmRole.findFirst({
+      where: { user_id: req.userId, role: 'admin' },
+    });
+    if (!adminRole) return res.status(403).json({ error: 'Admin access required' });
+
+    const result = await svc.bulkUpdatePlanStatus(crop_year, status, req.user?.name || 'admin');
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 // ─── Plans ──────────────────────────────────────────────────────────
 
 router.get('/:farmId/agronomy/plans', async (req, res, next) => {

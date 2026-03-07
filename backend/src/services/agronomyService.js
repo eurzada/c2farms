@@ -136,6 +136,31 @@ export async function updatePlanStatus(planId, status, userName, { rejectionNote
   });
 }
 
+// ─── Bulk Plan Status ────────────────────────────────────────────────
+
+export async function bulkUpdatePlanStatus(cropYear, status, userName) {
+  const plans = await prisma.agroPlan.findMany({ where: { crop_year: cropYear } });
+  const results = [];
+  for (const plan of plans) {
+    const updates = { status };
+    if (status === 'draft') {
+      updates.approved_by = null;
+      updates.approved_at = null;
+      updates.rejected_by = null;
+      updates.rejected_at = null;
+      updates.rejection_notes = null;
+    }
+    if (status === 'locked') {
+      updates.approved_by = updates.approved_by || userName;
+      updates.approved_at = updates.approved_at || new Date();
+    }
+    await prisma.agroPlan.update({ where: { id: plan.id }, data: updates });
+    results.push({ farm_id: plan.farm_id, plan_id: plan.id, old_status: plan.status, new_status: status });
+  }
+  log.info(`Bulk status update: ${results.length} plans → ${status} for crop year ${cropYear}`);
+  return { updated: results.length, status, crop_year: cropYear, details: results };
+}
+
 // ─── Copy Inputs Between Allocations ─────────────────────────────────
 
 export async function copyInputs(sourceAllocId, targetAllocId) {
