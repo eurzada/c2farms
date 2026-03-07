@@ -13,6 +13,7 @@ import WarehouseIcon from '@mui/icons-material/Warehouse';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import GrassIcon from '@mui/icons-material/Grass';
+import AgricultureIcon from '@mui/icons-material/Agriculture';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import SupervisorAccountIcon from '@mui/icons-material/SupervisorAccount';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -42,6 +43,7 @@ const ENTERPRISE_ITEMS = [
   { section: 'Rollups (Read-Only)' },
   { label: 'Forecast Rollup', path: '/enterprise/forecast', icon: <DashboardIcon />, module: 'forecast', readOnly: true },
   { label: 'Agronomy Rollup', path: '/enterprise/agronomy', icon: <GrassIcon />, module: 'agronomy', readOnly: true },
+  { label: 'Agronomic Plan', path: '/enterprise/agro-plan', icon: <AgricultureIcon />, module: 'agronomy', readOnly: true },
 ];
 
 function SectionHeader({ label }) {

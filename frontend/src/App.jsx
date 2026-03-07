@@ -40,6 +40,7 @@ const PlanSetup = lazy(() => import('./pages/agronomy/PlanSetup'));
 const CropInputPlan = lazy(() => import('./pages/agronomy/CropInputPlan'));
 const EnterpriseForecast = lazy(() => import('./pages/enterprise/EnterpriseForecast'));
 const EnterpriseAgronomy = lazy(() => import('./pages/enterprise/EnterpriseAgronomy'));
+const EnterpriseAgroPlan = lazy(() => import('./pages/enterprise/EnterpriseAgroPlan'));
 
 function LazyFallback() {
   return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 8 }}><CircularProgress /></Box>;
@@ -167,6 +168,7 @@ export default function App() {
                       {/* Enterprise rollup pages (read-only) */}
                       <Route path="/enterprise/forecast" element={<EnterpriseRoute><EnterpriseForecast /></EnterpriseRoute>} />
                       <Route path="/enterprise/agronomy" element={<EnterpriseRoute><EnterpriseAgronomy /></EnterpriseRoute>} />
+                      <Route path="/enterprise/agro-plan" element={<EnterpriseRoute><EnterpriseAgroPlan /></EnterpriseRoute>} />
                       <Route path="*" element={<NotFound />} />
                     </Routes>
                     </Suspense>
