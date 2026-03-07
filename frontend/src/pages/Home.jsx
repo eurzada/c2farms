@@ -6,6 +6,7 @@ import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import WarehouseIcon from '@mui/icons-material/Warehouse';
 import SettingsIcon from '@mui/icons-material/Settings';
 import DashboardIcon from '@mui/icons-material/Dashboard';
+import GroupsIcon from '@mui/icons-material/Groups';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import { useFarm } from '../contexts/FarmContext';
 
@@ -14,6 +15,11 @@ const FARM_MODULES = [
     key: 'agronomy', label: 'Agronomy',
     description: 'Crop planning, input programs, nutrient management',
     path: '/agronomy', icon: GrassIcon, color: '#4caf50',
+  },
+  {
+    key: 'agronomy', label: 'Labour Plan',
+    description: 'Seasonal labour hours, roles, and cost budgeting',
+    path: '/labour', icon: GroupsIcon, color: '#5c6bc0',
   },
   {
     key: 'forecast', label: 'Financial Forecast',
@@ -28,31 +34,39 @@ const FARM_MODULES = [
 ];
 
 const ENTERPRISE_MODULES = [
+  // Row 1 — Agronomy
   {
-    key: 'marketing', label: 'Grain Marketing',
+    key: 'agronomy', label: 'Agronomy', row: 1,
+    description: 'Crop planning, input programs, rollups',
+    path: '/enterprise/agronomy', icon: GrassIcon, color: '#4caf50',
+  },
+  // Row 2 — Marketing, Logistics, Inventory (left to right)
+  {
+    key: 'marketing', label: 'Grain Marketing', row: 2,
     description: 'Contracts, pricing, cash flow, sell decisions',
     path: '/marketing', icon: TrendingUpIcon, color: '#008CB2',
   },
   {
-    key: 'logistics', label: 'Logistics',
+    key: 'logistics', label: 'Logistics', row: 2,
     description: 'Tickets, settlements, trucker management',
     path: '/logistics', icon: LocalShippingIcon, color: '#006E8C',
   },
   {
-    key: 'inventory', label: 'Inventory Management',
+    key: 'inventory', label: 'Inventory Management', row: 2,
     description: 'Bin inventory, contracts, reconciliation',
     path: '/inventory', icon: WarehouseIcon, color: '#414042',
   },
+  // Row 3 — Rollups
   {
-    key: 'forecast', label: 'Forecast Rollup',
+    key: 'forecast', label: 'Forecast Rollup', row: 3,
     description: 'Consolidated budget across all farm units',
     path: '/enterprise/forecast', icon: DashboardIcon, color: '#6d6e70',
     readOnly: true,
   },
   {
-    key: 'agronomy', label: 'Agronomy Rollup',
-    description: 'Aggregated crop plans across all locations',
-    path: '/enterprise/agronomy', icon: GrassIcon, color: '#4caf50',
+    key: 'agronomy', label: 'Labour Rollup', row: 3,
+    description: 'Labour hours and costs across all farm units',
+    path: '/enterprise/labour', icon: GroupsIcon, color: '#5c6bc0',
     readOnly: true,
   },
 ];
@@ -121,14 +135,31 @@ export default function Home() {
         <Chip label="Farm Unit" variant="outlined" sx={{ mb: 3 }} />
       )}
 
-      <Stack
-        direction="row" spacing={2}
-        sx={{ flexWrap: 'wrap', justifyContent: 'center', gap: 2, maxWidth: 900 }}
-      >
-        {available.map(mod => (
-          <ModuleCard key={mod.key} mod={mod} onClick={() => navigate(mod.path)} />
-        ))}
-      </Stack>
+      {isEnterprise ? (
+        // Enterprise: explicit row grouping
+        <Box sx={{ maxWidth: 900 }}>
+          {[1, 2, 3].map(row => {
+            const rowMods = available.filter(m => m.row === row);
+            if (!rowMods.length) return null;
+            return (
+              <Stack key={row} direction="row" spacing={2} sx={{ justifyContent: 'center', mb: 2 }}>
+                {rowMods.map(mod => (
+                  <ModuleCard key={mod.path} mod={mod} onClick={() => navigate(mod.path)} />
+                ))}
+              </Stack>
+            );
+          })}
+        </Box>
+      ) : (
+        <Stack
+          direction="row" spacing={2}
+          sx={{ flexWrap: 'wrap', justifyContent: 'center', gap: 2, maxWidth: 900 }}
+        >
+          {available.map(mod => (
+            <ModuleCard key={mod.path} mod={mod} onClick={() => navigate(mod.path)} />
+          ))}
+        </Stack>
+      )}
     </Box>
   );
 }
