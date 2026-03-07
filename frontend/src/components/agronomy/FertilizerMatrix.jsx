@@ -237,7 +237,7 @@ export default function FertilizerMatrix({ allocation, products, canEdit, onSave
       </Box>
 
       {/* Nutrient Balance Header */}
-      <Paper variant="outlined" sx={{ p: 1, mb: 1, bgcolor: 'grey.50' }}>
+      <Paper variant="outlined" sx={{ p: 1, mb: 1, bgcolor: 'action.hover' }}>
         <Typography variant="caption" fontWeight="bold" sx={{ mb: 0.5, display: 'block' }}>
           Nutrient Balance (lbs/acre)
         </Typography>
