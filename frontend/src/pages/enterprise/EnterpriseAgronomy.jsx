@@ -1,42 +1,40 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Box, Typography, Paper, Alert, Chip, Stack,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  FormControl, InputLabel, Select, MenuItem,
+  FormControl, InputLabel, Select, MenuItem, useTheme,
 } from '@mui/material';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import { Chart as ChartJS, ArcElement, CategoryScale, LinearScale, BarElement, Tooltip as ChartTooltip, Legend } from 'chart.js';
+import { Doughnut, Bar } from 'react-chartjs-2';
 import { useFarm } from '../../contexts/FarmContext';
 import api from '../../services/api';
+
+ChartJS.register(ArcElement, CategoryScale, LinearScale, BarElement, ChartTooltip, Legend);
 
 function fmt(n) { return (n || 0).toLocaleString('en-CA', { maximumFractionDigits: 0 }); }
 function fmtDec(n) { return (n || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function fmtPct(n) { return (n * 100).toFixed(1) + '%'; }
 
-const STATUS_COLORS = { draft: 'default', submitted: 'warning', approved: 'success', locked: 'info', rejected: 'error' };
-
-function statusChip(status) {
-  return (
-    <Chip
-      label={(status || 'draft').toUpperCase()}
-      size="small"
-      color={STATUS_COLORS[status] || 'default'}
-      variant="outlined"
-    />
-  );
-}
-
-function SectionHeader({ children }) {
-  return (
-    <Typography variant="h6" sx={{ mb: 1, mt: 3, fontWeight: 'bold' }}>
-      {children}
-    </Typography>
-  );
-}
+const CROP_COLORS = [
+  '#2e7d32', '#1565c0', '#ef6c00', '#6a1b9a', '#c62828', '#00838f', '#4e342e', '#37474f',
+];
 
 const TH_SX = { fontWeight: 'bold', bgcolor: 'action.hover', whiteSpace: 'nowrap' };
 const TOTAL_SX = { fontWeight: 'bold', borderTop: 2, borderColor: 'divider' };
 
+function KpiCard({ label, value, sub, color }) {
+  return (
+    <Paper sx={{ p: 2.5, textAlign: 'center', flex: 1 }}>
+      <Typography variant="body2" color="text.secondary" gutterBottom>{label}</Typography>
+      <Typography variant="h5" fontWeight="bold" sx={{ color: color || 'text.primary' }}>{value}</Typography>
+      {sub && <Typography variant="caption" color="text.secondary">{sub}</Typography>}
+    </Paper>
+  );
+}
+
 export default function EnterpriseAgronomy() {
+  const theme = useTheme();
   const { farmUnits } = useFarm();
   const [year, setYear] = useState(2026);
   const [farmData, setFarmData] = useState([]);
@@ -45,71 +43,127 @@ export default function EnterpriseAgronomy() {
   useEffect(() => {
     if (!farmUnits?.length) return;
     setLoading(true);
-
     Promise.all(
       farmUnits.map(farm =>
         api.get(`/api/farms/${farm.id}/agronomy/dashboard?year=${year}`)
           .then(res => ({ farm, data: res.data }))
           .catch(() => ({ farm, data: null }))
       )
-    ).then(results => {
-      setFarmData(results);
-    }).finally(() => setLoading(false));
+    ).then(setFarmData).finally(() => setLoading(false));
   }, [farmUnits, year]);
 
-  if (loading) return <Typography>Loading...</Typography>;
-
-  const farmsWithPlans = farmData.filter(r => r.data?.farm);
-  const farmsWithoutPlans = farmData.filter(r => !r.data?.farm);
-
-  // ─── Farm Registry: collect all unique crops for column headers ─────
-  const allCrops = new Set();
-  for (const { data } of farmsWithPlans) {
-    for (const c of (data.crops || [])) allCrops.add(c.crop);
-  }
-  const cropColumns = [...allCrops].sort();
-
-  // ─── Aggregate by crop ─────────────────────────────────────────────
-  const cropAgg = {};
-  for (const { data } of farmsWithPlans) {
-    for (const c of (data.crops || [])) {
-      if (!cropAgg[c.crop]) {
-        cropAgg[c.crop] = {
-          crop: c.crop, acres: 0, production: 0, revenue: 0,
-          seed_total: 0, fert_total: 0, chem_total: 0, total_cost: 0,
-          _yield_x_acres: 0,
-        };
+  const { farmsWithPlans, cropList, gt } = useMemo(() => {
+    const withPlans = farmData.filter(r => r.data?.farm);
+    const cropAgg = {};
+    for (const { data } of withPlans) {
+      for (const c of (data.crops || [])) {
+        if (!cropAgg[c.crop]) {
+          cropAgg[c.crop] = {
+            crop: c.crop, acres: 0, production: 0, revenue: 0,
+            seed_total: 0, fert_total: 0, chem_total: 0, total_cost: 0,
+            _yield_x_acres: 0, _price_x_acres: 0,
+          };
+        }
+        const a = cropAgg[c.crop];
+        a.acres += c.acres || 0;
+        a.production += (c.acres || 0) * (c.target_yield_bu || 0);
+        a.revenue += c.revenue || 0;
+        a.seed_total += c.seed_total || 0;
+        a.fert_total += c.fert_total || 0;
+        a.chem_total += c.chem_total || 0;
+        a.total_cost += c.total_cost || 0;
+        a._yield_x_acres += (c.target_yield_bu || 0) * (c.acres || 0);
+        a._price_x_acres += (c.commodity_price || 0) * (c.acres || 0);
       }
-      const a = cropAgg[c.crop];
-      a.acres += c.acres || 0;
-      a.production += (c.acres || 0) * (c.target_yield_bu || 0);
-      a.revenue += c.revenue || 0;
-      a.seed_total += c.seed_total || 0;
-      a.fert_total += c.fert_total || 0;
-      a.chem_total += c.chem_total || 0;
-      a.total_cost += c.total_cost || 0;
-      a._yield_x_acres += (c.target_yield_bu || 0) * (c.acres || 0);
     }
-  }
-  const cropList = Object.values(cropAgg).sort((a, b) => b.acres - a.acres);
+    const list = Object.values(cropAgg).sort((a, b) => b.acres - a.acres);
+    const totals = { acres: 0, production: 0, revenue: 0, seed_total: 0, fert_total: 0, chem_total: 0, total_cost: 0 };
+    for (const c of list) {
+      totals.acres += c.acres; totals.production += c.production; totals.revenue += c.revenue;
+      totals.seed_total += c.seed_total; totals.fert_total += c.fert_total;
+      totals.chem_total += c.chem_total; totals.total_cost += c.total_cost;
+    }
+    totals.margin = totals.revenue - totals.total_cost;
+    return { farmsWithPlans: withPlans, cropList: list, gt: totals };
+  }, [farmData]);
 
-  // ─── Grand totals ──────────────────────────────────────────────────
-  const gt = { acres: 0, production: 0, revenue: 0, seed_total: 0, fert_total: 0, chem_total: 0, total_cost: 0 };
-  for (const c of cropList) {
-    gt.acres += c.acres;
-    gt.production += c.production;
-    gt.revenue += c.revenue;
-    gt.seed_total += c.seed_total;
-    gt.fert_total += c.fert_total;
-    gt.chem_total += c.chem_total;
-    gt.total_cost += c.total_cost;
-  }
-  gt.margin = gt.revenue - gt.total_cost;
+  const farmsWithoutPlans = farmData.filter(r => !r.data?.farm);
+  const isDark = theme.palette.mode === 'dark';
+  const textColor = theme.palette.text.primary;
+
+  // ─── Chart configs ─────────────────────────────────────────────────
+  const acresPieData = useMemo(() => ({
+    labels: cropList.map(c => c.crop),
+    datasets: [{
+      data: cropList.map(c => c.acres),
+      backgroundColor: CROP_COLORS.slice(0, cropList.length),
+      borderWidth: isDark ? 0 : 1,
+      borderColor: theme.palette.background.paper,
+    }],
+  }), [cropList, isDark, theme]);
+
+  const inputPieData = useMemo(() => ({
+    labels: ['Seed', 'Fertilizer', 'Chemical'],
+    datasets: [{
+      data: [gt.seed_total, gt.fert_total, gt.chem_total],
+      backgroundColor: ['#2e7d32', '#1565c0', '#ef6c00'],
+      borderWidth: isDark ? 0 : 1,
+      borderColor: theme.palette.background.paper,
+    }],
+  }), [gt, isDark, theme]);
+
+  const marginBarData = useMemo(() => ({
+    labels: cropList.map(c => c.crop),
+    datasets: [
+      {
+        label: 'Revenue/Acre',
+        data: cropList.map(c => c.acres ? c.revenue / c.acres : 0),
+        backgroundColor: '#2e7d32',
+      },
+      {
+        label: 'Cost/Acre',
+        data: cropList.map(c => c.acres ? c.total_cost / c.acres : 0),
+        backgroundColor: '#c62828',
+      },
+    ],
+  }), [cropList]);
+
+  const pieOpts = useMemo(() => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { position: 'bottom', labels: { color: textColor, padding: 12, font: { size: 11 } } },
+      tooltip: {
+        callbacks: {
+          label: (ctx) => {
+            const total = ctx.dataset.data.reduce((s, v) => s + v, 0);
+            const pct = total ? ((ctx.raw / total) * 100).toFixed(1) : 0;
+            return ` ${ctx.label}: ${fmt(ctx.raw)} (${pct}%)`;
+          },
+        },
+      },
+    },
+  }), [textColor]);
+
+  const barOpts = useMemo(() => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      x: { ticks: { color: textColor }, grid: { display: false } },
+      y: { ticks: { color: textColor, callback: v => `$${v}` }, grid: { color: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' } },
+    },
+    plugins: {
+      legend: { labels: { color: textColor } },
+      tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: $${fmtDec(ctx.raw)}` } },
+    },
+  }), [textColor, isDark]);
+
+  if (loading) return <Typography>Loading...</Typography>;
 
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3, flexWrap: 'wrap' }}>
-        <Typography variant="h5" fontWeight="bold">Enterprise Agronomy</Typography>
+        <Typography variant="h5" fontWeight="bold">Agronomy Rollup</Typography>
         <FormControl size="small" sx={{ minWidth: 120 }}>
           <InputLabel>Crop Year</InputLabel>
           <Select value={year} label="Crop Year" onChange={e => setYear(e.target.value)}>
@@ -119,29 +173,8 @@ export default function EnterpriseAgronomy() {
           </Select>
         </FormControl>
         <Chip icon={<VisibilityIcon />} label="Read-Only" size="small" variant="outlined" />
+        <Chip label={`${farmsWithPlans.length} of ${farmData.length} farms`} size="small" color="info" variant="outlined" />
       </Box>
-
-      {/* ─── KPI Banner ─────────────────────────────────────────────── */}
-      <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
-        <Paper sx={{ p: 2, textAlign: 'center', flex: 1 }}>
-          <Typography variant="body2" color="text.secondary">Total Acres</Typography>
-          <Typography variant="h5" fontWeight="bold">{fmt(gt.acres)}</Typography>
-        </Paper>
-        <Paper sx={{ p: 2, textAlign: 'center', flex: 1 }}>
-          <Typography variant="body2" color="text.secondary">Total Input Budget</Typography>
-          <Typography variant="h5" fontWeight="bold">${fmt(gt.total_cost)}</Typography>
-        </Paper>
-        <Paper sx={{ p: 2, textAlign: 'center', flex: 1 }}>
-          <Typography variant="body2" color="text.secondary">Projected Gross Revenue</Typography>
-          <Typography variant="h5" fontWeight="bold">${fmt(gt.revenue)}</Typography>
-        </Paper>
-        <Paper sx={{ p: 2, textAlign: 'center', flex: 1 }}>
-          <Typography variant="body2" color="text.secondary">Projected Gross Margin</Typography>
-          <Typography variant="h5" fontWeight="bold" sx={{ color: gt.margin >= 0 ? 'success.main' : 'error.main' }}>
-            ${fmt(gt.margin)}
-          </Typography>
-        </Paper>
-      </Stack>
 
       {farmsWithPlans.length === 0 ? (
         <Alert severity="warning">
@@ -149,261 +182,156 @@ export default function EnterpriseAgronomy() {
         </Alert>
       ) : (
         <>
-          {/* ─── Farm Registry ──────────────────────────────────────── */}
-          <SectionHeader>Farm Registry</SectionHeader>
-          <TableContainer component={Paper} sx={{ mb: 1 }}>
-            <Table size="small">
-              <TableHead>
-                <TableRow sx={{ '& th': TH_SX }}>
-                  <TableCell>Farm</TableCell>
-                  <TableCell align="right">Total Acres</TableCell>
-                  {cropColumns.map(crop => (
-                    <TableCell key={crop} align="right">{crop} (ac)</TableCell>
-                  ))}
-                  <TableCell align="center">Status</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {farmsWithPlans.map(({ farm, data }) => {
-                  const cropMap = {};
-                  for (const c of (data.crops || [])) cropMap[c.crop] = c.acres || 0;
-                  return (
-                    <TableRow key={farm.id} hover>
-                      <TableCell sx={{ fontWeight: 'bold' }}>{farm.name}</TableCell>
-                      <TableCell align="right">{fmt(data.farm.acres)}</TableCell>
-                      {cropColumns.map(crop => (
-                        <TableCell key={crop} align="right" sx={!cropMap[crop] ? { color: 'text.disabled' } : undefined}>
-                          {fmt(cropMap[crop] || 0)}
-                        </TableCell>
-                      ))}
-                      <TableCell align="center">{statusChip(data.plan_status)}</TableCell>
-                    </TableRow>
-                  );
-                })}
-                {farmsWithoutPlans.map(({ farm }) => (
-                  <TableRow key={farm.id} sx={{ opacity: 0.5 }}>
-                    <TableCell>{farm.name}</TableCell>
-                    <TableCell colSpan={cropColumns.length + 1} />
-                    <TableCell align="center">{statusChip(null)}</TableCell>
-                  </TableRow>
-                ))}
-                <TableRow sx={{ '& td': TOTAL_SX }}>
-                  <TableCell>TOTAL</TableCell>
-                  <TableCell align="right">{fmt(gt.acres)}</TableCell>
-                  {cropColumns.map(crop => (
-                    <TableCell key={crop} align="right">{fmt(cropAgg[crop]?.acres || 0)}</TableCell>
-                  ))}
-                  <TableCell />
-                </TableRow>
-              </TableBody>
-            </Table>
-          </TableContainer>
+          {/* ─── KPI Cards ─────────────────────────────────────────── */}
+          <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
+            <KpiCard label="Total Acres" value={fmt(gt.acres)} sub={`${cropList.length} crops`} />
+            <KpiCard label="Gross Revenue" value={`$${fmt(gt.revenue)}`} sub={gt.acres ? `$${fmtDec(gt.revenue / gt.acres)}/ac` : ''} />
+            <KpiCard label="Total Input Cost" value={`$${fmt(gt.total_cost)}`} sub={gt.acres ? `$${fmtDec(gt.total_cost / gt.acres)}/ac` : ''} />
+            <KpiCard label="Gross Margin" value={`$${fmt(gt.margin)}`}
+              sub={gt.revenue ? `${fmtPct(gt.margin / gt.revenue)} margin` : ''}
+              color={gt.margin >= 0 ? 'success.main' : 'error.main'} />
+            <KpiCard label="Cost / Bushel" value={gt.production ? `$${fmtDec(gt.total_cost / gt.production)}` : '—'}
+              sub={gt.production ? `${fmt(gt.production)} bu total` : ''} />
+          </Stack>
 
-          {/* ─── Cost Summary by Farm ──────────────────────────────── */}
-          <SectionHeader>Cost Summary by Farm</SectionHeader>
-          <TableContainer component={Paper} sx={{ mb: 1 }}>
-            <Table size="small">
-              <TableHead>
-                <TableRow sx={{ '& th': TH_SX }}>
-                  <TableCell>Farm</TableCell>
-                  <TableCell align="right">Total Acres</TableCell>
-                  <TableCell align="right">Seed ($)</TableCell>
-                  <TableCell align="right">Fertilizer ($)</TableCell>
-                  <TableCell align="right">Chemical ($)</TableCell>
-                  <TableCell align="right">Total Input ($)</TableCell>
-                  <TableCell align="right">Cost/Acre ($)</TableCell>
-                  <TableCell align="right">Proj. Revenue ($)</TableCell>
-                  <TableCell align="right">Gross Margin ($)</TableCell>
-                  <TableCell align="right">Margin/Acre ($)</TableCell>
-                  <TableCell align="right">Margin %</TableCell>
-                  <TableCell align="center">Status</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {farmsWithPlans.map(({ farm, data }) => {
-                  const d = data.farm;
-                  const marginPct = d.revenue ? (d.margin / d.revenue) : 0;
-                  return (
-                    <TableRow key={farm.id} hover>
-                      <TableCell sx={{ fontWeight: 'bold' }}>{farm.name}</TableCell>
-                      <TableCell align="right">{fmt(d.acres)}</TableCell>
-                      <TableCell align="right">${fmt(d.seed_total)}</TableCell>
-                      <TableCell align="right">${fmt(d.fert_total)}</TableCell>
-                      <TableCell align="right">${fmt(d.chem_total)}</TableCell>
-                      <TableCell align="right">${fmt(d.total_cost)}</TableCell>
-                      <TableCell align="right">${fmtDec(d.cost_per_acre)}</TableCell>
-                      <TableCell align="right">${fmt(d.revenue)}</TableCell>
-                      <TableCell align="right" sx={{ color: d.margin >= 0 ? 'success.main' : 'error.main' }}>
-                        ${fmt(d.margin)}
-                      </TableCell>
-                      <TableCell align="right">${fmtDec(d.margin_per_acre)}</TableCell>
-                      <TableCell align="right">{fmtPct(marginPct)}</TableCell>
-                      <TableCell align="center">
-                        <Chip label="On Track" size="small" color="success" variant="outlined" />
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-                <TableRow sx={{ '& td': TOTAL_SX }}>
-                  <TableCell>TOTAL</TableCell>
-                  <TableCell align="right">{fmt(gt.acres)}</TableCell>
-                  <TableCell align="right">${fmt(gt.seed_total)}</TableCell>
-                  <TableCell align="right">${fmt(gt.fert_total)}</TableCell>
-                  <TableCell align="right">${fmt(gt.chem_total)}</TableCell>
-                  <TableCell align="right">${fmt(gt.total_cost)}</TableCell>
-                  <TableCell align="right">${gt.acres ? `$${fmtDec(gt.total_cost / gt.acres)}` : ''}</TableCell>
-                  <TableCell align="right">${fmt(gt.revenue)}</TableCell>
-                  <TableCell align="right" sx={{ color: gt.margin >= 0 ? 'success.main' : 'error.main' }}>
-                    ${fmt(gt.margin)}
-                  </TableCell>
-                  <TableCell align="right">${gt.acres ? fmtDec(gt.margin / gt.acres) : ''}</TableCell>
-                  <TableCell align="right">{gt.revenue ? fmtPct(gt.margin / gt.revenue) : ''}</TableCell>
-                  <TableCell />
-                </TableRow>
-              </TableBody>
-            </Table>
-          </TableContainer>
+          {/* ─── Charts Row ────────────────────────────────────────── */}
+          <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
+            <Paper sx={{ p: 2, flex: 1 }}>
+              <Typography variant="subtitle2" fontWeight="bold" gutterBottom>Acres by Crop</Typography>
+              <Box sx={{ height: 260 }}>
+                <Doughnut data={acresPieData} options={pieOpts} />
+              </Box>
+            </Paper>
+            <Paper sx={{ p: 2, flex: 1 }}>
+              <Typography variant="subtitle2" fontWeight="bold" gutterBottom>Input Budget Breakdown</Typography>
+              <Box sx={{ height: 260 }}>
+                <Doughnut data={inputPieData} options={pieOpts} />
+              </Box>
+            </Paper>
+            <Paper sx={{ p: 2, flex: 2 }}>
+              <Typography variant="subtitle2" fontWeight="bold" gutterBottom>Revenue vs Cost per Acre</Typography>
+              <Box sx={{ height: 260 }}>
+                <Bar data={marginBarData} options={barOpts} />
+              </Box>
+            </Paper>
+          </Stack>
 
-          {/* ─── Cost Summary by Crop ─────────────────────────────── */}
-          <SectionHeader>Cost Summary by Crop</SectionHeader>
-          <TableContainer component={Paper} sx={{ mb: 1 }}>
+          {/* ─── Crop P&L Table ─────────────────────────────────────── */}
+          <Typography variant="h6" fontWeight="bold" sx={{ mb: 1 }}>Crop Economics</Typography>
+          <TableContainer component={Paper} sx={{ mb: 3 }}>
             <Table size="small">
               <TableHead>
                 <TableRow sx={{ '& th': TH_SX }}>
                   <TableCell>Crop</TableCell>
-                  <TableCell align="right">Total Acres</TableCell>
-                  <TableCell align="right">Seed ($)</TableCell>
-                  <TableCell align="right">Fertilizer ($)</TableCell>
-                  <TableCell align="right">Chemical ($)</TableCell>
-                  <TableCell align="right">Total Input ($)</TableCell>
-                  <TableCell align="right">Cost/Acre ($)</TableCell>
-                  <TableCell align="right">Target Yield</TableCell>
-                  <TableCell align="right">Cost/Bushel ($)</TableCell>
-                  <TableCell align="right">Revenue/Acre ($)</TableCell>
-                  <TableCell align="right">Margin/Acre ($)</TableCell>
-                  <TableCell align="right">% of Budget</TableCell>
+                  <TableCell align="right">Acres</TableCell>
+                  <TableCell align="right">Yield (bu/ac)</TableCell>
+                  <TableCell align="right">Price ($/bu)</TableCell>
+                  <TableCell align="right">Revenue/Acre</TableCell>
+                  <TableCell align="right">Seed/Acre</TableCell>
+                  <TableCell align="right">Fert/Acre</TableCell>
+                  <TableCell align="right">Chem/Acre</TableCell>
+                  <TableCell align="right">Total Cost/Acre</TableCell>
+                  <TableCell align="right">Cost/Bushel</TableCell>
+                  <TableCell align="right">Margin/Acre</TableCell>
+                  <TableCell align="right">Margin %</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {cropList.map(c => {
-                  const costPerAcre = c.acres ? c.total_cost / c.acres : 0;
                   const avgYield = c.acres ? c._yield_x_acres / c.acres : 0;
-                  const costPerBu = c.production ? c.total_cost / c.production : 0;
+                  const avgPrice = c.acres ? c._price_x_acres / c.acres : 0;
                   const revPerAcre = c.acres ? c.revenue / c.acres : 0;
-                  const marginPerAcre = c.acres ? (c.revenue - c.total_cost) / c.acres : 0;
-                  const pctBudget = gt.total_cost ? c.total_cost / gt.total_cost : 0;
+                  const seedPerAcre = c.acres ? c.seed_total / c.acres : 0;
+                  const fertPerAcre = c.acres ? c.fert_total / c.acres : 0;
+                  const chemPerAcre = c.acres ? c.chem_total / c.acres : 0;
+                  const costPerAcre = c.acres ? c.total_cost / c.acres : 0;
+                  const costPerBu = c.production ? c.total_cost / c.production : 0;
+                  const marginPerAcre = revPerAcre - costPerAcre;
+                  const marginPct = c.revenue ? (c.revenue - c.total_cost) / c.revenue : 0;
                   return (
                     <TableRow key={c.crop} hover>
                       <TableCell sx={{ fontWeight: 'bold' }}>{c.crop}</TableCell>
                       <TableCell align="right">{fmt(c.acres)}</TableCell>
-                      <TableCell align="right">${fmt(c.seed_total)}</TableCell>
-                      <TableCell align="right">${fmt(c.fert_total)}</TableCell>
-                      <TableCell align="right">${fmt(c.chem_total)}</TableCell>
-                      <TableCell align="right">${fmt(c.total_cost)}</TableCell>
-                      <TableCell align="right">${fmtDec(costPerAcre)}</TableCell>
                       <TableCell align="right">{fmtDec(avgYield)}</TableCell>
-                      <TableCell align="right">${fmtDec(costPerBu)}</TableCell>
+                      <TableCell align="right">${fmtDec(avgPrice)}</TableCell>
                       <TableCell align="right">${fmtDec(revPerAcre)}</TableCell>
-                      <TableCell align="right" sx={{ color: marginPerAcre >= 0 ? 'success.main' : 'error.main' }}>
+                      <TableCell align="right">${fmtDec(seedPerAcre)}</TableCell>
+                      <TableCell align="right">${fmtDec(fertPerAcre)}</TableCell>
+                      <TableCell align="right">${fmtDec(chemPerAcre)}</TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 'bold' }}>${fmtDec(costPerAcre)}</TableCell>
+                      <TableCell align="right">${fmtDec(costPerBu)}</TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 'bold', color: marginPerAcre >= 0 ? 'success.main' : 'error.main' }}>
                         ${fmtDec(marginPerAcre)}
                       </TableCell>
-                      <TableCell align="right">{fmtPct(pctBudget)}</TableCell>
+                      <TableCell align="right" sx={{ color: marginPct >= 0 ? 'success.main' : 'error.main' }}>
+                        {fmtPct(marginPct)}
+                      </TableCell>
                     </TableRow>
                   );
                 })}
                 <TableRow sx={{ '& td': TOTAL_SX }}>
                   <TableCell>TOTAL</TableCell>
                   <TableCell align="right">{fmt(gt.acres)}</TableCell>
-                  <TableCell align="right">${fmt(gt.seed_total)}</TableCell>
-                  <TableCell align="right">${fmt(gt.fert_total)}</TableCell>
-                  <TableCell align="right">${fmt(gt.chem_total)}</TableCell>
-                  <TableCell align="right">${fmt(gt.total_cost)}</TableCell>
-                  <TableCell align="right">${gt.acres ? `$${fmtDec(gt.total_cost / gt.acres)}` : ''}</TableCell>
-                  <TableCell align="right" />
-                  <TableCell align="right" />
-                  <TableCell align="right" />
-                  <TableCell align="right" />
-                  <TableCell align="right">100.0%</TableCell>
+                  <TableCell />
+                  <TableCell />
+                  <TableCell align="right">${gt.acres ? fmtDec(gt.revenue / gt.acres) : ''}</TableCell>
+                  <TableCell align="right">${gt.acres ? fmtDec(gt.seed_total / gt.acres) : ''}</TableCell>
+                  <TableCell align="right">${gt.acres ? fmtDec(gt.fert_total / gt.acres) : ''}</TableCell>
+                  <TableCell align="right">${gt.acres ? fmtDec(gt.chem_total / gt.acres) : ''}</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 'bold' }}>${gt.acres ? fmtDec(gt.total_cost / gt.acres) : ''}</TableCell>
+                  <TableCell align="right">${gt.production ? fmtDec(gt.total_cost / gt.production) : ''}</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 'bold', color: gt.margin >= 0 ? 'success.main' : 'error.main' }}>
+                    ${gt.acres ? fmtDec(gt.margin / gt.acres) : ''}
+                  </TableCell>
+                  <TableCell align="right" sx={{ color: gt.margin >= 0 ? 'success.main' : 'error.main' }}>
+                    {gt.revenue ? fmtPct(gt.margin / gt.revenue) : ''}
+                  </TableCell>
                 </TableRow>
               </TableBody>
             </Table>
           </TableContainer>
 
-          {/* ─── Budget Guardrails — Variance Monitoring ──────────── */}
-          <SectionHeader>Budget Guardrails — Variance Monitoring</SectionHeader>
+          {/* ─── Budget Guardrails ──────────────────────────────────── */}
+          <Typography variant="h6" fontWeight="bold" sx={{ mb: 1 }}>Budget Guardrails</Typography>
           <TableContainer component={Paper} sx={{ mb: 3 }}>
             <Table size="small">
               <TableHead>
                 <TableRow sx={{ '& th': TH_SX }}>
                   <TableCell>Farm</TableCell>
-                  <TableCell align="right">Budgeted ($)</TableCell>
-                  <TableCell align="right">Actual Spend ($)</TableCell>
-                  <TableCell align="right">Variance ($)</TableCell>
-                  <TableCell align="right">Variance %</TableCell>
-                  <TableCell align="center">Budget Status</TableCell>
-                  <TableCell align="right">Target Yield</TableCell>
-                  <TableCell align="right">Actual Yield</TableCell>
-                  <TableCell align="right">Yield Var %</TableCell>
-                  <TableCell align="center">Yield Status</TableCell>
-                  <TableCell align="center">Overall</TableCell>
+                  <TableCell align="right">Budgeted</TableCell>
+                  <TableCell align="right">Actual Spend</TableCell>
+                  <TableCell align="right">Variance</TableCell>
+                  <TableCell align="center">Status</TableCell>
+                  <TableCell align="right">Cost/Acre</TableCell>
+                  <TableCell align="right">Margin %</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {farmsWithPlans.map(({ farm, data }) => {
                   const d = data.farm;
-                  const budgeted = d.total_cost || 0;
-                  // Actual spend would come from GL actuals once connected
                   const actualSpend = 0; // TODO: pull from GL actuals
-                  const variance = actualSpend - budgeted;
-                  const variancePct = budgeted ? variance / budgeted : 0;
-                  const targetYieldPerAcre = d.acres ? (d.revenue / (d.acres * (d.margin_pct !== undefined ? 1 : 1))) : 0;
-                  // cost_per_acre as proxy for weighted target yield $/acre
-                  const costPerAcre = d.cost_per_acre || 0;
-                  const actualYield = 0; // TODO: pull from actual harvest data
-                  const yieldVar = costPerAcre ? -1 : 0; // Pre-season placeholder
-
-                  const isBudgetPreSeason = actualSpend === 0;
-                  const isYieldPreSeason = actualYield === 0;
-
+                  const variance = actualSpend - (d.total_cost || 0);
+                  const marginPct = d.revenue ? d.margin / d.revenue : 0;
+                  const isPreSeason = actualSpend === 0;
                   return (
                     <TableRow key={farm.id} hover>
                       <TableCell sx={{ fontWeight: 'bold' }}>{farm.name}</TableCell>
-                      <TableCell align="right">${fmt(budgeted)}</TableCell>
+                      <TableCell align="right">${fmt(d.total_cost)}</TableCell>
                       <TableCell align="right">${fmt(actualSpend)}</TableCell>
-                      <TableCell align="right" sx={{ color: variance < 0 ? 'error.main' : 'success.main' }}>
+                      <TableCell align="right" sx={{ color: variance < 0 ? 'error.main' : 'text.secondary' }}>
                         {variance < 0 ? `($${fmt(Math.abs(variance))})` : `$${fmt(variance)}`}
                       </TableCell>
-                      <TableCell align="right" sx={{ color: variancePct < 0 ? 'error.main' : 'success.main' }}>
-                        {fmtPct(variancePct)}
-                      </TableCell>
                       <TableCell align="center">
                         <Chip
-                          label={isBudgetPreSeason ? 'Pre-Season' : (Math.abs(variancePct) <= 0.1 ? 'On Track' : 'Over Budget')}
+                          label={isPreSeason ? 'Pre-Season' : 'On Track'}
                           size="small"
-                          color={isBudgetPreSeason ? 'default' : (Math.abs(variancePct) <= 0.1 ? 'success' : 'error')}
+                          color={isPreSeason ? 'default' : 'success'}
                           variant="outlined"
                         />
                       </TableCell>
-                      <TableCell align="right">${fmtDec(costPerAcre)}</TableCell>
-                      <TableCell align="right">${fmtDec(actualYield)}</TableCell>
-                      <TableCell align="right" sx={{ color: 'error.main' }}>
-                        {isYieldPreSeason ? fmtPct(-1) : fmtPct(yieldVar)}
-                      </TableCell>
-                      <TableCell align="center">
-                        <Chip
-                          label={isYieldPreSeason ? 'Pre-Season' : 'On Track'}
-                          size="small"
-                          color={isYieldPreSeason ? 'default' : 'success'}
-                          variant="outlined"
-                        />
-                      </TableCell>
-                      <TableCell align="center">
-                        <Chip
-                          label={isBudgetPreSeason ? 'Pre-Season' : 'On Track'}
-                          size="small"
-                          color={isBudgetPreSeason ? 'default' : 'success'}
-                          variant="outlined"
-                        />
+                      <TableCell align="right">${fmtDec(d.cost_per_acre)}</TableCell>
+                      <TableCell align="right" sx={{ color: marginPct >= 0 ? 'success.main' : 'error.main' }}>
+                        {fmtPct(marginPct)}
                       </TableCell>
                     </TableRow>
                   );

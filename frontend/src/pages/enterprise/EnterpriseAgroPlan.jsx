@@ -155,6 +155,7 @@ export default function EnterpriseAgroPlan() {
 
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Farm-level product requirements — all quantities derived from crop allocations x per-acre rates.
+        Use this view for procurement planning and input distribution across farms.
       </Typography>
 
       {farmsWithData.length === 0 ? (
@@ -163,6 +164,34 @@ export default function EnterpriseAgroPlan() {
         </Alert>
       ) : (
         <>
+          {/* ─── Procurement KPIs ──────────────────────────────────── */}
+          <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
+            <Paper sx={{ p: 2, textAlign: 'center', flex: 1 }}>
+              <Typography variant="body2" color="text.secondary">Farms</Typography>
+              <Typography variant="h5" fontWeight="bold">{farmsWithData.length}</Typography>
+            </Paper>
+            <Paper sx={{ p: 2, textAlign: 'center', flex: 1 }}>
+              <Typography variant="body2" color="text.secondary">Total Acres</Typography>
+              <Typography variant="h5" fontWeight="bold">{fmt(fertMatrix.grandTotalAcres)}</Typography>
+            </Paper>
+            <Paper sx={{ p: 2, textAlign: 'center', flex: 1 }}>
+              <Typography variant="body2" color="text.secondary">Seed Cost</Typography>
+              <Typography variant="h5" fontWeight="bold">{fmtDollar(seedMatrix.grandTotalCost)}</Typography>
+            </Paper>
+            <Paper sx={{ p: 2, textAlign: 'center', flex: 1 }}>
+              <Typography variant="body2" color="text.secondary">Fertilizer Cost</Typography>
+              <Typography variant="h5" fontWeight="bold">{fmtDollar(fertMatrix.grandTotalCost)}</Typography>
+            </Paper>
+            <Paper sx={{ p: 2, textAlign: 'center', flex: 1 }}>
+              <Typography variant="body2" color="text.secondary">Chemical Cost</Typography>
+              <Typography variant="h5" fontWeight="bold">{fmtDollar(chemMatrix.grandTotalCost)}</Typography>
+            </Paper>
+            <Paper sx={{ p: 2, textAlign: 'center', flex: 1 }}>
+              <Typography variant="body2" color="text.secondary">Fert Tonnes</Typography>
+              <Typography variant="h5" fontWeight="bold">{fmt(fertMatrix.grandTotalQty * FERT_TONNES_PER_LB)}</Typography>
+            </Paper>
+          </Stack>
+
           {/* ─── Seed Requirements by Farm ─────────────────────────── */}
           <SectionHeader>Seed Requirements by Farm</SectionHeader>
           <TableContainer component={Paper} sx={{ mb: 1 }}>
