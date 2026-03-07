@@ -1,16 +1,11 @@
 import { useState, useEffect } from 'react';
 import {
-  Typography, Paper, Box, TextField, Button, Alert, Chip, FormControl,
-  InputLabel, Select, MenuItem, Divider, Stack,
+  Typography, Paper, Box, TextField, Button, Alert, FormControl,
+  InputLabel, Select, MenuItem,
 } from '@mui/material';
-import LockIcon from '@mui/icons-material/Lock';
 import SaveIcon from '@mui/icons-material/Save';
-import AcUnitIcon from '@mui/icons-material/AcUnit';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
-import LockOpenIcon from '@mui/icons-material/LockOpen';
-import FreezeDialog from '../components/assumptions/FreezeDialog';
-import UnfreezeDialog from '../components/assumptions/UnfreezeDialog';
 import AddFarmDialog from '../components/assumptions/AddFarmDialog';
 import DeleteFarmDialog from '../components/assumptions/DeleteFarmDialog';
 import { validateAssumptions } from '../utils/validation';
@@ -27,16 +22,12 @@ export default function Assumptions() {
     crops: [],
     bins: [],
   });
-  const [isFrozen, setIsFrozen] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [freezeOpen, setFreezeOpen] = useState(false);
-  const [unfreezeOpen, setUnfreezeOpen] = useState(false);
   const [addFarmOpen, setAddFarmOpen] = useState(false);
   const [deleteFarmOpen, setDeleteFarmOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [farmName, setFarmName] = useState('');
-  const [agroPlan, setAgroPlan] = useState(null);
 
   useEffect(() => {
     if (currentFarm) setFarmName(currentFarm.name || '');
@@ -45,25 +36,22 @@ export default function Assumptions() {
   useEffect(() => {
     if (!currentFarm?.id || !fiscalYear) return;
     setLoading(true);
-    Promise.all([
-      api.get(`/api/farms/${currentFarm.id}/assumptions/${fiscalYear}`).catch(() => ({ data: null })),
-      api.get(`/api/farms/${currentFarm.id}/agronomy/plans?year=${fiscalYear}`).catch(() => ({ data: null })),
-    ]).then(([assRes, agroRes]) => {
-      if (assRes.data) {
-        setData({
-          fiscal_year: assRes.data.fiscal_year,
-          start_month: assRes.data.start_month || 'Nov',
-          total_acres: assRes.data.total_acres,
-          crops: assRes.data.crops_json || [],
-          bins: assRes.data.bins_json || [],
-        });
-        setIsFrozen(assRes.data.is_frozen);
-      } else {
-        setData({ fiscal_year: fiscalYear, start_month: 'Nov', total_acres: 0, crops: [], bins: [] });
-        setIsFrozen(false);
-      }
-      setAgroPlan(agroRes.data);
-    }).finally(() => setLoading(false));
+    api.get(`/api/farms/${currentFarm.id}/assumptions/${fiscalYear}`)
+      .then(res => {
+        if (res.data) {
+          setData({
+            fiscal_year: res.data.fiscal_year,
+            start_month: res.data.start_month || 'Nov',
+            total_acres: res.data.total_acres,
+            crops: res.data.crops_json || [],
+            bins: res.data.bins_json || [],
+          });
+        } else {
+          setData({ fiscal_year: fiscalYear, start_month: 'Nov', total_acres: 0, crops: [], bins: [] });
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, [currentFarm, fiscalYear]);
 
   const handleSave = async () => {
@@ -72,27 +60,11 @@ export default function Assumptions() {
     try {
       setError('');
       await api.post(`/api/farms/${currentFarm.id}/assumptions`, data);
-      setSuccess('Forecast settings saved');
+      setSuccess('Settings saved');
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save');
     }
-  };
-
-  const handleFreeze = async () => {
-    try {
-      await api.post(`/api/farms/${currentFarm.id}/assumptions/${fiscalYear}/freeze`);
-      setIsFrozen(true); setFreezeOpen(false);
-      setSuccess('Budget frozen'); setTimeout(() => setSuccess(''), 3000);
-    } catch (err) { setError(err.response?.data?.error || 'Failed to freeze'); }
-  };
-
-  const handleUnfreeze = async () => {
-    try {
-      await api.post(`/api/farms/${currentFarm.id}/assumptions/${fiscalYear}/unfreeze`);
-      setIsFrozen(false); setUnfreezeOpen(false);
-      setSuccess('Budget unfrozen'); setTimeout(() => setSuccess(''), 3000);
-    } catch (err) { setError(err.response?.data?.error || 'Failed to unfreeze'); }
   };
 
   const handleFarmNameSave = async () => {
@@ -111,12 +83,9 @@ export default function Assumptions() {
   }
   if (loading) return null;
 
-  const agroAcres = agroPlan?.allocations?.reduce((s, a) => s + a.acres, 0) || 0;
-  const agroCrops = agroPlan?.allocations?.length || 0;
-
   return (
     <Box>
-      <Typography variant="h5" sx={{ mb: 2 }}>Forecast Settings</Typography>
+      <Typography variant="h5" sx={{ mb: 2 }}>Farm Settings</Typography>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
@@ -128,7 +97,7 @@ export default function Assumptions() {
             onBlur={handleFarmNameSave} onKeyDown={e => e.key === 'Enter' && handleFarmNameSave()}
             size="small" disabled={!isAdmin} />
           <TextField label="Fiscal Year" type="number" value={data.fiscal_year} disabled size="small" />
-          <FormControl size="small" sx={{ minWidth: 120 }} disabled={isFrozen || !canEdit}>
+          <FormControl size="small" sx={{ minWidth: 120 }} disabled={!canEdit}>
             <InputLabel>Start Month</InputLabel>
             <Select value={data.start_month || 'Nov'} label="Start Month"
               onChange={e => setData({ ...data, start_month: e.target.value })}>
@@ -137,8 +106,7 @@ export default function Assumptions() {
           </FormControl>
           <TextField label="Total Acres" type="number" value={data.total_acres || ''}
             onChange={e => setData({ ...data, total_acres: parseFloat(e.target.value) || 0 })}
-            disabled={isFrozen || !canEdit} size="small" />
-          {isFrozen && <Chip icon={<LockIcon />} label="Budget Frozen" color="warning" />}
+            disabled={!canEdit} size="small" />
         </Box>
 
         <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
@@ -149,49 +117,11 @@ export default function Assumptions() {
           )}
         </Box>
 
-        <Divider sx={{ my: 2 }} />
-
-        {/* Agronomy Plan Summary */}
-        <Typography variant="h6" sx={{ mb: 1 }}>Crop Plan Summary</Typography>
-        {agroPlan ? (
-          <Box>
-            <Stack direction="row" spacing={2} sx={{ mb: 1 }}>
-              <Chip label={`${agroCrops} crops`} variant="outlined" />
-              <Chip label={`${agroAcres.toLocaleString()} acres allocated`} variant="outlined" />
-              {agroPlan.status && <Chip label={agroPlan.status.toUpperCase()} color={agroPlan.status === 'approved' ? 'success' : 'default'} size="small" />}
-            </Stack>
-            <Typography variant="body2" color="text.secondary">
-              Crop allocations, yield targets, and input programs are managed in the{' '}
-              <Button size="small" href="/agronomy/plan" sx={{ textTransform: 'none', p: 0, minWidth: 0 }}>
-                Agronomy module
-              </Button>.
-            </Typography>
-          </Box>
-        ) : (
-          <Alert severity="info" variant="outlined">
-            No agronomy plan for FY{fiscalYear}. Create one in the Agronomy module to define crop allocations and input programs.
-          </Alert>
+        {canEdit && (
+          <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSave}>Save Settings</Button>
         )}
-
-        <Divider sx={{ my: 2 }} />
-
-        <Box sx={{ display: 'flex', gap: 2 }}>
-          {!isFrozen && canEdit && (
-            <>
-              <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSave}>Save Settings</Button>
-              <Button variant="outlined" color="warning" startIcon={<AcUnitIcon />}
-                onClick={() => setFreezeOpen(true)}>Freeze Budget</Button>
-            </>
-          )}
-          {isFrozen && isAdmin && (
-            <Button variant="outlined" color="info" startIcon={<LockOpenIcon />}
-              onClick={() => setUnfreezeOpen(true)}>Unfreeze Budget</Button>
-          )}
-        </Box>
       </Paper>
 
-      <FreezeDialog open={freezeOpen} onConfirm={handleFreeze} onCancel={() => setFreezeOpen(false)} fiscalYear={fiscalYear} />
-      <UnfreezeDialog open={unfreezeOpen} onConfirm={handleUnfreeze} onCancel={() => setUnfreezeOpen(false)} fiscalYear={fiscalYear} />
       <AddFarmDialog open={addFarmOpen} onClose={() => setAddFarmOpen(false)} onSuccess={refreshFarms} />
       <DeleteFarmDialog open={deleteFarmOpen} onClose={() => setDeleteFarmOpen(false)} onSuccess={refreshFarms} farm={currentFarm} />
     </Box>

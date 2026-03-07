@@ -24,7 +24,7 @@ const FARM_UNIT_ITEMS = [
   { section: 'Agronomy' },
   { label: 'Crop Plan', path: '/agronomy', icon: <GrassIcon />, module: 'agronomy' },
   { section: 'Forecast' },
-  { label: 'Forecast Settings', path: '/assumptions', icon: <SettingsIcon />, module: 'forecast' },
+  { label: 'Farm Settings', path: '/assumptions', icon: <SettingsIcon />, module: 'forecast' },
   { label: 'Cost Forecast', path: '/cost-forecast', icon: <AccountBalanceIcon />, module: 'forecast' },
   { label: 'Per-Unit', path: '/per-unit', icon: <TableChartIcon />, module: 'forecast' },
   { label: 'Operations', path: '/operations', icon: <PrecisionManufacturingIcon />, module: 'forecast' },
