@@ -247,11 +247,13 @@ export default function CropInputPlan() {
               </Box>
             </AccordionSummary>
             <AccordionDetails>
-              {seedInputs.length > 0 && (
+              {/* Seeding section — always show if has inputs or can add */}
+              {(seedInputs.length > 0 || canEdit) && (
                 <InputSection title="SEEDING" inputs={seedInputs} allocation={alloc}
                   canEdit={canEdit} onAdd={() => setAddDialog({ allocId: alloc.id, category: 'seeding' })}
                   onDelete={deleteInput} onUpdate={updateInput} />
               )}
+              {/* Fertilizer matrix — always show if has inputs, products exist, or can edit */}
               {(fertInputs.length > 0 || fertProducts.length > 0 || canEdit) && (
                 <FertilizerMatrix
                   allocation={alloc}
@@ -261,16 +263,11 @@ export default function CropInputPlan() {
                   onAllocUpdate={updateAllocTargets}
                 />
               )}
-              {chemInputs.length > 0 && (
+              {/* Chemicals section — always show if has inputs or can add */}
+              {(chemInputs.length > 0 || canEdit) && (
                 <InputSection title="CHEMICALS" inputs={chemInputs} allocation={alloc}
                   canEdit={canEdit} onAdd={() => setAddDialog({ allocId: alloc.id, category: 'chemicals' })}
                   onDelete={deleteInput} onUpdate={updateInput} />
-              )}
-              {seedInputs.length === 0 && chemInputs.length === 0 && canEdit && (
-                <Stack direction="row" spacing={1}>
-                  <Button size="small" onClick={() => setAddDialog({ allocId: alloc.id, category: 'seeding' })}>Add Seed</Button>
-                  <Button size="small" onClick={() => setAddDialog({ allocId: alloc.id, category: 'chemicals' })}>Add Chemical</Button>
-                </Stack>
               )}
               <Divider sx={{ my: 1 }} />
               <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
