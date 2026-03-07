@@ -99,9 +99,9 @@ const FARM_PLANS = {
   },
 
   Provost: {
-    totalAcres: 7000,
+    totalAcres: 2800,
     region: 'East AB', soilZone: 'Brown', rainfall: 310,
-    // Dryland Brown soil — lower yields, chickpeas do well
+    // Dryland Brown soil — smaller farm, lower yields, chickpeas do well
     crops: [
       {
         crop: 'Canola', pct: 0.40, yield: 42, price: 14.75,
