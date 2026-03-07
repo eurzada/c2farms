@@ -13,6 +13,7 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import GrassIcon from '@mui/icons-material/Grass';
 import AgricultureIcon from '@mui/icons-material/Agriculture';
+import GroupsIcon from '@mui/icons-material/Groups';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import SupervisorAccountIcon from '@mui/icons-material/SupervisorAccount';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -22,6 +23,7 @@ import { useFarm } from '../../contexts/FarmContext';
 const FARM_UNIT_ITEMS = [
   { section: 'Agronomy' },
   { label: 'Crop Plan', path: '/agronomy', icon: <GrassIcon />, module: 'agronomy' },
+  { label: 'Labour Plan', path: '/labour', icon: <GroupsIcon />, module: 'agronomy' },
   { section: 'Forecast' },
   { label: 'Cost Forecast', path: '/cost-forecast', icon: <AccountBalanceIcon />, module: 'forecast' },
   { label: 'Per-Unit', path: '/per-unit', icon: <TableChartIcon />, module: 'forecast' },
@@ -32,16 +34,18 @@ const FARM_UNIT_ITEMS = [
   { label: 'Bin Inventory', path: '/inventory/bins', icon: <WarehouseIcon />, module: 'inventory' },
 ];
 
-// Enterprise nav items (global data entry + rollups)
+// Enterprise nav items
 const ENTERPRISE_ITEMS = [
-  { section: 'Enterprise Data Entry' },
+  { section: 'Agronomy' },
+  { label: 'Agronomy Rollup', path: '/enterprise/agronomy', icon: <GrassIcon />, module: 'agronomy', readOnly: true },
+  { label: 'Agronomic Costs $', path: '/enterprise/agro-plan', icon: <AgricultureIcon />, module: 'agronomy', readOnly: true },
+  { label: 'Labour Rollup', path: '/enterprise/labour', icon: <GroupsIcon />, module: 'agronomy', readOnly: true },
+  { section: 'Data Entry' },
   { label: 'Grain Marketing', path: '/marketing', icon: <TrendingUpIcon />, module: 'marketing' },
   { label: 'Logistics', path: '/logistics', icon: <LocalShippingIcon />, module: 'logistics' },
   { label: 'Inventory', path: '/inventory', icon: <WarehouseIcon />, module: 'inventory' },
-  { section: 'Rollups (Read-Only)' },
+  { section: 'Forecast' },
   { label: 'Forecast Rollup', path: '/enterprise/forecast', icon: <DashboardIcon />, module: 'forecast', readOnly: true },
-  { label: 'Agronomy Rollup', path: '/enterprise/agronomy', icon: <GrassIcon />, module: 'agronomy', readOnly: true },
-  { label: 'Agronomic Costs $', path: '/enterprise/agro-plan', icon: <AgricultureIcon />, module: 'agronomy', readOnly: true },
 ];
 
 function SectionHeader({ label }) {
@@ -72,7 +76,7 @@ export default function Sidebar({ width }) {
   const isSelected = (path) => {
     if (location.pathname === path) return true;
     // Prefix matching for module roots
-    const prefixes = ['/inventory', '/marketing', '/logistics', '/agronomy', '/enterprise'];
+    const prefixes = ['/inventory', '/marketing', '/logistics', '/agronomy', '/enterprise', '/labour'];
     for (const p of prefixes) {
       if (path === p && location.pathname.startsWith(p + '/')) return true;
       if (path.startsWith(p + '/') && location.pathname.startsWith(p + '/') && path === location.pathname) return true;
