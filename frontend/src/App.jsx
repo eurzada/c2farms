@@ -5,7 +5,6 @@ import { FarmProvider, useFarm } from './contexts/FarmContext';
 import AppLayout from './components/layout/AppLayout';
 import Login from './pages/Login';
 import Home from './pages/Home';
-import Assumptions from './pages/Assumptions';
 import PerUnit from './pages/PerUnit';
 import Accounting from './pages/Accounting';
 import Dashboard from './pages/Dashboard';
@@ -127,7 +126,6 @@ export default function App() {
                       <Route path="/" element={<SmartRedirect />} />
                       <Route path="/home" element={<Home />} />
                       {/* Farm Unit routes (per-location, data entry) */}
-                      <Route path="/assumptions" element={<FarmUnitRoute module="forecast"><Assumptions /></FarmUnitRoute>} />
                       <Route path="/per-unit" element={<FarmUnitRoute module="forecast"><PerUnit /></FarmUnitRoute>} />
                       <Route path="/cost-forecast" element={<FarmUnitRoute module="forecast"><Accounting /></FarmUnitRoute>} />
                       <Route path="/accounting" element={<Navigate to="/cost-forecast" />} />

@@ -84,7 +84,7 @@ export default function EnterpriseForecast() {
           <TableContainer component={Paper}>
             <Table size="small">
               <TableHead>
-                <TableRow sx={{ '& th': { fontWeight: 'bold', bgcolor: 'grey.100' } }}>
+                <TableRow sx={{ '& th': { fontWeight: 'bold', bgcolor: 'action.hover' } }}>
                   <TableCell>Farm Unit</TableCell>
                   <TableCell align="right">Total Acres</TableCell>
                   <TableCell align="right">Crops</TableCell>

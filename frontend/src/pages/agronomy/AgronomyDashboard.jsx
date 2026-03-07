@@ -104,7 +104,7 @@ export default function AgronomyDashboard() {
       <TableContainer component={Paper} sx={{ mb: 3 }}>
         <Table size="small">
           <TableHead>
-            <TableRow sx={{ '& th': { fontWeight: 'bold', bgcolor: 'grey.100' } }}>
+            <TableRow sx={{ '& th': { fontWeight: 'bold', bgcolor: 'action.hover' } }}>
               <TableCell>Crop</TableCell>
               <TableCell align="right">Acres</TableCell>
               <TableCell align="right">Seed $/ac</TableCell>

@@ -18,7 +18,7 @@ const FARM_MODULES = [
   {
     key: 'forecast', label: 'Financial Forecast',
     description: 'Budgets, cost forecast, per-unit analysis',
-    path: '/assumptions', icon: SettingsIcon, color: '#6d6e70',
+    path: '/cost-forecast', icon: SettingsIcon, color: '#6d6e70',
   },
   {
     key: 'inventory', label: 'Bin Inventory',

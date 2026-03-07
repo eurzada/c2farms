@@ -287,6 +287,15 @@ export async function pushToForecast(farmId, cropYear) {
     return { pushed: false, reason: 'No acres allocated' };
   }
 
+  // Sync total_acres from agronomy plan to forecast assumptions
+  if (assumption.total_acres !== totalAcres) {
+    await prisma.assumption.update({
+      where: { id: assumption.id },
+      data: { total_acres: totalAcres },
+    });
+    log.info(`Updated assumption total_acres: ${assumption.total_acres} → ${totalAcres}`);
+  }
+
   // Accumulate total $ by month, then divide by totalAcres for $/acre
   const monthTotals = {}; // { 'Apr': { input_seed: total$, ... }, ... }
 

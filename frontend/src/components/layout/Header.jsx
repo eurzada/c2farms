@@ -1,10 +1,13 @@
-import { AppBar, Toolbar, Typography, Button, Select, MenuItem, Box, IconButton, Chip, ListSubheader, Divider } from '@mui/material';
+import { useState } from 'react';
+import { AppBar, Toolbar, Typography, Button, Select, MenuItem, Box, IconButton, Chip, ListSubheader, Divider, Tooltip } from '@mui/material';
 import DarkModeIcon from '@mui/icons-material/DarkMode';
 import LightModeIcon from '@mui/icons-material/LightMode';
 import BusinessIcon from '@mui/icons-material/Business';
+import AddIcon from '@mui/icons-material/Add';
 import { useAuth } from '../../contexts/AuthContext';
 import { useFarm, ENTERPRISE_ID } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
+import AddFarmDialog from '../assumptions/AddFarmDialog';
 
 const ROLE_COLORS = {
   admin: 'error',
@@ -14,8 +17,9 @@ const ROLE_COLORS = {
 
 export default function Header() {
   const { user, logout } = useAuth();
-  const { selectedId, farms, setCurrentFarm, fiscalYear, setFiscalYear, currentRole, isEnterprise } = useFarm();
+  const { selectedId, farms, setCurrentFarm, fiscalYear, setFiscalYear, currentRole, isEnterprise, refreshFarms, isAdmin } = useFarm();
   const { mode, toggleMode } = useThemeMode();
+  const [addFarmOpen, setAddFarmOpen] = useState(false);
 
   return (
     <AppBar position="static" color="default" elevation={1} sx={{ bgcolor: 'background.paper' }}>
@@ -51,6 +55,13 @@ export default function Header() {
               ))}
             </Select>
           )}
+          {isAdmin && (
+            <Tooltip title="Add Farm">
+              <IconButton size="small" onClick={() => setAddFarmOpen(true)} sx={{ ml: -1 }}>
+                <AddIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
 
           <Select
             size="small"
@@ -76,6 +87,7 @@ export default function Header() {
           <Button size="small" onClick={logout}>Logout</Button>
         </Box>
       </Toolbar>
+      <AddFarmDialog open={addFarmOpen} onClose={() => setAddFarmOpen(false)} onSuccess={refreshFarms} />
     </AppBar>
   );
 }

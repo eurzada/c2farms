@@ -3,7 +3,6 @@ import {
   Drawer, List, ListItemButton, ListItemIcon, ListItemText, Box, Divider,
   Typography,
 } from '@mui/material';
-import SettingsIcon from '@mui/icons-material/Settings';
 import TableChartIcon from '@mui/icons-material/TableChart';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -24,7 +23,6 @@ const FARM_UNIT_ITEMS = [
   { section: 'Agronomy' },
   { label: 'Crop Plan', path: '/agronomy', icon: <GrassIcon />, module: 'agronomy' },
   { section: 'Forecast' },
-  { label: 'Farm Settings', path: '/assumptions', icon: <SettingsIcon />, module: 'forecast' },
   { label: 'Cost Forecast', path: '/cost-forecast', icon: <AccountBalanceIcon />, module: 'forecast' },
   { label: 'Per-Unit', path: '/per-unit', icon: <TableChartIcon />, module: 'forecast' },
   { label: 'Operations', path: '/operations', icon: <PrecisionManufacturingIcon />, module: 'forecast' },
