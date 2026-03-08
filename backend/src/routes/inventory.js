@@ -5,6 +5,7 @@ import { authenticate, requireRole } from '../middleware/auth.js';
 import { convertBuToKg } from '../services/inventoryService.js';
 import { importInventoryFromExcel } from '../services/inventoryImportService.js';
 import { logAudit, diffChanges } from '../services/auditService.js';
+import { resolveInventoryFarm } from '../services/resolveInventoryFarm.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -12,8 +13,9 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 // GET commodities for a farm
 router.get('/:farmId/inventory/commodities', authenticate, async (req, res, next) => {
   try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
     const commodities = await prisma.commodity.findMany({
-      where: { farm_id: req.params.farmId },
+      where: { farm_id: farmId },
       orderBy: { name: 'asc' },
     });
     res.json({ commodities });
@@ -38,8 +40,14 @@ router.post('/:farmId/inventory/commodities', authenticate, requireRole('admin',
 // GET locations for a farm
 router.get('/:farmId/inventory/locations', authenticate, async (req, res, next) => {
   try {
+    const { farmId, locationId, hasLocation } = await resolveInventoryFarm(req.params.farmId);
+    const isEnterprise = req.query.enterprise === 'true';
+    // BU with no inventory location (e.g. Provost) → return empty
+    if (!isEnterprise && !hasLocation) return res.json({ locations: [] });
+    const where = { farm_id: farmId };
+    if (!isEnterprise && locationId) where.id = locationId;
     const locations = await prisma.inventoryLocation.findMany({
-      where: { farm_id: req.params.farmId },
+      where,
       orderBy: { name: 'asc' },
       include: { _count: { select: { bins: true } } },
     });
@@ -50,11 +58,16 @@ router.get('/:farmId/inventory/locations', authenticate, async (req, res, next) 
 // GET bins with filters
 router.get('/:farmId/inventory/bins', authenticate, async (req, res, next) => {
   try {
-    const { farmId } = req.params;
-    const { location, commodity, status, periodId } = req.query;
+    const { farmId, locationId, hasLocation } = await resolveInventoryFarm(req.params.farmId);
+    const { location, commodity, status, periodId, enterprise } = req.query;
+    const isEnterprise = enterprise === 'true';
+    // BU with no inventory location (e.g. Provost) → return empty
+    if (!isEnterprise && !hasLocation) return res.json({ bins: [], total: 0 });
 
     const where = { farm_id: farmId, is_active: true };
+    // BU-level view: filter to matching location; explicit location filter overrides
     if (location) where.location_id = location;
+    else if (!isEnterprise && locationId) where.location_id = locationId;
     if (commodity) where.commodity_id = commodity;
 
     const bins = await prisma.inventoryBin.findMany({
@@ -105,13 +118,14 @@ router.get('/:farmId/inventory/bins', authenticate, async (req, res, next) => {
 // POST create bin
 router.post('/:farmId/inventory/bins', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
     const { location_id, bin_number, bin_type, capacity_bu, commodity_id, notes } = req.body;
     if (!location_id || !bin_number) {
       return res.status(400).json({ error: 'location_id and bin_number are required' });
     }
     const bin = await prisma.inventoryBin.create({
       data: {
-        farm_id: req.params.farmId, location_id, bin_number,
+        farm_id: farmId, location_id, bin_number,
         bin_type: bin_type || 'hopper',
         capacity_bu: capacity_bu ? parseFloat(capacity_bu) : null,
         commodity_id: commodity_id || null,
@@ -126,8 +140,9 @@ router.post('/:farmId/inventory/bins', authenticate, requireRole('admin', 'manag
 // PUT update bin
 router.put('/:farmId/inventory/bins/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
     const { bin_type, capacity_bu, commodity_id, notes, is_active } = req.body;
-    const oldBin = await prisma.inventoryBin.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    const oldBin = await prisma.inventoryBin.findFirst({ where: { id: req.params.id, farm_id: farmId } });
     if (!oldBin) return res.status(404).json({ error: 'Bin not found' });
     const bin = await prisma.inventoryBin.update({
       where: { id: req.params.id },
@@ -150,8 +165,9 @@ router.put('/:farmId/inventory/bins/:id', authenticate, requireRole('admin', 'ma
 // GET count periods
 router.get('/:farmId/inventory/count-periods', authenticate, async (req, res, next) => {
   try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
     const periods = await prisma.countPeriod.findMany({
-      where: { farm_id: req.params.farmId },
+      where: { farm_id: farmId },
       orderBy: { period_date: 'desc' },
     });
     res.json({ periods });
@@ -161,6 +177,7 @@ router.get('/:farmId/inventory/count-periods', authenticate, async (req, res, ne
 // POST create count period
 router.post('/:farmId/inventory/count-periods', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
     const { period_date, crop_year } = req.body;
     if (!period_date) {
       return res.status(400).json({ error: 'period_date is required' });
@@ -174,16 +191,16 @@ router.post('/:farmId/inventory/count-periods', authenticate, requireRole('admin
 
     // Check for duplicate period_date
     const existing = await prisma.countPeriod.findFirst({
-      where: { farm_id: req.params.farmId, period_date: parsedDate },
+      where: { farm_id: farmId, period_date: parsedDate },
     });
     if (existing) {
       return res.status(400).json({ error: 'A count period already exists for this date' });
     }
 
     const period = await prisma.countPeriod.create({
-      data: { farm_id: req.params.farmId, period_date: parsedDate, crop_year: inferredCropYear },
+      data: { farm_id: farmId, period_date: parsedDate, crop_year: inferredCropYear },
     });
-    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'CountPeriod', entityId: period.id, action: 'create', changes: { period_date, crop_year: inferredCropYear } });
+    logAudit({ farmId, userId: req.userId, entityType: 'CountPeriod', entityId: period.id, action: 'create', changes: { period_date, crop_year: inferredCropYear } });
     res.status(201).json({ period });
   } catch (err) { next(err); }
 });
@@ -191,8 +208,9 @@ router.post('/:farmId/inventory/count-periods', authenticate, requireRole('admin
 // PUT update count period (close/reopen)
 router.put('/:farmId/inventory/count-periods/:id', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
     const { status } = req.body;
-    const oldPeriod = await prisma.countPeriod.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    const oldPeriod = await prisma.countPeriod.findFirst({ where: { id: req.params.id, farm_id: farmId } });
     if (!oldPeriod) return res.status(404).json({ error: 'Count period not found' });
     const period = await prisma.countPeriod.update({
       where: { id: req.params.id },
@@ -209,8 +227,13 @@ router.put('/:farmId/inventory/count-periods/:id', authenticate, requireRole('ad
 // GET bin counts for a period
 router.get('/:farmId/inventory/count-periods/:id/counts', authenticate, async (req, res, next) => {
   try {
+    const { farmId, locationId, hasLocation } = await resolveInventoryFarm(req.params.farmId);
+    const isEnterprise = req.query.enterprise === 'true';
+    if (!isEnterprise && !hasLocation) return res.json({ counts: [] });
+    const where = { farm_id: farmId, count_period_id: req.params.id };
+    if (!isEnterprise && locationId) where.bin = { location_id: locationId };
     const counts = await prisma.binCount.findMany({
-      where: { farm_id: req.params.farmId, count_period_id: req.params.id },
+      where,
       include: { bin: { include: { location: true } }, commodity: true },
       orderBy: [{ bin: { location: { name: 'asc' } } }, { bin: { bin_number: 'asc' } }],
     });
@@ -221,26 +244,27 @@ router.get('/:farmId/inventory/count-periods/:id/counts', authenticate, async (r
 // POST create submission (draft)
 router.post('/:farmId/inventory/submissions', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
     const { count_period_id, location_id } = req.body;
     if (!count_period_id || !location_id) {
       return res.status(400).json({ error: 'count_period_id and location_id are required' });
     }
     const existing = await prisma.countSubmission.findUnique({
-      where: { farm_id_count_period_id_location_id: { farm_id: req.params.farmId, count_period_id, location_id } },
+      where: { farm_id_count_period_id_location_id: { farm_id: farmId, count_period_id, location_id } },
     });
     const submission = await prisma.countSubmission.upsert({
       where: {
         farm_id_count_period_id_location_id: {
-          farm_id: req.params.farmId, count_period_id, location_id,
+          farm_id: farmId, count_period_id, location_id,
         },
       },
       update: { status: 'draft', submitted_by: req.userId },
       create: {
-        farm_id: req.params.farmId, count_period_id, location_id,
+        farm_id: farmId, count_period_id, location_id,
         status: 'draft', submitted_by: req.userId,
       },
     });
-    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'CountSubmission', entityId: submission.id, action: existing ? 'update' : 'create', changes: existing ? diffChanges(existing, submission, ['status', 'submitted_by']) : { count_period_id, location_id, status: 'draft' }, metadata: { count_period_id, location_id } });
+    logAudit({ farmId, userId: req.userId, entityType: 'CountSubmission', entityId: submission.id, action: existing ? 'update' : 'create', changes: existing ? diffChanges(existing, submission, ['status', 'submitted_by']) : { count_period_id, location_id, status: 'draft' }, metadata: { count_period_id, location_id } });
     res.status(201).json({ submission });
   } catch (err) { next(err); }
 });
@@ -248,8 +272,9 @@ router.post('/:farmId/inventory/submissions', authenticate, requireRole('admin',
 // PUT update submission (save/submit)
 router.put('/:farmId/inventory/submissions/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
     const { status, notes } = req.body;
-    const oldSub = await prisma.countSubmission.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    const oldSub = await prisma.countSubmission.findFirst({ where: { id: req.params.id, farm_id: farmId } });
     if (!oldSub) return res.status(404).json({ error: 'Submission not found' });
     const submission = await prisma.countSubmission.update({
       where: { id: req.params.id },
@@ -270,7 +295,8 @@ router.put('/:farmId/inventory/submissions/:id', authenticate, requireRole('admi
 // POST approve submission
 router.post('/:farmId/inventory/submissions/:id/approve', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
-    const oldSub = await prisma.countSubmission.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    const oldSub = await prisma.countSubmission.findFirst({ where: { id: req.params.id, farm_id: farmId } });
     if (!oldSub) return res.status(404).json({ error: 'Submission not found' });
     const submission = await prisma.countSubmission.update({
       where: { id: req.params.id },
@@ -284,8 +310,9 @@ router.post('/:farmId/inventory/submissions/:id/approve', authenticate, requireR
 // POST reject submission
 router.post('/:farmId/inventory/submissions/:id/reject', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
     const { notes } = req.body;
-    const oldSub = await prisma.countSubmission.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    const oldSub = await prisma.countSubmission.findFirst({ where: { id: req.params.id, farm_id: farmId } });
     if (!oldSub) return res.status(404).json({ error: 'Submission not found' });
     const submission = await prisma.countSubmission.update({
       where: { id: req.params.id },
@@ -299,7 +326,7 @@ router.post('/:farmId/inventory/submissions/:id/reject', authenticate, requireRo
 // POST bulk upsert bin counts for a period
 router.post('/:farmId/inventory/bin-counts/:periodId', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
-    const { farmId } = req.params;
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
     const { periodId } = req.params;
     const { counts } = req.body; // [{ bin_id, commodity_id, bushels, crop_year, notes }]
 
@@ -356,7 +383,8 @@ router.post('/:farmId/inventory/bin-counts/:periodId', authenticate, requireRole
 // POST copy bin counts from one period to another
 router.post('/:farmId/inventory/count-periods/:id/copy-from/:sourcePeriodId', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
-    const { farmId, id: targetPeriodId, sourcePeriodId } = req.params;
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    const { id: targetPeriodId, sourcePeriodId } = req.params;
 
     // Verify target period is open
     const targetPeriod = await prisma.countPeriod.findFirst({ where: { id: targetPeriodId, farm_id: farmId } });
@@ -392,7 +420,7 @@ router.post('/:farmId/inventory/count-periods/:id/copy-from/:sourcePeriodId', au
 // GET audit log (admin/manager only)
 router.get('/:farmId/inventory/audit-log', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
-    const { farmId } = req.params;
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
     const { entityType, entityId, limit = '50', offset = '0' } = req.query;
 
     const where = { farm_id: farmId };
@@ -423,7 +451,8 @@ router.post('/:farmId/inventory/import', authenticate, requireRole('admin', 'man
     if (!req.file.originalname.match(/\.xlsx?$/i)) {
       return res.status(400).json({ error: 'Only .xlsx files are supported' });
     }
-    const result = await importInventoryFromExcel(req.params.farmId, req.file.buffer);
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    const result = await importInventoryFromExcel(farmId, req.file.buffer, req.file.originalname);
     res.json(result);
   } catch (err) { next(err); }
 });

@@ -2,8 +2,17 @@ import { Router } from 'express';
 import prisma from '../config/database.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { getCashFlowProjection } from '../services/marketingService.js';
+import { resolveInventoryFarm } from '../services/resolveInventoryFarm.js';
 
 const router = Router();
+
+router.use('/:farmId/marketing', async (req, res, next) => {
+  try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    req.params.farmId = farmId;
+    next();
+  } catch (err) { next(err); }
+});
 
 // Get cash flow projection
 router.get('/:farmId/marketing/cash-flow', authenticate, async (req, res, next) => {

@@ -9,11 +9,21 @@ import { generateExceptionExcel, generateExceptionPdf } from '../services/settle
 import { logAudit } from '../services/auditService.js';
 import { broadcastMarketingEvent } from '../socket/handler.js';
 import { getFontPaths } from '../utils/fontPaths.js';
+import { resolveInventoryFarm } from '../services/resolveInventoryFarm.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 const printer = new PdfPrinter({ Roboto: getFontPaths() });
+
+// Logistics is enterprise-wide — resolve BU farm → enterprise farm
+router.use('/:farmId/settlements', async (req, res, next) => {
+  try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    req.params.farmId = farmId;
+    next();
+  } catch (err) { next(err); }
+});
 
 // GET all settlements for a farm
 router.get('/:farmId/settlements', authenticate, async (req, res, next) => {

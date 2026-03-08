@@ -28,7 +28,7 @@ function UndoRenderer({ data, context }) {
 }
 
 export default function FarmManagerView() {
-  const { currentFarm, canEdit } = useFarm();
+  const { currentFarm, canEdit, isEnterprise } = useFarm();
   const { mode } = useThemeMode();
   const gridRef = useRef();
   const colors = useMemo(() => getGridColors(mode), [mode]);
@@ -49,8 +49,9 @@ export default function FarmManagerView() {
   // Fetch locations, commodities, periods on mount
   useEffect(() => {
     if (!currentFarm) return;
+    const eq = isEnterprise ? '?enterprise=true' : '';
     Promise.all([
-      api.get(`/api/farms/${currentFarm.id}/inventory/locations`),
+      api.get(`/api/farms/${currentFarm.id}/inventory/locations${eq}`),
       api.get(`/api/farms/${currentFarm.id}/inventory/commodities`),
       api.get(`/api/farms/${currentFarm.id}/inventory/count-periods`),
     ]).then(([locRes, comRes, perRes]) => {
@@ -61,7 +62,7 @@ export default function FarmManagerView() {
       const openPeriod = p.find(pr => pr.status === 'open') || p[0];
       setSelectedPeriodId(openPeriod?.id || '');
     });
-  }, [currentFarm]);
+  }, [currentFarm, isEnterprise]);
 
   const period = useMemo(() => periods.find(p => p.id === selectedPeriodId) || null, [periods, selectedPeriodId]);
   const previousPeriod = useMemo(() => {
@@ -84,6 +85,7 @@ export default function FarmManagerView() {
   const fetchBins = useCallback(() => {
     if (!currentFarm) return;
     const params = new URLSearchParams();
+    if (isEnterprise) params.set('enterprise', 'true');
     if (selectedLocation) params.set('location', selectedLocation);
     if (period) params.set('periodId', period.id);
     api.get(`/api/farms/${currentFarm.id}/inventory/bins?${params}`)
@@ -107,7 +109,7 @@ export default function FarmManagerView() {
         setLastCounts(snapshot);
         setDirtyBinIds(new Set());
       });
-  }, [currentFarm, selectedLocation, period]);
+  }, [currentFarm, selectedLocation, period, isEnterprise]);
 
   useEffect(() => { fetchBins(); }, [fetchBins]);
 

@@ -15,7 +15,7 @@ function StatusCell({ value }) {
 }
 
 export default function BinInventory() {
-  const { currentFarm } = useFarm();
+  const { currentFarm, isEnterprise } = useFarm();
   const { mode } = useThemeMode();
   const gridRef = useRef();
   const colors = useMemo(() => getGridColors(mode), [mode]);
@@ -27,24 +27,26 @@ export default function BinInventory() {
 
   useEffect(() => {
     if (!currentFarm) return;
+    const eq = isEnterprise ? '?enterprise=true' : '';
     Promise.all([
-      api.get(`/api/farms/${currentFarm.id}/inventory/locations`),
+      api.get(`/api/farms/${currentFarm.id}/inventory/locations${eq}`),
       api.get(`/api/farms/${currentFarm.id}/inventory/commodities`),
     ]).then(([locRes, comRes]) => {
       setLocations(locRes.data.locations || []);
       setCommodities(comRes.data.commodities || []);
     });
-  }, [currentFarm]);
+  }, [currentFarm, isEnterprise]);
 
   useEffect(() => {
     if (!currentFarm) return;
     const params = new URLSearchParams();
+    if (isEnterprise) params.set('enterprise', 'true');
     if (filters.location) params.set('location', filters.location);
     if (filters.commodity) params.set('commodity', filters.commodity);
     if (filters.status) params.set('status', filters.status);
     api.get(`/api/farms/${currentFarm.id}/inventory/bins?${params}`)
       .then(res => setBins(res.data.bins || []));
-  }, [currentFarm, filters]);
+  }, [currentFarm, filters, isEnterprise]);
 
   const columnDefs = useMemo(() => [
     { field: 'location_name', headerName: 'Location', width: 160 },

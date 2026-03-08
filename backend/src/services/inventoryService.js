@@ -40,7 +40,7 @@ export async function getAvailableToSell(farmId) {
 
   const inventoryByCommodity = {};
   for (const bc of binCounts) {
-    if (!bc.commodity) continue;
+    if (!bc.commodity || bc.commodity.code === 'FERT') continue;
     const code = bc.commodity.code;
     if (!inventoryByCommodity[code]) {
       inventoryByCommodity[code] = {
@@ -53,26 +53,13 @@ export async function getAvailableToSell(farmId) {
     inventoryByCommodity[code].total_kg += bc.kg;
   }
 
-  // Get contracted amounts from old Contract model (remaining = contracted - delivered)
-  const contracts = await prisma.contract.findMany({
-    where: { farm_id: farmId, status: 'open' },
-    include: { commodity: true, deliveries: true },
-  });
-
-  const contractedByCommodity = {};
-  for (const c of contracts) {
-    const code = c.commodity.code;
-    const hauled = c.deliveries.reduce((s, d) => s + d.mt_delivered, 0);
-    const remaining = Math.max(0, c.contracted_mt - hauled);
-    contractedByCommodity[code] = (contractedByCommodity[code] || 0) + remaining;
-  }
-
-  // Also include Marketing Contracts (active = executed or in_delivery)
+  // Committed from MarketingContract (executed + in_delivery)
   const mktContracts = await prisma.marketingContract.findMany({
     where: { farm_id: farmId, status: { in: ['executed', 'in_delivery'] } },
     include: { commodity: true },
   });
 
+  const contractedByCommodity = {};
   for (const mc of mktContracts) {
     const code = mc.commodity.code;
     contractedByCommodity[code] = (contractedByCommodity[code] || 0) + mc.remaining_mt;
@@ -283,22 +270,16 @@ export async function getDashboardData(farmId) {
     include: { commodity: true },
   });
 
-  const totalKg = latestCounts.reduce((s, bc) => s + bc.kg, 0);
+  // Exclude non-grain commodities (FERT) to match marketing dashboard
+  const grainCounts = latestCounts.filter(bc => bc.commodity && bc.commodity.code !== 'FERT');
+  const totalKg = grainCounts.reduce((s, bc) => s + bc.kg, 0);
   const totalMt = convertKgToMt(totalKg);
 
-  // Contracts (both legacy Contract and MarketingContract)
-  const contracts = await prisma.contract.findMany({
-    where: { farm_id: farmId },
-    include: { commodity: true, deliveries: true },
-  });
-
-  const openContracts = contracts.filter(c => c.status === 'open');
-  let committedMt = openContracts.reduce((s, c) => s + c.contracted_mt, 0);
-
+  // Committed = MarketingContract (executed + in_delivery) remaining MT
   const mktContracts = await prisma.marketingContract.findMany({
     where: { farm_id: farmId, status: { in: ['executed', 'in_delivery'] } },
   });
-  committedMt += mktContracts.reduce((s, c) => s + c.remaining_mt, 0);
+  const committedMt = mktContracts.reduce((s, c) => s + c.remaining_mt, 0);
 
   const availableMt = totalMt - committedMt;
 
@@ -359,7 +340,7 @@ export async function getDashboardData(farmId) {
       total_mt: totalMt,
       committed_mt: committedMt,
       available_mt: availableMt,
-      active_contracts: openContracts.length + mktContracts.length,
+      active_contracts: mktContracts.length,
     },
     cropInventory,
     farmStatus,

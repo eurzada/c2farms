@@ -16,9 +16,20 @@ import {
 import { broadcastMarketingEvent } from '../socket/handler.js';
 import multer from 'multer';
 import { extractContractFromPdf, saveExtractedContract } from '../services/contractExtractionService.js';
+import { createExtractionBatch, getBatchStatus, getBatchMeta, clearBatchMeta } from '../services/batchExtractionService.js';
+import { resolveInventoryFarm } from '../services/resolveInventoryFarm.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+// Marketing is enterprise-wide — resolve BU farm → enterprise farm for all routes
+router.use('/:farmId/marketing', async (req, res, next) => {
+  try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    req.params.farmId = farmId;
+    next();
+  } catch (err) { next(err); }
+});
 
 // ─── Dashboard & Position ────────────────────────────────────────────
 
@@ -87,6 +98,92 @@ router.post('/:farmId/marketing/contracts', authenticate, requireRole('admin', '
     res.status(201).json({ contract, warning });
   } catch (err) { next(err); }
 });
+
+// ─── Batch Contract PDF Import (50% Anthropic discount) ─────────────
+// These must be registered BEFORE /:id routes to avoid "import-batch" matching as :id
+
+router.post('/:farmId/marketing/contracts/import-batch', authenticate, requireRole('admin', 'manager'), upload.array('files', 50), async (req, res, next) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No files uploaded' });
+    }
+    const invalidFiles = req.files.filter(f => !f.originalname.match(/\.(pdf|jpg|jpeg|png)$/i));
+    if (invalidFiles.length > 0) {
+      return res.status(400).json({ error: `Unsupported file types: ${invalidFiles.map(f => f.originalname).join(', ')}` });
+    }
+
+    const files = req.files.map(f => ({ buffer: f.buffer, filename: f.originalname }));
+    const result = await createExtractionBatch(req.params.farmId, files);
+
+    logAudit({
+      farmId: req.params.farmId, userId: req.userId,
+      entityType: 'MarketingContract', entityId: result.batchId,
+      action: 'batch_import_started',
+      changes: { file_count: files.length, filenames: files.map(f => f.filename) },
+    });
+
+    res.status(202).json(result);
+  } catch (err) { next(err); }
+});
+
+router.get('/:farmId/marketing/contracts/import-batch/:batchId', authenticate, async (req, res, next) => {
+  try {
+    const meta = getBatchMeta(req.params.batchId);
+    if (meta && meta.farmId !== req.params.farmId) {
+      return res.status(403).json({ error: 'Batch does not belong to this farm' });
+    }
+    const status = await getBatchStatus(req.params.batchId);
+    res.json(status);
+  } catch (err) { next(err); }
+});
+
+router.post('/:farmId/marketing/contracts/import-batch/:batchId/confirm', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { extractions } = req.body;
+    if (!Array.isArray(extractions) || extractions.length === 0) {
+      return res.status(400).json({ error: 'No extractions to confirm' });
+    }
+
+    const results = [];
+    for (const item of extractions) {
+      try {
+        const contract = await saveExtractedContract(req.params.farmId, item.extraction);
+        results.push({ custom_id: item.custom_id, status: 'created', contract });
+
+        logAudit({
+          farmId: req.params.farmId, userId: req.userId,
+          entityType: 'MarketingContract', entityId: contract.id,
+          action: 'create',
+          changes: {
+            source: 'batch_import',
+            batch_id: req.params.batchId,
+            contract_number: contract.contract_number,
+            buyer: contract.counterparty?.name,
+            commodity: contract.commodity?.name,
+          },
+        });
+      } catch (err) {
+        results.push({ custom_id: item.custom_id, status: 'error', error: err.message });
+      }
+    }
+
+    const io = req.app.get('io');
+    if (io) broadcastMarketingEvent(io, req.params.farmId, 'marketing:contracts:batch_imported', {
+      count: results.filter(r => r.status === 'created').length,
+    });
+
+    clearBatchMeta(req.params.batchId);
+
+    res.json({
+      total: extractions.length,
+      created: results.filter(r => r.status === 'created').length,
+      errors: results.filter(r => r.status === 'error').length,
+      results,
+    });
+  } catch (err) { next(err); }
+});
+
+// ─── Contract CRUD (parameterized :id routes) ────────────────────────
 
 router.put('/:farmId/marketing/contracts/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {

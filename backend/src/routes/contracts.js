@@ -3,8 +3,18 @@ import prisma from '../config/database.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { getAvailableToSell } from '../services/inventoryService.js';
 import { logAudit, diffChanges } from '../services/auditService.js';
+import { resolveInventoryFarm } from '../services/resolveInventoryFarm.js';
 
 const router = Router();
+
+// Contracts are enterprise-wide — resolve BU farm → enterprise farm
+router.use('/:farmId/contracts', async (req, res, next) => {
+  try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    req.params.farmId = farmId;
+    next();
+  } catch (err) { next(err); }
+});
 
 // GET contracts with filters
 router.get('/:farmId/contracts', authenticate, async (req, res, next) => {

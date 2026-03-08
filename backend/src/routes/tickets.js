@@ -4,9 +4,19 @@ import prisma from '../config/database.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { previewTicketImport, commitTicketImport } from '../services/ticketImportService.js';
 import { logAudit } from '../services/auditService.js';
+import { resolveInventoryFarm } from '../services/resolveInventoryFarm.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+// Logistics is enterprise-wide — resolve BU farm → enterprise farm
+router.use('/:farmId/tickets', async (req, res, next) => {
+  try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    req.params.farmId = farmId;
+    next();
+  } catch (err) { next(err); }
+});
 
 // GET all delivery tickets for a farm
 router.get('/:farmId/tickets', authenticate, async (req, res, next) => {
