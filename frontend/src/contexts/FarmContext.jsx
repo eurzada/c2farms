@@ -16,22 +16,28 @@ export function FarmProvider({ children }) {
 
   const isEnterprise = selectedId === ENTERPRISE_ID;
 
-  // The real farm used for API calls (first farm when enterprise, selected farm otherwise)
+  // Find the real Enterprise farm record from the DB (has is_enterprise flag)
+  const enterpriseFarm = useMemo(() => {
+    return authFarms?.find(f => f.is_enterprise) || null;
+  }, [authFarms]);
+
+  // The real farm used for API calls
   const currentFarm = useMemo(() => {
     if (!authFarms?.length) return null;
     if (isEnterprise) {
-      // Return first farm but with enterprise flag for API calls
-      return authFarms[0];
+      // Use the dedicated Enterprise farm for API calls
+      return enterpriseFarm || authFarms[0];
     }
     return authFarms.find(f => f.id === selectedId) || authFarms[0];
-  }, [authFarms, selectedId, isEnterprise]);
+  }, [authFarms, selectedId, isEnterprise, enterpriseFarm]);
 
-  // Build dropdown list: Enterprise + individual farms
+  // Build dropdown list: Enterprise + individual BU farms (exclude Enterprise farm record from BU list)
   const allFarms = useMemo(() => {
     if (!authFarms?.length) return [];
+    const buFarms = authFarms.filter(f => !f.is_enterprise);
     return [
       { id: ENTERPRISE_ID, name: 'C2 Farms Enterprise', role: 'admin' },
-      ...authFarms,
+      ...buFarms,
     ];
   }, [authFarms]);
 
@@ -81,8 +87,10 @@ export function FarmProvider({ children }) {
     });
   }, [refreshAuthFarms]);
 
-  // All individual farms (for rollup queries)
-  const farmUnits = authFarms;
+  // All individual BU farms (for rollup queries — excludes Enterprise farm)
+  const farmUnits = useMemo(() => {
+    return authFarms?.filter(f => !f.is_enterprise) || [];
+  }, [authFarms]);
 
   const value = useMemo(() => ({
     farms: allFarms, farmUnits, currentFarm, setCurrentFarm,

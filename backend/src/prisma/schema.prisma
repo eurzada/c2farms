@@ -25,6 +25,7 @@ model User {
 model Farm {
   id              String           @id @default(uuid())
   name            String
+  is_enterprise   Boolean          @default(false)
   created_at      DateTime         @default(now())
   updated_at      DateTime         @updatedAt
   user_roles      UserFarmRole[]

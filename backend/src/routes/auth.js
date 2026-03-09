@@ -139,7 +139,7 @@ router.get('/me', authenticate, async (req, res, next) => {
       include: { farm: true },
     });
 
-    res.json({ user, farms: farmRoles.map(fr => ({ ...fr.farm, role: fr.role })) });
+    res.json({ user, farms: farmRoles.map(fr => ({ ...fr.farm, role: fr.role, is_enterprise: fr.farm.is_enterprise || false })) });
   } catch (err) {
     next(err);
   }
