@@ -19,6 +19,7 @@ import { useThemeMode } from '../../contexts/ThemeContext';
 import api from '../../services/api';
 import ContractFormDialog from '../../components/marketing/ContractFormDialog';
 import ContractImportDialog from '../../components/marketing/ContractImportDialog';
+import ContractBatchImportDialog from '../../components/marketing/ContractBatchImportDialog';
 import DeliveryFormDialog from '../../components/marketing/DeliveryFormDialog';
 import SettlementDialog from '../../components/marketing/SettlementDialog';
 import MarketingSettingsDialog from '../../components/marketing/MarketingSettingsDialog';
@@ -70,6 +71,7 @@ export default function MarketingContracts() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [snack, setSnack] = useState({ open: false, message: '', severity: 'info' });
   const [importOpen, setImportOpen] = useState(false);
+  const [batchImportOpen, setBatchImportOpen] = useState(false);
   const [selectedCount, setSelectedCount] = useState(0);
   const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
@@ -240,6 +242,9 @@ export default function MarketingContracts() {
               <Button variant="outlined" startIcon={<FileUploadIcon />} onClick={() => setImportOpen(true)}>
                 Import PDF
               </Button>
+              <Button variant="outlined" startIcon={<FileUploadIcon />} onClick={() => setBatchImportOpen(true)}>
+                Batch Import
+              </Button>
               <Button variant="contained" startIcon={<AddIcon />} onClick={() => setContractDialog({ open: true, initial: null })}>
                 New Contract
               </Button>
@@ -315,6 +320,13 @@ export default function MarketingContracts() {
       <ContractImportDialog
         open={importOpen}
         onClose={() => setImportOpen(false)}
+        farmId={currentFarm?.id}
+        onImported={fetchData}
+      />
+
+      <ContractBatchImportDialog
+        open={batchImportOpen}
+        onClose={() => setBatchImportOpen(false)}
         farmId={currentFarm?.id}
         onImported={fetchData}
       />

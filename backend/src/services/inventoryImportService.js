@@ -14,7 +14,7 @@ import {
  *     Row 1 = headers, columns: Farm/Location, Bin #, Type, Capacity, Commodity, Bushels, Crop Year, Notes
  *   - "Contracts" sheet: buyer/crop/contracted/hauled
  */
-export async function importInventoryFromExcel(farmId, buffer) {
+export async function importInventoryFromExcel(farmId, buffer, fileName) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer);
 
@@ -46,7 +46,7 @@ export async function importInventoryFromExcel(farmId, buffer) {
   }
 
   // 3. Detect snapshot sheets — first by name pattern, then by column headers
-  const snapshotPattern = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})$/i;
+  const snapshotPattern = /^\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})(?:,?\s*'?(\d{2,4}))?\s*$/i;
   const contractPattern = /contract/i;
   const snapshotSheets = [];
 
@@ -80,21 +80,37 @@ export async function importInventoryFromExcel(farmId, buffer) {
   }
 
   // Build period date from sheet name + infer year, or default to today
-  function parsePeriodDate(sheetName) {
+  function parsePeriodDate(sheetName, fileName) {
     const match = sheetName.trim().match(snapshotPattern);
     if (!match) {
-      // Sheet detected by headers, not name — use today as the period date
+      // Try to parse date from the original file name (e.g. "Oct 31 2025.xlsx")
+      const fileMatch = fileName
+        ? fileName.replace(/\.\w+$/, '').trim().match(/^\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})(?:[,\s]+(\d{2,4}))?\s*$/i)
+        : null;
+      if (fileMatch) {
+        return parseDateParts(fileMatch[1], fileMatch[2], fileMatch[3]);
+      }
+      // Last resort — use today
       const now = new Date();
       return new Date(now.getFullYear(), now.getMonth(), now.getDate());
     }
-    const monthStr = match[1];
-    const day = parseInt(match[2]);
+    return parseDateParts(match[1], match[2], match[3]);
+  }
+
+  function parseDateParts(monthStr, dayStr, yearStr) {
+    const day = parseInt(dayStr);
     const monthIndex = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
       .findIndex(m => m.toLowerCase() === monthStr.toLowerCase());
-    // Use current crop year context: Oct-Dec = previous year, Jan-Sep = current year
-    const now = new Date();
-    let year = now.getFullYear();
-    if (monthIndex >= 9) year = now.getFullYear() - 1; // Oct/Nov/Dec → last year
+    let year;
+    if (yearStr) {
+      year = parseInt(yearStr);
+      if (year < 100) year += 2000; // 25 → 2025
+    } else {
+      // Infer year from current date: Oct-Dec = previous year, Jan-Sep = current year
+      const now = new Date();
+      year = now.getFullYear();
+      if (monthIndex >= 9) year = now.getFullYear() - 1;
+    }
     return new Date(year, monthIndex, day);
   }
 
@@ -103,7 +119,7 @@ export async function importInventoryFromExcel(farmId, buffer) {
   const periodMap = {};
 
   for (const sheet of snapshotSheets) {
-    const periodDate = parsePeriodDate(sheet.name);
+    const periodDate = parsePeriodDate(sheet.name, fileName);
     if (!periodDate) {
       errors.push(`Could not parse date from sheet "${sheet.name}"`);
       continue;
@@ -127,8 +143,9 @@ export async function importInventoryFromExcel(farmId, buffer) {
       if (val.includes('farm') || val.includes('location')) headers.location = colNumber;
       else if (val.includes('bin') && val.includes('#') || val === 'bin #' || val === 'bin') headers.bin_number = colNumber;
       else if (val.includes('type')) headers.type = colNumber;
-      else if (val.includes('capac')) headers.capacity = colNumber;
-      else if (val.includes('commod') || val.includes('grain') || val.includes('crop type')) headers.commodity = colNumber;
+      else if (val.includes('capac') || val.includes('size')) headers.capacity = colNumber;
+      else if (val.includes('commodity short') || val.includes('commodity_short')) headers.commodity = colNumber;
+      else if (!headers.commodity && (val.includes('commod') || val.includes('grain') || val.includes('crop type'))) headers.commodity = colNumber;
       else if (val.includes('bushel') || val === 'bu') headers.bushels = colNumber;
       else if (val.includes('crop') && val.includes('year')) headers.crop_year = colNumber;
       else if (val.includes('note')) headers.notes = colNumber;

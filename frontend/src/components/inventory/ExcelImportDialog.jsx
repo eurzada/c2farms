@@ -62,8 +62,11 @@ export default function ExcelImportDialog({ open, onClose, farmId, onImportCompl
         {status === 'ready' && (
           <Stack spacing={2} sx={{ mt: 1 }}>
             <Typography variant="body2" color="text.secondary">
-              Upload an Excel file (.xlsx) matching the inventory spreadsheet format.
-              Bins, counts, and contracts will be imported or updated.
+              Upload a monthly inventory count spreadsheet (.xlsx). Bins, counts, and contracts will be imported or updated.
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ pl: 1 }}>
+              • Name the file like <b>Oct 31 2025.xlsx</b> or the sheet tab like <b>Oct 31, 25</b> so the count period is detected automatically<br />
+              • Columns: <b>Farm Location</b> | <b>Bin #</b> | <b>Type</b> | <b>Size (bu)</b> | <b>Commodity</b> | <b>Bushels</b> | <b>Kg</b> | <b>Crop Year</b>
             </Typography>
             <Box>
               <input

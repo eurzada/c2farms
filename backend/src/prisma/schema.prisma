@@ -32,6 +32,7 @@ model Farm {
   agro_plans      AgroPlan[]
   agro_products   AgroProduct[]
   season_profiles SeasonProfile[]
+  labour_plans    LabourPlan[]
 
   @@map("farms")
 }
@@ -798,6 +799,55 @@ model SeasonProfile {
 
   @@unique([farm_id, crop, crop_year])
   @@map("season_profiles")
+}
+
+// ─── Labour Planning ─────────────────────────────────────────────────
+
+model LabourPlan {
+  id          String   @id @default(uuid())
+  farm_id     String
+  fiscal_year Int
+  status      String   @default("draft") // draft | approved | locked
+  avg_wage    Decimal  @default(0)
+  total_acres Int      @default(0)
+  notes       String?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  farm    Farm           @relation(fields: [farm_id], references: [id], onDelete: Cascade)
+  seasons LabourSeason[]
+
+  @@unique([farm_id, fiscal_year])
+  @@map("labour_plans")
+}
+
+model LabourSeason {
+  id         String   @id @default(uuid())
+  plan_id    String
+  name       String
+  sort_order Int
+  months     String[] // fiscal months, e.g. ["May"] or ["Jun","Jul","Aug"]
+  created_at DateTime @default(now())
+
+  plan  LabourPlan  @relation(fields: [plan_id], references: [id], onDelete: Cascade)
+  roles LabourRole[]
+
+  @@unique([plan_id, name])
+  @@map("labour_seasons")
+}
+
+model LabourRole {
+  id         String   @id @default(uuid())
+  season_id  String
+  name       String
+  hours      Decimal  @default(0)
+  sort_order Int
+  created_at DateTime @default(now())
+
+  season LabourSeason @relation(fields: [season_id], references: [id], onDelete: Cascade)
+
+  @@unique([season_id, name])
+  @@map("labour_roles")
 }
 
 // ─── Audit Trail ─────────────────────────────────────────────────────

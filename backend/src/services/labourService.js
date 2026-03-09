@@ -213,6 +213,73 @@ export async function bulkUpdatePlanStatus(fiscalYear, status) {
   return { updated: results.length, status, fiscal_year: fiscalYear, details: results };
 }
 
+// ─── Copy from Prior Year ────────────────────────────────────────────
+
+export async function copyFromPriorYear(farmId, targetYear) {
+  const sourceYear = targetYear - 1;
+  const source = await getPlan(farmId, sourceYear);
+  if (!source) return null;
+
+  // Get total_acres from target year assumptions
+  const assumption = await prisma.assumption.findUnique({
+    where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: targetYear } },
+  });
+  const totalAcres = assumption?.total_acres || source.total_acres || 0;
+
+  const plan = await prisma.labourPlan.create({
+    data: {
+      farm_id: farmId,
+      fiscal_year: targetYear,
+      avg_wage: source.avg_wage,
+      total_acres: Math.round(totalAcres),
+      seasons: {
+        create: source.seasons.map(s => ({
+          name: s.name,
+          sort_order: s.sort_order,
+          months: s.months,
+          roles: {
+            create: s.roles.map(r => ({
+              name: r.name,
+              hours: Number(r.hours),
+              sort_order: r.sort_order,
+            })),
+          },
+        })),
+      },
+    },
+    include: {
+      seasons: {
+        orderBy: { sort_order: 'asc' },
+        include: { roles: { orderBy: { sort_order: 'asc' } } },
+      },
+    },
+  });
+
+  log.info(`Copied labour plan from FY${sourceYear} → FY${targetYear} for farm=${farmId}`);
+  return plan;
+}
+
+// ─── Bulk Push to Forecast ───────────────────────────────────────────
+
+export async function bulkPushToForecast(fiscalYear) {
+  const plans = await prisma.labourPlan.findMany({
+    where: { fiscal_year: fiscalYear },
+    select: { id: true, farm_id: true },
+  });
+  const results = [];
+  for (const plan of plans) {
+    try {
+      const result = await pushToForecast(plan.id);
+      results.push({ farm_id: plan.farm_id, plan_id: plan.id, ...result });
+    } catch (err) {
+      results.push({ farm_id: plan.farm_id, plan_id: plan.id, pushed: false, reason: err.message });
+    }
+  }
+  const pushed = results.filter(r => r.pushed).length;
+  log.info(`Bulk push to forecast: ${pushed}/${plans.length} plans for FY${fiscalYear}`);
+  return { total: plans.length, pushed, fiscal_year: fiscalYear, details: results };
+}
+
 // ─── Dashboard (for enterprise rollup) ──────────────────────────────
 
 export async function getDashboard(farmId, fiscalYear) {

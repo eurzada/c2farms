@@ -8,6 +8,20 @@ const router = Router();
 // ─── Cross-farm routes (mounted at /api/labour) ────────────────────
 export const labourGeneralRouter = Router();
 
+labourGeneralRouter.post('/bulk-push', authenticate, async (req, res, next) => {
+  try {
+    const { fiscal_year } = req.body;
+    if (!fiscal_year) return res.status(400).json({ error: 'fiscal_year required' });
+    const { default: prisma } = await import('../config/database.js');
+    const adminRole = await prisma.userFarmRole.findFirst({
+      where: { user_id: req.userId, role: 'admin' },
+    });
+    if (!adminRole) return res.status(403).json({ error: 'Admin access required' });
+    const result = await svc.bulkPushToForecast(fiscal_year);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 labourGeneralRouter.post('/bulk-status', authenticate, async (req, res, next) => {
   try {
     const { fiscal_year, status } = req.body;
@@ -30,6 +44,16 @@ router.get('/:farmId/labour/plan', async (req, res, next) => {
     const year = parseInt(req.query.year) || 2026;
     const plan = await svc.getPlan(req.params.farmId, year);
     res.json(plan || null);
+  } catch (err) { next(err); }
+});
+
+// POST /:farmId/labour/plan/copy-from-prior  { fiscal_year }
+router.post('/:farmId/labour/plan/copy-from-prior', requireRole('manager'), async (req, res, next) => {
+  try {
+    const year = parseInt(req.body.fiscal_year) || 2026;
+    const plan = await svc.copyFromPriorYear(req.params.farmId, year);
+    if (!plan) return res.status(404).json({ error: `No labour plan found for FY${year - 1}` });
+    res.status(201).json(plan);
   } catch (err) { next(err); }
 });
 

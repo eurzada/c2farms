@@ -7,6 +7,7 @@ import {
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import LockIcon from '@mui/icons-material/Lock';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
+import SyncIcon from '@mui/icons-material/Sync';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Tooltip as ChartTooltip, Legend } from 'chart.js';
@@ -38,6 +39,7 @@ export default function EnterpriseLabour() {
   const [farmData, setFarmData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [pushResult, setPushResult] = useState(null);
   const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
   const year = 2026;
 
@@ -70,6 +72,25 @@ export default function EnterpriseLabour() {
       loadData();
     } catch (err) {
       console.error('Bulk status update failed:', err);
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  const handleBulkPush = async () => {
+    const ok = await confirm({
+      title: 'Push All Labour Plans to Forecast?',
+      message: `This will write labour costs into the Personnel category (lpm_personnel) for all ${farmsWithPlans.length} farms for FY${year}. Months with actuals will be skipped.`,
+      confirmText: 'Push All',
+    });
+    if (!ok) return;
+    setBulkLoading(true);
+    setPushResult(null);
+    try {
+      const res = await api.post('/api/labour/bulk-push', { fiscal_year: year });
+      setPushResult(res.data);
+    } catch (err) {
+      console.error('Bulk push failed:', err);
     } finally {
       setBulkLoading(false);
     }
@@ -149,6 +170,10 @@ export default function EnterpriseLabour() {
                 Lock All Plans
               </Button>
             )}
+            <Button size="small" variant="contained" startIcon={<SyncIcon />}
+              disabled={bulkLoading} onClick={handleBulkPush}>
+              Push All to Forecast
+            </Button>
           </Box>
         )}
       </Box>
@@ -224,6 +249,15 @@ export default function EnterpriseLabour() {
               </TableBody>
             </Table>
           </TableContainer>
+
+          {pushResult && (
+            <Alert severity="success" sx={{ mb: 2 }} onClose={() => setPushResult(null)}>
+              Pushed {pushResult.pushed} of {pushResult.total} labour plans to forecast for FY{year}.
+              {pushResult.details?.filter(d => !d.pushed).length > 0 && (
+                <> Skipped: {pushResult.details.filter(d => !d.pushed).map(d => d.reason).join('; ')}</>
+              )}
+            </Alert>
+          )}
 
           {farmsWithout.length > 0 && (
             <Alert severity="warning" variant="outlined">

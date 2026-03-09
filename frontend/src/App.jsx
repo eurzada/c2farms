@@ -37,9 +37,11 @@ const AgronomyLayout = lazy(() => import('./components/agronomy/AgronomyLayout')
 const AgronomyDashboard = lazy(() => import('./pages/agronomy/AgronomyDashboard'));
 const PlanSetup = lazy(() => import('./pages/agronomy/PlanSetup'));
 const CropInputPlan = lazy(() => import('./pages/agronomy/CropInputPlan'));
+const LabourPlan = lazy(() => import('./pages/agronomy/LabourPlan'));
 const EnterpriseForecast = lazy(() => import('./pages/enterprise/EnterpriseForecast'));
 const EnterpriseAgronomy = lazy(() => import('./pages/enterprise/EnterpriseAgronomy'));
 const EnterpriseAgroPlan = lazy(() => import('./pages/enterprise/EnterpriseAgroPlan'));
+const EnterpriseLabour = lazy(() => import('./pages/enterprise/EnterpriseLabour'));
 
 function LazyFallback() {
   return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 8 }}><CircularProgress /></Box>;
@@ -140,6 +142,7 @@ export default function App() {
                       <Route path="/agronomy/dashboard" element={<FarmUnitRoute module="agronomy"><AgronomyLayout><AgronomyDashboard /></AgronomyLayout></FarmUnitRoute>} />
                       <Route path="/agronomy/plan" element={<FarmUnitRoute module="agronomy"><AgronomyLayout><PlanSetup /></AgronomyLayout></FarmUnitRoute>} />
                       <Route path="/agronomy/inputs" element={<FarmUnitRoute module="agronomy"><AgronomyLayout><CropInputPlan /></AgronomyLayout></FarmUnitRoute>} />
+                      <Route path="/labour" element={<FarmUnitRoute module="agronomy"><LabourPlan /></FarmUnitRoute>} />
 
                       {/* Inventory — both modes, but different scope */}
                       <Route path="/inventory" element={<ModuleRoute module="inventory"><InventoryRedirect /></ModuleRoute>} />
@@ -167,6 +170,7 @@ export default function App() {
                       <Route path="/enterprise/forecast" element={<EnterpriseRoute><EnterpriseForecast /></EnterpriseRoute>} />
                       <Route path="/enterprise/agronomy" element={<EnterpriseRoute><EnterpriseAgronomy /></EnterpriseRoute>} />
                       <Route path="/enterprise/agro-plan" element={<EnterpriseRoute><EnterpriseAgroPlan /></EnterpriseRoute>} />
+                      <Route path="/enterprise/labour" element={<EnterpriseRoute><EnterpriseLabour /></EnterpriseRoute>} />
                       <Route path="*" element={<NotFound />} />
                     </Routes>
                     </Suspense>
