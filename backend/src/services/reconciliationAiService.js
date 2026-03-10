@@ -23,6 +23,17 @@ const GRADE_TO_COMMODITY = {
   '1 cw red spring': 'wheat', '2 cw red spring': 'wheat',
 };
 
+/**
+ * Parse a ticket number to a numeric value for comparison.
+ * Strips non-digit characters (spaces, dashes, leading zeros handled by Number()).
+ * Returns NaN if no digits found.
+ */
+function parseTicketNumber(value) {
+  if (value == null) return NaN;
+  const digits = String(value).replace(/[^0-9]/g, '');
+  return digits.length > 0 ? Number(digits) : NaN;
+}
+
 function normalizeCommodity(value) {
   if (!value) return null;
   const lower = value.toLowerCase().trim();
@@ -182,19 +193,27 @@ export async function reconcileSettlement(settlementId) {
     ticketWhere.counterparty_id = settlement.counterparty_id;
   }
 
-  // Phase 1: Direct ticket-number lookup (deterministic matches)
-  // Settlement lines often carry the exact ticket # from the buyer system.
-  // When this matches a delivery ticket, it's the strongest possible signal.
-  const lineTicketNumbers = settlement.lines
+  // Phase 1: Numeric ticket-number matching (deterministic)
+  // Parse both sides to numbers and subtract — if result is 0, it's a match.
+  // This handles formatting differences (leading zeros, spaces, dashes) between
+  // the CSV-imported ticket numbers and the settlement PDF-extracted values.
+  const linesWithTicketNums = settlement.lines
     .filter(l => l.ticket_number_on_settlement)
-    .map(l => l.ticket_number_on_settlement.trim());
+    .map(l => ({
+      line: l,
+      raw: l.ticket_number_on_settlement.trim(),
+      numeric: parseTicketNumber(l.ticket_number_on_settlement),
+    }))
+    .filter(l => !isNaN(l.numeric));
 
+  // Fetch all farm tickets in the date window for numeric comparison
   let directMatchTickets = [];
-  if (lineTicketNumbers.length > 0) {
-    directMatchTickets = await prisma.deliveryTicket.findMany({
+  const ticketByNumber = new Map(); // numeric value → ticket
+  if (linesWithTicketNums.length > 0) {
+    const allFarmTickets = await prisma.deliveryTicket.findMany({
       where: {
         farm_id: farmId,
-        ticket_number: { in: lineTicketNumbers },
+        delivery_date: { gte: minDate, lte: maxDate },
       },
       include: {
         marketing_contract: true,
@@ -202,19 +221,29 @@ export async function reconcileSettlement(settlementId) {
         location: true,
       },
     });
+
+    // Build numeric ticket number → ticket map
+    for (const t of allFarmTickets) {
+      const num = parseTicketNumber(t.ticket_number);
+      if (!isNaN(num)) {
+        ticketByNumber.set(num, t);
+      }
+    }
+
+    // Match: parse both to numbers, subtract, if 0 → match
+    for (const { numeric } of linesWithTicketNums) {
+      const ticket = ticketByNumber.get(numeric);
+      if (ticket && !directMatchTickets.some(t => t.id === ticket.id)) {
+        directMatchTickets.push(ticket);
+      }
+    }
   }
 
-  console.log(`[RECON] Phase 1: ${lineTicketNumbers.length} lines have ticket numbers → found ${directMatchTickets.length} matching tickets in DB`);
-  if (directMatchTickets.length < lineTicketNumbers.length) {
-    const foundNums = new Set(directMatchTickets.map(t => t.ticket_number.trim()));
-    const missing = lineTicketNumbers.filter(n => !foundNums.has(n));
-    console.log(`[RECON]   Missing ticket numbers: ${missing.join(', ')}`);
-  }
-
-  // Build ticket number → ticket map for fast lookup
-  const ticketByNumber = new Map();
-  for (const t of directMatchTickets) {
-    ticketByNumber.set(t.ticket_number.trim(), t);
+  console.log(`[RECON] Phase 1: ${linesWithTicketNums.length} lines have ticket numbers → found ${directMatchTickets.length} matching tickets in DB (numeric comparison)`);
+  if (directMatchTickets.length < linesWithTicketNums.length) {
+    const foundNums = new Set(directMatchTickets.map(t => parseTicketNumber(t.ticket_number)));
+    const missing = linesWithTicketNums.filter(l => !foundNums.has(l.numeric));
+    console.log(`[RECON]   Missing ticket numbers: ${missing.map(l => l.raw).join(', ')}`);
   }
 
   // Phase 2: Fetch additional candidate tickets for lines without ticket-number matches
@@ -233,9 +262,11 @@ export async function reconcileSettlement(settlementId) {
   // Also fetch tickets without contract/counterparty filter as fallback
   const alreadyFetched = new Set([...directMatchTickets.map(t => t.id), ...candidateTickets.map(t => t.id)]);
   let fallbackTickets = [];
-  const unmatchableLines = settlement.lines.filter(l =>
-    !l.ticket_number_on_settlement || !ticketByNumber.has(l.ticket_number_on_settlement.trim())
-  );
+  const unmatchableLines = settlement.lines.filter(l => {
+    if (!l.ticket_number_on_settlement) return true;
+    const num = parseTicketNumber(l.ticket_number_on_settlement);
+    return isNaN(num) || !ticketByNumber.has(num);
+  });
   if (unmatchableLines.length > candidateTickets.length) {
     fallbackTickets = await prisma.deliveryTicket.findMany({
       where: {
@@ -263,7 +294,9 @@ export async function reconcileSettlement(settlementId) {
   for (const line of settlement.lines) {
     const lineNum = line.ticket_number_on_settlement?.trim();
     if (!lineNum) continue;
-    const ticket = ticketByNumber.get(lineNum);
+    const numericValue = parseTicketNumber(lineNum);
+    if (isNaN(numericValue)) continue;
+    const ticket = ticketByNumber.get(numericValue);
     if (!ticket || matchedTicketIds.has(ticket.id)) continue;
 
     const result = computeMatchScore(line, ticket, contractNumber);
@@ -284,7 +317,31 @@ export async function reconcileSettlement(settlementId) {
 
   console.log(`[RECON] Phase 3: ${matches.length} deterministic ticket-number matches`);
 
+  // Phase 3b: Lines that HAVE a ticket number but Phase 1/3 couldn't find a match
+  // must NOT fall through to scored matching — flag them as exceptions immediately.
+  // Scored matching would pair them with a wrong ticket based on weight/date similarity.
+  for (const line of settlement.lines) {
+    if (matchedLineIds.has(line.id)) continue;
+    const lineNum = line.ticket_number_on_settlement?.trim();
+    if (!lineNum) continue;
+    const numericValue = parseTicketNumber(lineNum);
+    if (isNaN(numericValue)) continue;
+    // This line has a valid ticket number but no delivery ticket matched it
+    matchedLineIds.add(line.id);
+    matches.push({
+      line_id: line.id,
+      ticket_id: null,
+      score: 0,
+      match_status: 'exception',
+      exception_reason: `ticket_not_found: ${lineNum}`,
+      dimensions: {},
+      issues: [`ticket_number_${lineNum}_not_in_system`],
+    });
+    console.log(`[RECON]   ✗ Line ${line.line_number} (tkt# ${lineNum}) → EXCEPTION — ticket number not found in delivery tickets`);
+  }
+
   // Phase 4: Score remaining (non-deterministic) line-ticket combinations
+  // Only lines WITHOUT a ticket number reach this phase.
   const remainingLines = settlement.lines.filter(l => !matchedLineIds.has(l.id));
   const remainingTickets = allTickets.filter(t => !matchedTicketIds.has(t.id));
 

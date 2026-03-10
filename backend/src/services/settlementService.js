@@ -43,37 +43,47 @@ IMPORTANT: Look carefully for the contract number and commodity:
 
 Look for Settlement Details tables with per-ticket rows. IMPORTANT: Cargill settlements may show multiple numbers per ticket line — a Unit# (Cargill's internal receipt number) and potentially a weigh scale number. The ticket_number should be the WEIGH SCALE number (the smaller number that the trucker receives at the scale), NOT Cargill's large internal Unit#. If only one number is available per line, use that. Extract ALL ticket rows even across multiple pages. Return ONLY valid JSON, no extra text.`,
 
-  bunge: `You are extracting data from a Bunge grain settlement PDF. Extract ALL of the following into structured JSON:
+  bunge: `You are extracting data from a Bunge grain settlement PDF ("Settlement Advice"). Extract ALL of the following into structured JSON:
 
 {
-  "settlement_number": "string",
-  "settlement_date": "YYYY-MM-DD",
+  "settlement_number": "string (the Settlement # from the header, e.g. '4498650')",
+  "settlement_date": "YYYY-MM-DD (the Issue Date or Payment Date)",
   "buyer": "Bunge",
-  "contract_number": "string",
-  "commodity": "string",
+  "contract_number": "string (the primary Contract # — if multiple contracts, use the most common one)",
+  "commodity": "string (e.g. 'Yellow Peas', 'Canola', from the Primary Elevator Receipt Summary)",
   "total_gross_amount": number,
-  "total_net_amount": number,
+  "total_net_amount": number (the Net Payable amount),
   "currency": "CAD",
   "lines": [
     {
       "line_number": 1,
-      "ticket_number": "string (the weigh scale ticket number — the number matching the trucker's scale ticket from Traction Ag, NOT the buyer's internal receipt number)",
+      "ticket_number": "string — MUST be the Receipt # (the trucker's weigh scale ticket number, e.g. '695706'). See column mapping below.",
+      "delivery_number": "string or null — the Delivery # (Bunge's internal number, e.g. '469692')",
       "delivery_date": "YYYY-MM-DD",
-      "vehicle_id": "string or null",
-      "gross_weight_mt": number,
-      "net_weight_mt": number,
+      "contract_number": "string or null (per-line Contract #)",
+      "gross_weight_mt": number or null (Unload Weight),
+      "net_weight_mt": number or null (Net Weight),
       "grade": "string or null",
       "moisture_pct": number or null,
       "dockage_pct": number or null,
-      "price_per_mt": number or null,
-      "line_gross": number or null,
+      "price_per_mt": number or null (Net Price),
+      "line_gross": number or null (Gross Amount),
       "line_net": number or null,
       "deductions": [{"name": "string", "amount": number}]
     }
   ]
 }
 
-Bunge settlements typically have one ticket per page. Look for Ticket Net Weight KG (convert to MT by dividing by 1000), Gross Qty MT, Net Qty MT. IMPORTANT: If the document shows multiple ticket/reference numbers, use the weigh scale number (the one matching the trucker's scale ticket) as the ticket_number. Return ONLY valid JSON, no extra text.`,
+CRITICAL — Bunge "Primary Elevator Receipt Details" column mapping:
+The detail pages have TWO rows per ticket and these columns:
+  Row 1: Delivery # | Receipt # | Contract # | Dry/Loss Pts | Dry/Loss % | Dockage % | Storage Days
+  Row 2: Delivered On | BOL or Car # | Shipment # | Unload Weight | Dry/Loss | Dockage | Net Weight | Net Price | Gross Amount
+
+- **Delivery #** (first column, row 1): Bunge's INTERNAL delivery number (e.g. 469546, 469692). Do NOT use this as ticket_number.
+- **Receipt #** (second column, row 1): The trucker's WEIGH SCALE ticket number (e.g. 695511, 695706). This is a 6-digit number starting with 69xxxx or similar. USE THIS as the ticket_number field.
+- The Receipt # matches the "From Ticket #" / "To Ticket #" in the trucker's Traction Ag CSV export.
+
+Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.`,
 
   jgl: `You are extracting data from a JGL Commodities grain settlement document. This may be a photographed/scanned document that could be rotated. Extract ALL of the following into structured JSON:
 
@@ -341,6 +351,24 @@ function postProcessTicketNumbers(lines, buyerFormat) {
         return {
           ...line,
           ticket_number: best,
+          buyer_receipt_number: tn,
+        };
+      }
+    }
+
+    // Bunge: AI may grab Delivery # (469xxx) instead of Receipt # (695xxx).
+    // The delivery_number field holds Bunge's internal number — if ticket_number
+    // looks like the delivery number (shorter/different range) and delivery_number
+    // is actually the receipt, swap them.
+    if (buyerFormat === 'bunge' && line.delivery_number) {
+      const dn = String(line.delivery_number);
+      // If delivery_number is longer than ticket_number, it's likely the Receipt #
+      // (weigh scale numbers tend to be 6 digits starting 69xxxx)
+      if (/^\d+$/.test(dn) && /^\d+$/.test(tn) && Number(dn) > Number(tn)) {
+        return {
+          ...line,
+          ticket_number: dn,
+          delivery_number: tn,
           buyer_receipt_number: tn,
         };
       }

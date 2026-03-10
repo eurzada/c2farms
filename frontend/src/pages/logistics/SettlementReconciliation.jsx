@@ -587,18 +587,29 @@ export default function SettlementReconciliation() {
                   <TableCell align="right">{line.price_per_mt ? `$${line.price_per_mt.toFixed(2)}` : '-'}</TableCell>
                   <TableCell align="right">{line.line_net ? `$${line.line_net.toLocaleString()}` : '-'}</TableCell>
                   <TableCell>
-                    {line.delivery_ticket ? (
-                      <Stack spacing={0}>
-                        <Typography variant="body2">
-                          Ticket #{line.delivery_ticket.ticket_number}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {line.delivery_ticket.net_weight_mt?.toFixed(2)} MT |{' '}
-                          {line.delivery_ticket.commodity?.name} |{' '}
-                          {line.delivery_ticket.location?.name}
-                        </Typography>
-                      </Stack>
-                    ) : (
+                    {line.delivery_ticket ? (() => {
+                      const buyerNum = String(line.ticket_number_on_settlement || '').replace(/[^0-9]/g, '');
+                      const matchedNum = String(line.delivery_ticket.ticket_number || '').replace(/[^0-9]/g, '');
+                      const ticketNumsMatch = buyerNum && matchedNum && Number(buyerNum) === Number(matchedNum);
+                      return (
+                        <Stack spacing={0}>
+                          <Typography variant="body2" color={ticketNumsMatch ? 'text.primary' : 'error.main'}>
+                            Ticket #{line.delivery_ticket.ticket_number}
+                            {!ticketNumsMatch && ' ⚠'}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {line.delivery_ticket.net_weight_mt?.toFixed(2)} MT |{' '}
+                            {line.delivery_ticket.commodity?.name} |{' '}
+                            {line.delivery_ticket.location?.name}
+                          </Typography>
+                          {!ticketNumsMatch && (
+                            <Typography variant="caption" color="error.main">
+                              Buyer ticket #{line.ticket_number_on_settlement} does not match
+                            </Typography>
+                          )}
+                        </Stack>
+                      );
+                    })() : (
                       <Typography variant="body2" color="text.secondary">-</Typography>
                     )}
                   </TableCell>
