@@ -15,29 +15,38 @@ import {
   TableRow,
   Alert,
   CircularProgress,
-  LinearProgress,
+  Tooltip,
 } from '@mui/material';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import RemoveIcon from '@mui/icons-material/Remove';
-import WarehouseIcon from '@mui/icons-material/Warehouse';
-import LocalShippingIcon from '@mui/icons-material/LocalShipping';
-import GrainIcon from '@mui/icons-material/Grain';
-import PlaceIcon from '@mui/icons-material/Place';
 import { useFarm } from '../../contexts/FarmContext';
 import api from '../../services/api';
 
 const fmt = (v) => v != null ? Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 }) : '—';
 
+// Muted palette derived from C2 Farms brand teal/charcoal
+const COMMODITY_COLORS = [
+  '#008CB2', // C2 teal
+  '#006E8C', // C2 teal dark
+  '#4DB8D4', // C2 teal light
+  '#6d6e70', // C2 charcoal light
+  '#414042', // C2 charcoal
+  '#7BA7B8', // muted steel teal
+  '#95B0A4', // sage
+  '#A8B5C0', // slate
+  '#8C9EA8', // dusty teal
+  '#B0BEC5', // blue grey
+  '#90A4AE', // blue grey mid
+  '#78909C', // blue grey dark
+];
+
 function DeltaDisplay({ delta_mt, isFirst }) {
   if (isFirst || delta_mt == null) {
     return (
-      <Chip
-        label="Baseline"
-        size="small"
-        variant="outlined"
-        sx={{ fontWeight: 600, color: 'text.secondary' }}
-      />
+      <Typography variant="body2" sx={{ color: 'text.disabled', fontStyle: 'italic' }}>
+        Baseline
+      </Typography>
     );
   }
 
@@ -47,8 +56,8 @@ function DeltaDisplay({ delta_mt, isFirst }) {
 
   return (
     <Stack direction="row" alignItems="center" spacing={0.5}>
-      <Icon sx={{ fontSize: 18, color }} />
-      <Typography variant="h6" sx={{ fontWeight: 700, color }}>
+      <Icon sx={{ fontSize: 16, color }} />
+      <Typography variant="body1" sx={{ fontWeight: 600, color }}>
         {delta_mt > 0 ? '+' : ''}{fmt(delta_mt)}
       </Typography>
       <Typography variant="caption" sx={{ color: 'text.secondary' }}>MT</Typography>
@@ -56,92 +65,54 @@ function DeltaDisplay({ delta_mt, isFirst }) {
   );
 }
 
-function KpiItem({ icon, label, value, unit = 'MT', color = 'text.primary' }) {
-  return (
-    <Stack alignItems="center" spacing={0.5} sx={{ minWidth: 100 }}>
-      {icon}
-      <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 500 }}>
-        {label}
-      </Typography>
-      <Typography variant="h6" sx={{ fontWeight: 700, color }}>
-        {value}
-      </Typography>
-      {unit && (
-        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-          {unit}
-        </Typography>
-      )}
-    </Stack>
-  );
-}
-
-function CommodityBreakdown({ commodities, total_mt }) {
-  if (!commodities || commodities.length === 0) return null;
-
-  const colors = [
-    '#1976d2', '#2e7d32', '#ed6c02', '#9c27b0', '#d32f2f',
-    '#0288d1', '#558b2f', '#f57c00', '#7b1fa2', '#c62828',
-    '#00838f', '#33691e',
-  ];
+function CommodityBar({ commodities, total_mt }) {
+  if (!commodities || commodities.length === 0 || !total_mt) return null;
 
   return (
     <Box>
-      <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}>
-        Commodity Breakdown
-      </Typography>
-      <Stack spacing={1}>
+      {/* Stacked bar */}
+      <Box sx={{ display: 'flex', height: 8, borderRadius: 1, overflow: 'hidden', mb: 1 }}>
+        {commodities.map((c, i) => {
+          const share = (c.mt / total_mt) * 100;
+          if (share < 0.5) return null;
+          return (
+            <Tooltip key={c.name} title={`${c.name}: ${fmt(c.mt)} MT (${share.toFixed(1)}%)`} arrow>
+              <Box
+                sx={{
+                  width: `${share}%`,
+                  bgcolor: COMMODITY_COLORS[i % COMMODITY_COLORS.length],
+                  transition: 'width 0.3s',
+                }}
+              />
+            </Tooltip>
+          );
+        })}
+      </Box>
+      {/* Legend */}
+      <Stack direction="row" flexWrap="wrap" gap={1.5}>
         {commodities.map((c, i) => {
           const share = total_mt > 0 ? (c.mt / total_mt) * 100 : 0;
           return (
-            <Box key={c.name}>
-              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.25 }}>
-                <Stack direction="row" alignItems="center" spacing={1}>
-                  <Box
-                    sx={{
-                      width: 10,
-                      height: 10,
-                      borderRadius: '50%',
-                      bgcolor: colors[i % colors.length],
-                    }}
-                  />
-                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                    {c.name}
-                  </Typography>
-                </Stack>
-                <Stack direction="row" alignItems="center" spacing={1.5}>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                    {fmt(c.mt)} MT
-                  </Typography>
-                  <Chip
-                    label={`${share.toFixed(1)}%`}
-                    size="small"
-                    sx={{
-                      fontSize: '0.7rem',
-                      height: 20,
-                      bgcolor: colors[i % colors.length],
-                      color: '#fff',
-                      fontWeight: 600,
-                    }}
-                  />
-                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                    {c.bins} bin{c.bins !== 1 ? 's' : ''}
-                  </Typography>
-                </Stack>
-              </Stack>
-              <LinearProgress
-                variant="determinate"
-                value={share}
+            <Stack key={c.name} direction="row" alignItems="center" spacing={0.5}>
+              <Box
                 sx={{
-                  height: 6,
-                  borderRadius: 3,
-                  bgcolor: 'grey.200',
-                  '& .MuiLinearProgress-bar': {
-                    bgcolor: colors[i % colors.length],
-                    borderRadius: 3,
-                  },
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  bgcolor: COMMODITY_COLORS[i % COMMODITY_COLORS.length],
+                  flexShrink: 0,
                 }}
               />
-            </Box>
+              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                {c.name}
+              </Typography>
+              <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.primary' }}>
+                {fmt(c.mt)}
+              </Typography>
+              <Typography variant="caption" sx={{ color: 'text.disabled' }}>
+                ({share.toFixed(0)}%)
+              </Typography>
+            </Stack>
           );
         })}
       </Stack>
@@ -153,33 +124,28 @@ function LocationBreakdown({ locations }) {
   if (!locations || locations.length === 0) return null;
 
   return (
-    <Box>
-      <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}>
-        By Location
-      </Typography>
-      <TableContainer>
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell sx={{ fontWeight: 600, py: 0.5 }}>Location</TableCell>
-              <TableCell align="right" sx={{ fontWeight: 600, py: 0.5 }}>MT</TableCell>
-              <TableCell align="right" sx={{ fontWeight: 600, py: 0.5 }}>Bins</TableCell>
+    <TableContainer>
+      <Table size="small">
+        <TableHead>
+          <TableRow>
+            <TableCell sx={{ fontWeight: 600, py: 0.5, color: 'text.secondary', fontSize: '0.75rem' }}>Location</TableCell>
+            <TableCell align="right" sx={{ fontWeight: 600, py: 0.5, color: 'text.secondary', fontSize: '0.75rem' }}>MT</TableCell>
+            <TableCell align="right" sx={{ fontWeight: 600, py: 0.5, color: 'text.secondary', fontSize: '0.75rem' }}>Bins</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {locations.map((loc) => (
+            <TableRow key={loc.name} sx={{ '&:last-child td': { borderBottom: 0 } }}>
+              <TableCell sx={{ py: 0.5, fontSize: '0.8rem' }}>{loc.name}</TableCell>
+              <TableCell align="right" sx={{ py: 0.5, fontWeight: 500, fontSize: '0.8rem' }}>
+                {fmt(loc.mt)}
+              </TableCell>
+              <TableCell align="right" sx={{ py: 0.5, fontSize: '0.8rem', color: 'text.secondary' }}>{loc.bins}</TableCell>
             </TableRow>
-          </TableHead>
-          <TableBody>
-            {locations.map((loc) => (
-              <TableRow key={loc.name} sx={{ '&:last-child td': { borderBottom: 0 } }}>
-                <TableCell sx={{ py: 0.5 }}>{loc.name}</TableCell>
-                <TableCell align="right" sx={{ py: 0.5, fontWeight: 500 }}>
-                  {fmt(loc.mt)}
-                </TableCell>
-                <TableCell align="right" sx={{ py: 0.5 }}>{loc.bins}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
-    </Box>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
   );
 }
 
@@ -188,100 +154,79 @@ function PeriodCard({ period, isFirst }) {
   const dateLabel = periodDate.toLocaleDateString('en-CA', {
     year: 'numeric',
     month: 'long',
-    day: 'numeric',
   });
 
   return (
     <Card
-      elevation={2}
+      variant="outlined"
       sx={{
-        borderLeft: 4,
-        borderColor: period.status === 'open' ? 'success.main' : 'grey.400',
-        '&:hover': { boxShadow: 6 },
-        transition: 'box-shadow 0.2s',
+        borderLeft: 3,
+        borderColor: period.status === 'open' ? 'primary.main' : 'grey.300',
       }}
     >
-      <CardContent sx={{ p: 3 }}>
+      <CardContent sx={{ p: { xs: 2, md: 2.5 }, '&:last-child': { pb: 2 } }}>
         {/* Header */}
-        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2.5 }}>
-          <Stack direction="row" alignItems="center" spacing={2}>
-            <Typography variant="h6" sx={{ fontWeight: 700, color: '#1565c0' }}>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+          <Stack direction="row" alignItems="baseline" spacing={1.5}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
               {dateLabel}
             </Typography>
+            <Typography variant="caption" sx={{ color: 'text.disabled' }}>
+              CY {period.crop_year}
+            </Typography>
+          </Stack>
+          {period.status === 'open' && (
             <Chip
-              label={`Crop Year ${period.crop_year}`}
+              label="Open"
               size="small"
               variant="outlined"
-              sx={{ fontWeight: 600 }}
+              color="primary"
+              sx={{ height: 22, fontSize: '0.7rem' }}
             />
-          </Stack>
-          <Chip
-            label={period.status === 'open' ? 'Open' : 'Closed'}
-            size="small"
-            sx={{
-              fontWeight: 600,
-              bgcolor: period.status === 'open' ? 'success.light' : 'grey.300',
-              color: period.status === 'open' ? 'success.dark' : 'text.secondary',
-            }}
-          />
+          )}
         </Stack>
 
         {/* KPI Row */}
-        <Box
-          sx={{
-            display: 'flex',
-            justifyContent: 'space-around',
-            flexWrap: 'wrap',
-            gap: 2,
-            mb: 3,
-            p: 2,
-            bgcolor: 'grey.50',
-            borderRadius: 2,
-          }}
+        <Stack
+          direction="row"
+          spacing={3}
+          divider={<Box sx={{ borderLeft: 1, borderColor: 'divider' }} />}
+          sx={{ mb: 2 }}
         >
-          <KpiItem
-            icon={<WarehouseIcon sx={{ color: '#1565c0', fontSize: 22 }} />}
-            label="Total Inventory"
-            value={fmt(period.total_mt)}
-            color="#1565c0"
-          />
-          <Box sx={{ borderLeft: 1, borderColor: 'divider' }} />
-          <Stack alignItems="center" spacing={0.5} sx={{ minWidth: 100 }}>
-            <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 500 }}>
-              Delta
+          <Box>
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>Inventory</Typography>
+            <Typography variant="body1" sx={{ fontWeight: 700, color: 'primary.main' }}>
+              {fmt(period.total_mt)} <Typography component="span" variant="caption" sx={{ color: 'text.secondary', fontWeight: 400 }}>MT</Typography>
             </Typography>
+          </Box>
+          <Box>
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>Delta</Typography>
             <DeltaDisplay delta_mt={period.delta_mt} isFirst={isFirst} />
-          </Stack>
-          <Box sx={{ borderLeft: 1, borderColor: 'divider' }} />
-          <KpiItem
-            icon={<LocalShippingIcon sx={{ color: '#ed6c02', fontSize: 22 }} />}
-            label="Hauled"
-            value={period.hauled_mt != null ? fmt(period.hauled_mt) : '—'}
-            color="#ed6c02"
-          />
-          <Box sx={{ borderLeft: 1, borderColor: 'divider' }} />
-          <KpiItem
-            icon={<GrainIcon sx={{ color: '#2e7d32', fontSize: 22 }} />}
-            label="Bins"
-            value={`${period.occupied_bins} / ${period.bin_count}`}
-            unit=""
-          />
-          <Box sx={{ borderLeft: 1, borderColor: 'divider' }} />
-          <KpiItem
-            icon={<PlaceIcon sx={{ color: '#9c27b0', fontSize: 22 }} />}
-            label="Locations"
-            value={period.location_count}
-            unit=""
-          />
-        </Box>
+          </Box>
+          <Box>
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>Hauled</Typography>
+            <Typography variant="body1" sx={{ fontWeight: 600 }}>
+              {period.hauled_mt != null ? fmt(period.hauled_mt) : '—'} <Typography component="span" variant="caption" sx={{ color: 'text.secondary', fontWeight: 400 }}>MT</Typography>
+            </Typography>
+          </Box>
+          <Box>
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>Bins</Typography>
+            <Typography variant="body1" sx={{ fontWeight: 600 }}>
+              {period.occupied_bins}<Typography component="span" sx={{ color: 'text.disabled' }}> / {period.bin_count}</Typography>
+            </Typography>
+          </Box>
+          <Box>
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>Locations</Typography>
+            <Typography variant="body1" sx={{ fontWeight: 600 }}>
+              {period.location_count}
+            </Typography>
+          </Box>
+        </Stack>
 
-        {/* Breakdowns */}
-        <Grid container spacing={3}>
+        {/* Commodity bar + Location table side by side */}
+        <Grid container spacing={2}>
           <Grid item xs={12} md={7}>
-            <CommodityBreakdown
-              commodities={period.commodities}
-              total_mt={period.total_mt}
-            />
+            <CommodityBar commodities={period.commodities} total_mt={period.total_mt} />
           </Grid>
           <Grid item xs={12} md={5}>
             <LocationBreakdown locations={period.locations} />
@@ -334,14 +279,14 @@ export default function CountHistory() {
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
-      <Typography variant="h5" sx={{ mb: 0.5, fontWeight: 700, color: '#1565c0' }}>
+      <Typography variant="h5" sx={{ mb: 0.5, fontWeight: 700 }}>
         Count History
       </Typography>
       <Typography variant="body2" sx={{ mb: 3, color: 'text.secondary' }}>
         Timeline of inventory count periods showing position changes and delivery activity.
       </Typography>
 
-      <Stack spacing={3}>
+      <Stack spacing={2}>
         {periods.map((period, idx) => (
           <PeriodCard
             key={period.id}

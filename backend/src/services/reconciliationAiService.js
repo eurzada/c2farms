@@ -297,7 +297,19 @@ export async function reconcileSettlement(settlementId) {
     const numericValue = parseTicketNumber(lineNum);
     if (isNaN(numericValue)) continue;
     const ticket = ticketByNumber.get(numericValue);
-    if (!ticket || matchedTicketIds.has(ticket.id)) continue;
+    if (!ticket) continue;
+
+    // Allow split-load: multiple settlement lines can match the same ticket
+    // when they share the same ticket number (e.g. one truck load split across
+    // two contracts). Only block re-use when ticket numbers differ.
+    if (matchedTicketIds.has(ticket.id)) {
+      // Check if the ticket was already matched to a line with the SAME ticket number
+      const priorMatch = matches.find(m => m.ticket_id === ticket.id);
+      const priorLine = priorMatch && settlement.lines.find(l => l.id === priorMatch.line_id);
+      const priorNum = priorLine?.ticket_number_on_settlement?.trim();
+      if (priorNum !== lineNum) continue; // different ticket # tried to reuse — block it
+      // Same ticket number = split-load, allow through
+    }
 
     const result = computeMatchScore(line, ticket, contractNumber);
 
@@ -312,7 +324,8 @@ export async function reconcileSettlement(settlementId) {
       dimensions: result.dimensions,
       issues: result.issues,
     });
-    console.log(`[RECON]   ✓ Line ${line.line_number} (tkt# ${lineNum}) → Ticket ${ticket.ticket_number} [deterministic] score=${result.score.toFixed(3)}`);
+    const splitTag = matches.filter(m => m.ticket_id === ticket.id).length > 1 ? ' [split-load]' : '';
+    console.log(`[RECON]   ✓ Line ${line.line_number} (tkt# ${lineNum}) → Ticket ${ticket.ticket_number} [deterministic]${splitTag} score=${result.score.toFixed(3)}`);
   }
 
   console.log(`[RECON] Phase 3: ${matches.length} deterministic ticket-number matches`);

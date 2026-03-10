@@ -132,9 +132,10 @@ JGL documents show: ID, Contract#, Commodity, Settlement No, per-ticket rows wit
   "lines": [
     {
       "line_number": 1,
-      "ticket_number": "string (the Weigh # — this is the weigh scale ticket number that matches the trucker's Traction Ag ticket, e.g. '121907'. It is typically a 6-digit number on the third line of each ticket block, NOT the large Station/Receipt # like '734510684')",
-      "station_receipt_number": "string or null (the Station/Receipt # — Richardson's internal receipt number, e.g. '734510684')",
-      "load_number": "string or null (the Load # — e.g. '734437556')",
+      "ticket_number": "string — MUST be the Weigh # (see instructions below)",
+      "weigh_number": "string (the Weigh # — ALWAYS extract this separately even if you also put it in ticket_number)",
+      "station_receipt_number": "string or null (the Station/Receipt # — Richardson's internal receipt number, 9+ digits)",
+      "load_number": "string or null (the Load # — Richardson's internal load number, 9+ digits)",
       "delivery_date": "YYYY-MM-DD (the Dlvy Date)",
       "contract_number": "string or null (per-line Contract #)",
       "grade": "string or null (e.g. '1 CW RS 135')",
@@ -150,12 +151,20 @@ JGL documents show: ID, Contract#, Commodity, Settlement No, per-ticket rows wit
   ]
 }
 
-Richardson Pioneer settlements are titled "Cash Purchase Ticket" with "Settlement Details" headers on each page. Each ticket block has THREE lines of identifiers:
-- Line 1: Station name (e.g. "ROP YORKTON SEED 1 CANADA") and quality data
-- Line 2: Station/Receipt # (large number like 734510684), Load # (like 734437556), Dlvy Date, Contract #, Order#
-- Line 3: Weigh # (6-digit number like 121907) — THIS IS THE ticket_number TO EXTRACT
+RICHARDSON PIONEER LAYOUT — READ CAREFULLY:
+The settlement has columns in this order:
+  Station | Load # | Receipt # | Weigh # | Dlvy Date | Ref 2 % | Contract # | Order # | Moist | Dock | Prot | Unload Weight | Clean Weight | Net Weight | Base Price | Gross Amt | Rate | Net Amt
 
-CRITICAL: The ticket_number field MUST be the Weigh # (the small 6-digit number on the third line of each ticket block, e.g. "121907", "121926", "121930"). Do NOT use the Station/Receipt # (large number like "734510684") as the ticket_number — put that in station_receipt_number instead.
+There are THREE different ID numbers per ticket line — you MUST distinguish them:
+1. **Station/Receipt #** = a 9-digit number (e.g. 169305054) — this is Richardson's INTERNAL receipt. Put in "station_receipt_number".
+2. **Load #** = a 9-digit number (e.g. 169175034) — this is Richardson's INTERNAL load tracking number. Put in "load_number".
+3. **Weigh #** = a SHORT number, typically 5-6 digits (e.g. 245389, 245328, 121907) — this is the TRUCKER'S weigh scale ticket number. Put in BOTH "ticket_number" AND "weigh_number".
+
+CRITICAL RULE: The ticket_number MUST be the Weigh # — the SHORT number (5-6 digits). It is NEVER a 9-digit number.
+- If you see a 9-digit number, it is either Station/Receipt # or Load # — NOT the Weigh #.
+- The Weigh # is always the shortest numeric identifier in each ticket block.
+- Examples of CORRECT ticket_number values: "245389", "245328", "121907", "121926"
+- Examples of WRONG ticket_number values: "169175034" (Load #), "169305054" (Station/Receipt #)
 
 Also extract: Grade, Moist/Dock/Prot %, Unload/Clean/Net Weight (all in MT), Base Price, Gross Amount. Below each ticket row are per-ticket Adjustments (DRYING, QUALITY SPREAD ADJ, SK WHT CHK OFF, SASK CANOLA DEV COMM, etc.) — extract these as deductions with their dollar amounts. The last page has TOTALS and a summary Adjustment table with NET SETTLEMENT AMT. Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.`,
 
@@ -323,6 +332,21 @@ export async function extractSettlementFromPdf(pdfBuffer, forceBuyerFormat = nul
 function postProcessTicketNumbers(lines, buyerFormat) {
   return lines.map(line => {
     const tn = String(line.ticket_number || '');
+
+    // Richardson: if weigh_number was extracted separately, ALWAYS prefer it as ticket_number.
+    // The weigh_number field is the definitive weigh scale number — even if the AI
+    // correctly put it in ticket_number too, this ensures consistency.
+    if (buyerFormat === 'richardson' && line.weigh_number) {
+      const wn = String(line.weigh_number);
+      if (/^\d+$/.test(wn) && wn.length <= 7 && wn !== tn) {
+        return {
+          ...line,
+          ticket_number: wn,
+          buyer_receipt_number: tn,
+        };
+      }
+    }
+
     // Check alternative fields that might contain the weigh scale number
     const alternatives = [
       line.load_number,

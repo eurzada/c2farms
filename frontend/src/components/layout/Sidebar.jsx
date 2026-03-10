@@ -38,7 +38,7 @@ const FARM_UNIT_ITEMS = [
 const ENTERPRISE_ITEMS = [
   { section: 'Agronomy' },
   { label: 'Agronomy Rollup', path: '/enterprise/agronomy', icon: <GrassIcon />, module: 'agronomy', readOnly: true },
-  { label: 'Agronomic Costs $', path: '/enterprise/agro-plan', icon: <AgricultureIcon />, module: 'agronomy', readOnly: true },
+  { label: 'Procurement', path: '/enterprise/agro-plan', icon: <AgricultureIcon />, module: 'agronomy', readOnly: true },
   { label: 'Labour Rollup', path: '/enterprise/labour', icon: <GroupsIcon />, module: 'agronomy', readOnly: true },
   { section: 'Data Entry' },
   { label: 'Grain Marketing', path: '/marketing', icon: <TrendingUpIcon />, module: 'marketing' },

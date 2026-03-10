@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Box, Typography, Paper, Alert, Chip, Stack,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -9,22 +9,244 @@ import { useFarm } from '../../contexts/FarmContext';
 import api from '../../services/api';
 
 function fmt(n) { return (n || 0).toLocaleString('en-CA', { maximumFractionDigits: 0 }); }
-function fmtDec(n) { return (n || 0).toLocaleString('en-CA', { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
-function fmtDollar(n) { return '$' + (n || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtDec(n) { return '$' + (n || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtK(n) { return n >= 1000 ? '$' + (n / 1000).toFixed(1) + 'k' : fmtDec(n); }
 
-const TH_SX = { fontWeight: 'bold', bgcolor: 'action.hover', whiteSpace: 'nowrap', fontSize: '0.8rem' };
-const TOTAL_SX = { fontWeight: 'bold', borderTop: 2, borderColor: 'divider' };
-const FERT_TONNES_PER_LB = 1 / 2204.62;
-const TONNES_PER_TRUCK = 44; // ~44 tonnes per B-train
+const TH = { fontWeight: 'bold', bgcolor: 'action.hover', whiteSpace: 'nowrap', fontSize: '0.78rem', py: 0.75, px: 1 };
+const TD = { fontSize: '0.8rem', py: 0.5, px: 1 };
+const TOTAL_ROW = { fontWeight: 'bold', borderTop: 2, borderColor: 'divider' };
 
-function SectionHeader({ children, color }) {
+const TIMING_LABELS = { fall_residual: 'Fall Residual', preburn: 'Preburn', incrop: 'In-Crop', fungicide: 'Fungicide', desiccation: 'Desiccation' };
+const TIMING_ORDER = ['fall_residual', 'preburn', 'incrop', 'fungicide', 'desiccation'];
+
+// Short farm name: "C2 Lewvan" → "Lewvan"
+function shortName(name) { return (name || '').replace(/^C2\s*/i, ''); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Data builders
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+function buildCategoryData(farmsWithData, category) {
+  // Products as rows, farms as columns → cell = total cost ($)
+  const productMap = new Map(); // productName → { unit, unitPrice, farms: { farmId → { cost, volume } } }
+  const farmTotals = new Map(); // farmId → { cost, acres }
+
+  for (const { farm, plan, dashboard } of farmsWithData) {
+    const acres = dashboard?.farm?.acres || 0;
+    farmTotals.set(farm.id, { cost: 0, acres });
+    if (!plan?.allocations) continue;
+
+    for (const alloc of plan.allocations) {
+      const inputs = (alloc.inputs || []).filter(i =>
+        category === 'seed' ? (i.category === 'seed' || i.category === 'seed_treatment') : i.category === category
+      );
+      for (const inp of inputs) {
+        if (!productMap.has(inp.product_name)) {
+          productMap.set(inp.product_name, { unit: inp.rate_unit, unitPrice: inp.cost_per_unit, farms: {} });
+        }
+        const p = productMap.get(inp.product_name);
+        if (!p.farms[farm.id]) p.farms[farm.id] = { cost: 0, volume: 0 };
+        const vol = inp.rate * alloc.acres;
+        const cost = vol * inp.cost_per_unit;
+        p.farms[farm.id].cost += cost;
+        p.farms[farm.id].volume += vol;
+        farmTotals.get(farm.id).cost += cost;
+      }
+    }
+  }
+
+  // Sort products by total cost descending
+  const products = [...productMap.entries()]
+    .map(([name, data]) => {
+      const totalCost = Object.values(data.farms).reduce((s, f) => s + f.cost, 0);
+      const totalVol = Object.values(data.farms).reduce((s, f) => s + f.volume, 0);
+      return { name, unit: data.unit, unitPrice: data.unitPrice, farms: data.farms, totalCost, totalVol };
+    })
+    .sort((a, b) => b.totalCost - a.totalCost);
+
+  const grandCost = products.reduce((s, p) => s + p.totalCost, 0);
+  const grandAcres = [...farmTotals.values()].reduce((s, f) => s + f.acres, 0);
+
+  return { products, farmTotals, grandCost, grandAcres };
+}
+
+function buildStageData(farmsWithData) {
+  const stageSet = new Set();
+  const farmStage = new Map(); // farmId → { stage → totalCost }
+  const farmAcres = new Map();
+
+  for (const { farm, plan, dashboard } of farmsWithData) {
+    const acres = dashboard?.farm?.acres || 0;
+    farmAcres.set(farm.id, acres);
+    farmStage.set(farm.id, {});
+    if (!plan?.allocations) continue;
+
+    for (const alloc of plan.allocations) {
+      for (const inp of (alloc.inputs || []).filter(i => i.category === 'chemical')) {
+        const t = inp.timing || 'other';
+        stageSet.add(t);
+        const sd = farmStage.get(farm.id);
+        sd[t] = (sd[t] || 0) + inp.rate * inp.cost_per_unit * alloc.acres;
+      }
+    }
+  }
+
+  const stages = TIMING_ORDER.filter(t => stageSet.has(t));
+  if (stageSet.has('other')) stages.push('other');
+  return { stages, farmStage, farmAcres };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Product Cost Table — products as rows, farms as columns
+   ═══════════════════════════════════════════════════════════════════════════ */
+function ProductCostTable({ title, data, farmsWithData }) {
+  const { products, farmTotals, grandCost, grandAcres } = data;
+  if (products.length === 0) return null;
+
   return (
-    <Typography variant="h6" sx={{ mb: 1, mt: 3, fontWeight: 'bold', color: color || 'text.primary' }}>
-      {children}
-    </Typography>
+    <Box sx={{ mb: 3 }}>
+      <Typography variant="h6" fontWeight="bold" sx={{ mb: 1 }}>{title}</Typography>
+      <TableContainer component={Paper}>
+        <Table size="small">
+          <TableHead>
+            <TableRow sx={{ '& th': TH }}>
+              <TableCell>Product</TableCell>
+              <TableCell>Unit</TableCell>
+              <TableCell align="right">$/Unit</TableCell>
+              {farmsWithData.map(({ farm }) => (
+                <TableCell key={farm.id} align="right">{shortName(farm.name)}</TableCell>
+              ))}
+              <TableCell align="right" sx={{ borderLeft: 1, borderColor: 'divider' }}>Total</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {products.map(p => (
+              <TableRow key={p.name} hover>
+                <TableCell sx={{ ...TD, fontWeight: 500, whiteSpace: 'nowrap' }}>{p.name}</TableCell>
+                <TableCell sx={{ ...TD, color: 'text.secondary', fontSize: '0.7rem' }}>{p.unit}</TableCell>
+                <TableCell align="right" sx={{ ...TD, color: 'text.secondary' }}>{fmtDec(p.unitPrice)}</TableCell>
+                {farmsWithData.map(({ farm }) => {
+                  const cost = p.farms[farm.id]?.cost || 0;
+                  return (
+                    <TableCell key={farm.id} align="right"
+                      sx={{ ...TD, color: cost > 0 ? 'text.primary' : 'text.disabled' }}>
+                      {cost > 0 ? fmtK(cost) : '—'}
+                    </TableCell>
+                  );
+                })}
+                <TableCell align="right" sx={{ ...TD, fontWeight: 'bold', borderLeft: 1, borderColor: 'divider' }}>
+                  {fmtK(p.totalCost)}
+                </TableCell>
+              </TableRow>
+            ))}
+
+            {/* Total cost row */}
+            <TableRow sx={{ '& td': { ...TD, ...TOTAL_ROW } }}>
+              <TableCell colSpan={3}>Total Cost</TableCell>
+              {farmsWithData.map(({ farm }) => (
+                <TableCell key={farm.id} align="right">{fmtK(farmTotals.get(farm.id)?.cost || 0)}</TableCell>
+              ))}
+              <TableCell align="right" sx={{ borderLeft: 1, borderColor: 'divider' }}>{fmtK(grandCost)}</TableCell>
+            </TableRow>
+
+            {/* $/Acre row */}
+            <TableRow sx={{ '& td': { ...TD, fontWeight: 'bold', color: 'primary.main' } }}>
+              <TableCell colSpan={3}>$/Acre</TableCell>
+              {farmsWithData.map(({ farm }) => {
+                const ft = farmTotals.get(farm.id);
+                return (
+                  <TableCell key={farm.id} align="right">
+                    {ft?.acres > 0 ? fmtDec(ft.cost / ft.acres) : '—'}
+                  </TableCell>
+                );
+              })}
+              <TableCell align="right" sx={{ borderLeft: 1, borderColor: 'divider' }}>
+                {grandAcres > 0 ? fmtDec(grandCost / grandAcres) : '—'}
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Box>
   );
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   Chemistry Stage Matrix — farms × stages, $/acre
+   ═══════════════════════════════════════════════════════════════════════════ */
+function ChemStageTable({ stageData, farmsWithData }) {
+  const { stages, farmStage, farmAcres } = stageData;
+  if (stages.length === 0) return null;
+
+  const grandAcres = [...farmAcres.values()].reduce((s, v) => s + v, 0);
+
+  return (
+    <Box sx={{ mb: 3 }}>
+      <Typography variant="h6" fontWeight="bold" sx={{ mb: 1 }}>Chemistry by Stage ($/Acre)</Typography>
+      <TableContainer component={Paper}>
+        <Table size="small">
+          <TableHead>
+            <TableRow sx={{ '& th': TH }}>
+              <TableCell>Location</TableCell>
+              {stages.map(s => (
+                <TableCell key={s} align="right">{TIMING_LABELS[s] || s}</TableCell>
+              ))}
+              <TableCell align="right" sx={{ borderLeft: 1, borderColor: 'divider', fontWeight: 'bold' }}>Total</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {farmsWithData.map(({ farm }) => {
+              const sd = farmStage.get(farm.id) || {};
+              const acres = farmAcres.get(farm.id) || 0;
+              let rowTotal = 0;
+              for (const s of stages) rowTotal += sd[s] || 0;
+
+              return (
+                <TableRow key={farm.id} hover>
+                  <TableCell sx={{ ...TD, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{shortName(farm.name)}</TableCell>
+                  {stages.map(s => {
+                    const val = sd[s] || 0;
+                    const perAcre = acres > 0 ? val / acres : 0;
+                    return (
+                      <TableCell key={s} align="right"
+                        sx={{ ...TD, color: val > 0 ? 'text.primary' : 'text.disabled' }}>
+                        {val > 0 ? fmtDec(perAcre) : '—'}
+                      </TableCell>
+                    );
+                  })}
+                  <TableCell align="right" sx={{ ...TD, fontWeight: 'bold', borderLeft: 1, borderColor: 'divider' }}>
+                    {acres > 0 ? fmtDec(rowTotal / acres) : '—'}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+            {/* Weighted avg */}
+            <TableRow sx={{ '& td': { ...TD, ...TOTAL_ROW } }}>
+              <TableCell>Avg $/Acre</TableCell>
+              {stages.map(s => {
+                const total = farmsWithData.reduce((sum, { farm }) => sum + (farmStage.get(farm.id)?.[s] || 0), 0);
+                return <TableCell key={s} align="right">{grandAcres > 0 ? fmtDec(total / grandAcres) : '—'}</TableCell>;
+              })}
+              <TableCell align="right" sx={{ borderLeft: 1, borderColor: 'divider' }}>
+                {(() => {
+                  const total = farmsWithData.reduce((sum, { farm }) => {
+                    const sd = farmStage.get(farm.id) || {};
+                    return sum + stages.reduce((ss, s) => ss + (sd[s] || 0), 0);
+                  }, 0);
+                  return grandAcres > 0 ? fmtDec(total / grandAcres) : '—';
+                })()}
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Box>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Main Page
+   ═══════════════════════════════════════════════════════════════════════════ */
 export default function EnterpriseAgroPlan() {
   const { farmUnits } = useFarm();
   const [year, setYear] = useState(2026);
@@ -34,114 +256,36 @@ export default function EnterpriseAgroPlan() {
   useEffect(() => {
     if (!farmUnits?.length) return;
     setLoading(true);
-
     Promise.all(
       farmUnits.map(farm =>
         Promise.all([
-          api.get(`/api/farms/${farm.id}/agronomy/procurement?year=${year}`).catch(() => ({ data: [] })),
+          api.get(`/api/farms/${farm.id}/agronomy/plans?year=${year}`).catch(() => ({ data: null })),
           api.get(`/api/farms/${farm.id}/agronomy/dashboard?year=${year}`).catch(() => ({ data: null })),
-        ]).then(([procRes, dashRes]) => ({
-          farm,
-          procurement: procRes.data || [],
-          dashboard: dashRes.data,
-        }))
+        ]).then(([planRes, dashRes]) => ({ farm, plan: planRes.data, dashboard: dashRes.data }))
       )
-    ).then(results => {
-      setFarmResults(results);
-    }).finally(() => setLoading(false));
+    ).then(setFarmResults).finally(() => setLoading(false));
   }, [farmUnits, year]);
+
+  const farmsWithData = useMemo(
+    () => farmResults.filter(r => r.dashboard?.farm && r.plan?.allocations?.length > 0),
+    [farmResults]
+  );
+
+  const seedData = useMemo(() => buildCategoryData(farmsWithData, 'seed'), [farmsWithData]);
+  const fertData = useMemo(() => buildCategoryData(farmsWithData, 'fertilizer'), [farmsWithData]);
+  const chemData = useMemo(() => buildCategoryData(farmsWithData, 'chemical'), [farmsWithData]);
+  const stageData = useMemo(() => buildStageData(farmsWithData), [farmsWithData]);
+
+  const grandAcres = seedData.grandAcres;
+  const totalInput = seedData.grandCost + fertData.grandCost + chemData.grandCost;
 
   if (loading) return <Typography>Loading...</Typography>;
 
-  const farmsWithData = farmResults.filter(r => r.dashboard?.farm);
-
-  // ─── Build product matrices per category ──────────────────────────
-  function buildMatrix(category) {
-    const productSet = new Set();
-    const farmMap = {}; // farmId → { productName → totalQty }
-
-    for (const { farm, procurement } of farmsWithData) {
-      farmMap[farm.id] = { totalQty: 0, totalCost: 0, acres: 0 };
-      const items = procurement.filter(p =>
-        category === 'seed' ? (p.category === 'seed' || p.category === 'seed_treatment')
-        : p.category === category
-      );
-      for (const item of items) {
-        productSet.add(item.product_name);
-        farmMap[farm.id][item.product_name] = (farmMap[farm.id][item.product_name] || 0) + item.total_qty;
-        farmMap[farm.id].totalQty += item.total_qty;
-        farmMap[farm.id].totalCost += item.total_cost;
-      }
-    }
-
-    // Get acres from dashboard
-    for (const { farm, dashboard } of farmsWithData) {
-      if (farmMap[farm.id]) {
-        farmMap[farm.id].acres = dashboard?.farm?.acres || 0;
-      }
-    }
-
-    const products = [...productSet].sort();
-
-    // Column totals
-    const colTotals = {};
-    for (const p of products) {
-      colTotals[p] = 0;
-      for (const { farm } of farmsWithData) {
-        colTotals[p] += farmMap[farm.id]?.[p] || 0;
-      }
-    }
-    const grandTotalQty = farmsWithData.reduce((s, { farm }) => s + (farmMap[farm.id]?.totalQty || 0), 0);
-    const grandTotalCost = farmsWithData.reduce((s, { farm }) => s + (farmMap[farm.id]?.totalCost || 0), 0);
-    const grandTotalAcres = farmsWithData.reduce((s, { farm }) => s + (farmMap[farm.id]?.acres || 0), 0);
-
-    return { products, farmMap, colTotals, grandTotalQty, grandTotalCost, grandTotalAcres };
-  }
-
-  // Also build seed matrix with crop acre columns
-  function buildSeedWithCrops() {
-    const cropAcreMap = {}; // farmId → { crop → acres }
-    const allCrops = new Set();
-    for (const { farm, dashboard } of farmsWithData) {
-      cropAcreMap[farm.id] = {};
-      for (const c of (dashboard?.crops || [])) {
-        cropAcreMap[farm.id][c.crop] = c.acres;
-        allCrops.add(c.crop);
-      }
-    }
-    const crops = [...allCrops].sort();
-
-    // Crop acre totals
-    const cropTotals = {};
-    for (const crop of crops) {
-      cropTotals[crop] = 0;
-      for (const { farm } of farmsWithData) {
-        cropTotals[crop] += cropAcreMap[farm.id]?.[crop] || 0;
-      }
-    }
-
-    return { cropAcreMap, crops, cropTotals };
-  }
-
-  const seedMatrix = buildMatrix('seed');
-  const fertMatrix = buildMatrix('fertilizer');
-  const chemMatrix = buildMatrix('chemical');
-  const { cropAcreMap, crops, cropTotals } = buildSeedWithCrops();
-
-  // Total input per farm (for the last column in chemicals)
-  const farmTotalInput = {};
-  for (const { farm } of farmsWithData) {
-    const s = seedMatrix.farmMap[farm.id]?.totalCost || 0;
-    const f = fertMatrix.farmMap[farm.id]?.totalCost || 0;
-    const c = chemMatrix.farmMap[farm.id]?.totalCost || 0;
-    const acres = seedMatrix.farmMap[farm.id]?.acres || 0;
-    farmTotalInput[farm.id] = acres ? (s + f + c) / acres : 0;
-  }
-
   return (
     <Box>
+      {/* Header */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
-        <Typography variant="h5" fontWeight="bold">Agronomic Costs $</Typography>
+        <Typography variant="h5" fontWeight="bold">Procurement</Typography>
         <FormControl size="small" sx={{ minWidth: 120 }}>
           <InputLabel>Crop Year</InputLabel>
           <Select value={year} label="Crop Year" onChange={e => setYear(e.target.value)}>
@@ -153,199 +297,83 @@ export default function EnterpriseAgroPlan() {
         <Chip icon={<VisibilityIcon />} label="Read-Only" size="small" variant="outlined" />
       </Box>
 
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Farm-level product requirements — all quantities derived from crop allocations x per-acre rates.
-        Use this view for procurement planning and input distribution across farms.
-      </Typography>
-
       {farmsWithData.length === 0 ? (
-        <Alert severity="warning">
-          No agronomy plans found for crop year {year}.
-        </Alert>
+        <Alert severity="warning">No agronomy plans found for crop year {year}.</Alert>
       ) : (
         <>
-          {/* ─── Procurement KPIs ──────────────────────────────────── */}
-          <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
-            <Paper sx={{ p: 2, textAlign: 'center', flex: 1 }}>
-              <Typography variant="body2" color="text.secondary">Farms</Typography>
-              <Typography variant="h5" fontWeight="bold">{farmsWithData.length}</Typography>
-            </Paper>
-            <Paper sx={{ p: 2, textAlign: 'center', flex: 1 }}>
-              <Typography variant="body2" color="text.secondary">Total Acres</Typography>
-              <Typography variant="h5" fontWeight="bold">{fmt(fertMatrix.grandTotalAcres)}</Typography>
-            </Paper>
-            <Paper sx={{ p: 2, textAlign: 'center', flex: 1 }}>
-              <Typography variant="body2" color="text.secondary">Seed Cost</Typography>
-              <Typography variant="h5" fontWeight="bold">{fmtDollar(seedMatrix.grandTotalCost)}</Typography>
-            </Paper>
-            <Paper sx={{ p: 2, textAlign: 'center', flex: 1 }}>
-              <Typography variant="body2" color="text.secondary">Fertilizer Cost</Typography>
-              <Typography variant="h5" fontWeight="bold">{fmtDollar(fertMatrix.grandTotalCost)}</Typography>
-            </Paper>
-            <Paper sx={{ p: 2, textAlign: 'center', flex: 1 }}>
-              <Typography variant="body2" color="text.secondary">Chemical Cost</Typography>
-              <Typography variant="h5" fontWeight="bold">{fmtDollar(chemMatrix.grandTotalCost)}</Typography>
-            </Paper>
-            <Paper sx={{ p: 2, textAlign: 'center', flex: 1 }}>
-              <Typography variant="body2" color="text.secondary">Fert Tonnes</Typography>
-              <Typography variant="h5" fontWeight="bold">{fmt(fertMatrix.grandTotalQty * FERT_TONNES_PER_LB)}</Typography>
-            </Paper>
+          {/* ─── KPIs ──────────────────────────────────────────── */}
+          <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
+            {[
+              { label: 'Farms', value: farmsWithData.length },
+              { label: 'Total Acres', value: fmt(grandAcres) },
+              { label: 'Seed', value: fmtK(seedData.grandCost) },
+              { label: 'Fertilizer', value: fmtK(fertData.grandCost) },
+              { label: 'Chemistry', value: fmtK(chemData.grandCost) },
+              { label: 'Total $/Acre', value: grandAcres > 0 ? fmtDec(totalInput / grandAcres) : '—' },
+            ].map(kpi => (
+              <Paper key={kpi.label} sx={{ p: 2, textAlign: 'center', flex: 1 }}>
+                <Typography variant="body2" color="text.secondary">{kpi.label}</Typography>
+                <Typography variant="h6" fontWeight="bold">{kpi.value}</Typography>
+              </Paper>
+            ))}
           </Stack>
 
-          {/* ─── Seed Requirements by Farm ─────────────────────────── */}
-          <SectionHeader>Seed Requirements by Farm</SectionHeader>
-          <TableContainer component={Paper} sx={{ mb: 1 }}>
-            <Table size="small">
-              <TableHead>
-                <TableRow sx={{ '& th': TH_SX }}>
-                  <TableCell>Farm</TableCell>
-                  {crops.map(crop => (
-                    <TableCell key={crop} align="right">{crop} (ac)</TableCell>
-                  ))}
-                  {seedMatrix.products.map(p => (
-                    <TableCell key={p} align="right">{p} (lbs)</TableCell>
-                  ))}
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {farmsWithData.map(({ farm }) => (
-                  <TableRow key={farm.id} hover>
-                    <TableCell sx={{ fontWeight: 'bold', whiteSpace: 'nowrap' }}>{farm.name}</TableCell>
-                    {crops.map(crop => (
-                      <TableCell key={crop} align="right" sx={!cropAcreMap[farm.id]?.[crop] ? { color: 'text.disabled' } : undefined}>
-                        {fmt(cropAcreMap[farm.id]?.[crop] || 0)}
-                      </TableCell>
-                    ))}
-                    {seedMatrix.products.map(p => (
-                      <TableCell key={p} align="right" sx={!seedMatrix.farmMap[farm.id]?.[p] ? { color: 'text.disabled' } : undefined}>
-                        {fmt(seedMatrix.farmMap[farm.id]?.[p] || 0)}
-                      </TableCell>
-                    ))}
+          {/* ─── Cost by Location (summary) ────────────────────── */}
+          <Box sx={{ mb: 3 }}>
+            <Typography variant="h6" fontWeight="bold" sx={{ mb: 1 }}>Cost by Location ($/Acre)</Typography>
+            <TableContainer component={Paper}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow sx={{ '& th': TH }}>
+                    <TableCell>Location</TableCell>
+                    <TableCell align="right">Acres</TableCell>
+                    <TableCell align="right">Seed</TableCell>
+                    <TableCell align="right">Fertilizer</TableCell>
+                    <TableCell align="right">Chemistry</TableCell>
+                    <TableCell align="right" sx={{ borderLeft: 1, borderColor: 'divider' }}>Total $/Acre</TableCell>
                   </TableRow>
-                ))}
-                <TableRow sx={{ '& td': TOTAL_SX }}>
-                  <TableCell>TOTAL</TableCell>
-                  {crops.map(crop => (
-                    <TableCell key={crop} align="right">{fmt(cropTotals[crop] || 0)}</TableCell>
-                  ))}
-                  {seedMatrix.products.map(p => (
-                    <TableCell key={p} align="right">{fmt(seedMatrix.colTotals[p] || 0)}</TableCell>
-                  ))}
-                </TableRow>
-              </TableBody>
-            </Table>
-          </TableContainer>
+                </TableHead>
+                <TableBody>
+                  {farmsWithData.map(({ farm }) => {
+                    const acres = seedData.farmTotals.get(farm.id)?.acres || 0;
+                    const s = seedData.farmTotals.get(farm.id)?.cost || 0;
+                    const f = fertData.farmTotals.get(farm.id)?.cost || 0;
+                    const c = chemData.farmTotals.get(farm.id)?.cost || 0;
+                    return (
+                      <TableRow key={farm.id} hover>
+                        <TableCell sx={{ ...TD, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{shortName(farm.name)}</TableCell>
+                        <TableCell align="right" sx={TD}>{fmt(acres)}</TableCell>
+                        <TableCell align="right" sx={TD}>{acres > 0 ? fmtDec(s / acres) : '—'}</TableCell>
+                        <TableCell align="right" sx={TD}>{acres > 0 ? fmtDec(f / acres) : '—'}</TableCell>
+                        <TableCell align="right" sx={TD}>{acres > 0 ? fmtDec(c / acres) : '—'}</TableCell>
+                        <TableCell align="right" sx={{ ...TD, fontWeight: 'bold', borderLeft: 1, borderColor: 'divider' }}>
+                          {acres > 0 ? fmtDec((s + f + c) / acres) : '—'}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  <TableRow sx={{ '& td': { ...TD, ...TOTAL_ROW } }}>
+                    <TableCell>TOTAL</TableCell>
+                    <TableCell align="right">{fmt(grandAcres)}</TableCell>
+                    <TableCell align="right">{grandAcres > 0 ? fmtDec(seedData.grandCost / grandAcres) : ''}</TableCell>
+                    <TableCell align="right">{grandAcres > 0 ? fmtDec(fertData.grandCost / grandAcres) : ''}</TableCell>
+                    <TableCell align="right">{grandAcres > 0 ? fmtDec(chemData.grandCost / grandAcres) : ''}</TableCell>
+                    <TableCell align="right" sx={{ borderLeft: 1, borderColor: 'divider' }}>
+                      {grandAcres > 0 ? fmtDec(totalInput / grandAcres) : ''}
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Box>
 
-          {/* ─── Fertilizer Requirements by Farm (lbs) ─────────────── */}
-          <SectionHeader>Fertilizer Requirements by Farm (lbs)</SectionHeader>
-          <TableContainer component={Paper} sx={{ mb: 1 }}>
-            <Table size="small">
-              <TableHead>
-                <TableRow sx={{ '& th': TH_SX }}>
-                  <TableCell>Farm</TableCell>
-                  {fertMatrix.products.map(p => (
-                    <TableCell key={p} align="right">{p} (lbs)</TableCell>
-                  ))}
-                  <TableCell align="right">Total Fert (lbs)</TableCell>
-                  <TableCell align="right">Total Fert Cost ($)</TableCell>
-                  <TableCell align="right">Fert $/Acre</TableCell>
-                  <TableCell align="right">Tonnes Required</TableCell>
-                  <TableCell align="right">Truck Loads (est)</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {farmsWithData.map(({ farm }) => {
-                  const fm = fertMatrix.farmMap[farm.id] || {};
-                  const tonnes = (fm.totalQty || 0) * FERT_TONNES_PER_LB;
-                  const loads = Math.ceil(tonnes / TONNES_PER_TRUCK);
-                  const perAcre = fm.acres ? (fm.totalCost || 0) / fm.acres : 0;
-                  return (
-                    <TableRow key={farm.id} hover>
-                      <TableCell sx={{ fontWeight: 'bold', whiteSpace: 'nowrap' }}>{farm.name}</TableCell>
-                      {fertMatrix.products.map(p => (
-                        <TableCell key={p} align="right">{fmt(fm[p] || 0)}</TableCell>
-                      ))}
-                      <TableCell align="right">{fmt(fm.totalQty)}</TableCell>
-                      <TableCell align="right">{fmtDollar(fm.totalCost)}</TableCell>
-                      <TableCell align="right">{fmtDollar(perAcre)}</TableCell>
-                      <TableCell align="right">{fmtDec(tonnes)}</TableCell>
-                      <TableCell align="right">{loads}</TableCell>
-                    </TableRow>
-                  );
-                })}
-                <TableRow sx={{ '& td': TOTAL_SX }}>
-                  <TableCell>TOTAL</TableCell>
-                  {fertMatrix.products.map(p => (
-                    <TableCell key={p} align="right">{fmt(fertMatrix.colTotals[p] || 0)}</TableCell>
-                  ))}
-                  <TableCell align="right">{fmt(fertMatrix.grandTotalQty)}</TableCell>
-                  <TableCell align="right">{fmtDollar(fertMatrix.grandTotalCost)}</TableCell>
-                  <TableCell align="right">
-                    {fertMatrix.grandTotalAcres ? fmtDollar(fertMatrix.grandTotalCost / fertMatrix.grandTotalAcres) : ''}
-                  </TableCell>
-                  <TableCell align="right">{fmtDec(fertMatrix.grandTotalQty * FERT_TONNES_PER_LB)}</TableCell>
-                  <TableCell align="right">{Math.ceil(fertMatrix.grandTotalQty * FERT_TONNES_PER_LB / TONNES_PER_TRUCK)}</TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </TableContainer>
+          {/* ─── Product tables ────────────────────────────────── */}
+          <ProductCostTable title="Seed" data={seedData} farmsWithData={farmsWithData} />
+          <ProductCostTable title="Fertilizer" data={fertData} farmsWithData={farmsWithData} />
+          <ProductCostTable title="Chemistry" data={chemData} farmsWithData={farmsWithData} />
 
-          {/* ─── Chemical Requirements by Farm (Litres) ─────────────── */}
-          <SectionHeader>Chemical Requirements by Farm (Litres)</SectionHeader>
-          <TableContainer component={Paper} sx={{ mb: 3 }}>
-            <Table size="small">
-              <TableHead>
-                <TableRow sx={{ '& th': TH_SX }}>
-                  <TableCell>Farm</TableCell>
-                  {chemMatrix.products.map(p => (
-                    <TableCell key={p} align="right">{p} (L)</TableCell>
-                  ))}
-                  <TableCell align="right">Total Chem Cost ($)</TableCell>
-                  <TableCell align="right">Chem $/Acre</TableCell>
-                  <TableCell align="right">Spray Loads (est)</TableCell>
-                  <TableCell align="right">Total Input $/Acre</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {farmsWithData.map(({ farm }) => {
-                  const cm = chemMatrix.farmMap[farm.id] || {};
-                  const perAcre = cm.acres ? (cm.totalCost || 0) / cm.acres : 0;
-                  // Rough spray load estimate: ~15,000 L per spray run for a big sprayer
-                  const sprayLoads = Math.ceil((cm.totalQty || 0) / 15000);
-                  return (
-                    <TableRow key={farm.id} hover>
-                      <TableCell sx={{ fontWeight: 'bold', whiteSpace: 'nowrap' }}>{farm.name}</TableCell>
-                      {chemMatrix.products.map(p => (
-                        <TableCell key={p} align="right">{fmtDec(cm[p] || 0)}</TableCell>
-                      ))}
-                      <TableCell align="right">{fmtDollar(cm.totalCost)}</TableCell>
-                      <TableCell align="right">{fmtDollar(perAcre)}</TableCell>
-                      <TableCell align="right">{sprayLoads}</TableCell>
-                      <TableCell align="right">{fmtDollar(farmTotalInput[farm.id] || 0)}</TableCell>
-                    </TableRow>
-                  );
-                })}
-                <TableRow sx={{ '& td': TOTAL_SX }}>
-                  <TableCell>TOTAL</TableCell>
-                  {chemMatrix.products.map(p => (
-                    <TableCell key={p} align="right">{fmtDec(chemMatrix.colTotals[p] || 0)}</TableCell>
-                  ))}
-                  <TableCell align="right">{fmtDollar(chemMatrix.grandTotalCost)}</TableCell>
-                  <TableCell align="right">
-                    {chemMatrix.grandTotalAcres ? fmtDollar(chemMatrix.grandTotalCost / chemMatrix.grandTotalAcres) : ''}
-                  </TableCell>
-                  <TableCell align="right">
-                    {Math.ceil(Object.values(chemMatrix.colTotals).reduce((s, v) => s + v, 0) / 15000)}
-                  </TableCell>
-                  <TableCell align="right">
-                    {fertMatrix.grandTotalAcres
-                      ? fmtDollar((seedMatrix.grandTotalCost + fertMatrix.grandTotalCost + chemMatrix.grandTotalCost) / fertMatrix.grandTotalAcres)
-                      : ''}
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </TableContainer>
+          {/* ─── Chemistry by stage ────────────────────────────── */}
+          <ChemStageTable stageData={stageData} farmsWithData={farmsWithData} />
         </>
       )}
     </Box>

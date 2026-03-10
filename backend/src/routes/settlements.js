@@ -6,6 +6,7 @@ import { authenticate, requireRole } from '../middleware/auth.js';
 import { extractSettlementFromPdf, saveSettlement, queueBatchExtraction, checkBatchStatus } from '../services/settlementService.js';
 import { reconcileSettlement, manualMatch, approveSettlement } from '../services/reconciliationAiService.js';
 import { generateExceptionExcel, generateExceptionPdf } from '../services/settlementExportService.js';
+import { generateReconGapData, generateReconGapExcel, generateReconGapPdf, generateReconGapCsv } from '../services/reconGapReportService.js';
 import { logAudit } from '../services/auditService.js';
 import { broadcastMarketingEvent } from '../socket/handler.js';
 import { getFontPaths } from '../utils/fontPaths.js';
@@ -35,7 +36,7 @@ router.get('/:farmId/settlements', authenticate, async (req, res, next) => {
     if (status) where.status = status;
     if (counterparty_id) where.counterparty_id = counterparty_id;
 
-    const [settlements, total] = await Promise.all([
+    const [settlements, total, mtAgg] = await Promise.all([
       prisma.settlement.findMany({
         where,
         include: {
@@ -48,9 +49,126 @@ router.get('/:farmId/settlements', authenticate, async (req, res, next) => {
         skip: parseInt(offset),
       }),
       prisma.settlement.count({ where }),
+      prisma.settlementLine.aggregate({
+        where: { settlement: where },
+        _sum: { net_weight_mt: true },
+      }),
     ]);
 
-    res.json({ settlements, total });
+    res.json({ settlements, total, total_mt: mtAgg._sum.net_weight_mt || 0 });
+  } catch (err) { next(err); }
+});
+
+// GET missing contracts report — settlements referencing contracts not in the system
+router.get('/:farmId/settlements/reports/missing-contracts', authenticate, async (req, res, next) => {
+  try {
+    const { farmId } = req.params;
+
+    // Find settlements with no linked marketing contract
+    const settlements = await prisma.settlement.findMany({
+      where: { farm_id: farmId, marketing_contract_id: null },
+      select: {
+        id: true,
+        settlement_number: true,
+        settlement_date: true,
+        total_amount: true,
+        status: true,
+        buyer_format: true,
+        extraction_json: true,
+        counterparty: { select: { name: true, short_code: true } },
+        _count: { select: { lines: true } },
+      },
+      orderBy: { settlement_date: 'desc' },
+    });
+
+    // Extract contract numbers from the raw extraction and group by contract
+    const contractMap = new Map(); // contract_number → { buyer, settlements[] }
+    for (const s of settlements) {
+      const contractNum = s.extraction_json?.contract_number;
+      if (!contractNum) continue;
+
+      const key = String(contractNum).trim();
+      if (!contractMap.has(key)) {
+        contractMap.set(key, {
+          contract_number: key,
+          buyer: s.counterparty?.name || s.extraction_json?.buyer || s.buyer_format || 'Unknown',
+          buyer_short_code: s.counterparty?.short_code || null,
+          commodity: s.extraction_json?.commodity || null,
+          settlements: [],
+        });
+      }
+      contractMap.get(key).settlements.push({
+        id: s.id,
+        settlement_number: s.settlement_number,
+        settlement_date: s.settlement_date,
+        total_amount: s.total_amount,
+        status: s.status,
+        lines: s._count.lines,
+      });
+    }
+
+    const missing = Array.from(contractMap.values()).sort((a, b) => a.buyer.localeCompare(b.buyer));
+
+    // Also find settlements with NO contract number at all
+    const noContract = settlements.filter(s => !s.extraction_json?.contract_number).map(s => ({
+      id: s.id,
+      settlement_number: s.settlement_number,
+      settlement_date: s.settlement_date,
+      total_amount: s.total_amount,
+      status: s.status,
+      buyer: s.counterparty?.name || s.buyer_format || 'Unknown',
+      lines: s._count.lines,
+    }));
+
+    res.json({
+      missing_contracts: missing,
+      no_contract_number: noContract,
+      total_unlinked: settlements.length,
+    });
+  } catch (err) { next(err); }
+});
+
+// GET recon gap report — JSON
+router.get('/:farmId/settlements/reports/recon-gaps', authenticate, async (req, res, next) => {
+  try {
+    const data = await generateReconGapData(req.params.farmId);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+// GET recon gap report — Excel download
+router.get('/:farmId/settlements/reports/recon-gaps/excel', authenticate, async (req, res, next) => {
+  try {
+    const wb = await generateReconGapExcel(req.params.farmId);
+    const filename = `recon-gap-report-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) { next(err); }
+});
+
+// GET recon gap report — PDF download
+router.get('/:farmId/settlements/reports/recon-gaps/pdf', authenticate, async (req, res, next) => {
+  try {
+    const docDefinition = await generateReconGapPdf(req.params.farmId);
+    const pdfDoc = printer.createPdfKitDocument(docDefinition);
+    const filename = `recon-gap-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    pdfDoc.pipe(res);
+    pdfDoc.end();
+  } catch (err) { next(err); }
+});
+
+// GET recon gap report — CSV download
+router.get('/:farmId/settlements/reports/recon-gaps/csv', authenticate, async (req, res, next) => {
+  try {
+    const csv = await generateReconGapCsv(req.params.farmId);
+    const filename = `recon-gap-report-${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
   } catch (err) { next(err); }
 });
 
@@ -195,6 +313,44 @@ router.get('/:farmId/settlements/batches', authenticate, async (req, res, next) 
       take: 20,
     });
     res.json(batches);
+  } catch (err) { next(err); }
+});
+
+// POST reconcile ALL pending settlements in batch
+router.post('/:farmId/settlements/reconcile-all', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { farmId } = req.params;
+    const pending = await prisma.settlement.findMany({
+      where: { farm_id: farmId, status: 'pending' },
+      select: { id: true, settlement_number: true },
+      orderBy: { created_at: 'asc' },
+    });
+
+    if (pending.length === 0) {
+      return res.json({ message: 'No pending settlements to reconcile', results: [], total: 0 });
+    }
+
+    const results = [];
+    for (const s of pending) {
+      try {
+        const result = await reconcileSettlement(s.id);
+        results.push({ id: s.id, settlement_number: s.settlement_number, status: 'reconciled', summary: result.summary });
+        logAudit({
+          farmId,
+          userId: req.userId,
+          entityType: 'Settlement',
+          entityId: s.id,
+          action: 'reconcile',
+          changes: result.summary,
+        });
+      } catch (err) {
+        results.push({ id: s.id, settlement_number: s.settlement_number, status: 'error', error: err.message });
+      }
+    }
+
+    const succeeded = results.filter(r => r.status === 'reconciled').length;
+    const failed = results.filter(r => r.status === 'error').length;
+    res.json({ message: `Reconciled ${succeeded} of ${pending.length} settlements`, total: pending.length, succeeded, failed, results });
   } catch (err) { next(err); }
 });
 

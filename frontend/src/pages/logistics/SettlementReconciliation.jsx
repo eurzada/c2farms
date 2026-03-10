@@ -15,7 +15,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
-import PercentIcon from '@mui/icons-material/Percent';
+// PercentIcon removed — confidence display dropped
 import DownloadIcon from '@mui/icons-material/Download';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import { useSearchParams } from 'react-router-dom';
@@ -236,9 +236,6 @@ export default function SettlementReconciliation() {
   const exceptionCount = settlement.lines.filter(l => l.match_status === 'exception').length;
   const unmatchedCount = settlement.lines.filter(l => l.match_status === 'unmatched').length;
   const totalLines = settlement.lines.length;
-  const avgConfidence = totalLines > 0
-    ? settlement.lines.reduce((s, l) => s + (l.match_confidence || 0), 0) / totalLines
-    : 0;
   const canApprove = isAdmin && unmatchedCount === 0 && exceptionCount === 0 && settlement.status !== 'approved';
   const isApproved = settlement.status === 'approved';
   const report = settlement.reconciliation_report;
@@ -299,7 +296,6 @@ export default function SettlementReconciliation() {
           Reconciliation complete: {reconcileResult.summary.matched} matched,{' '}
           {reconcileResult.summary.exceptions} exceptions,{' '}
           {reconcileResult.summary.unmatched} unmatched out of {reconcileResult.summary.total_lines} lines.
-          Average confidence: {(reconcileResult.summary.avg_confidence * 100).toFixed(0)}%
         </Alert>
       )}
 
@@ -388,20 +384,17 @@ export default function SettlementReconciliation() {
       {/* ═══ Summary Cards (always shown) ═══ */}
       {!isApproved && (
         <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid item xs={6} sm={2.4}>
+          <Grid item xs={6} sm={3}>
             <SummaryCard label="Matched" value={matchedCount} color="success" icon={<CheckCircleIcon color="success" />} />
           </Grid>
-          <Grid item xs={6} sm={2.4}>
+          <Grid item xs={6} sm={3}>
             <SummaryCard label="Exceptions" value={exceptionCount} color="error" icon={<WarningIcon color="error" />} />
           </Grid>
-          <Grid item xs={6} sm={2.4}>
+          <Grid item xs={6} sm={3}>
             <SummaryCard label="Unmatched" value={unmatchedCount} color="warning" icon={<ErrorIcon color="warning" />} />
           </Grid>
-          <Grid item xs={6} sm={2.4}>
+          <Grid item xs={6} sm={3}>
             <SummaryCard label="Total Value" value={fmtDollar(settlement.total_amount)} color="info" icon={<AttachMoneyIcon color="info" />} />
-          </Grid>
-          <Grid item xs={6} sm={2.4}>
-            <SummaryCard label="Avg Confidence" value={`${(avgConfidence * 100).toFixed(0)}%`} color="primary" icon={<PercentIcon color="primary" />} />
           </Grid>
         </Grid>
       )}
@@ -441,11 +434,6 @@ export default function SettlementReconciliation() {
                         <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
                           <Chip label={`Line ${line.line_number}`} size="small" color="error" />
                           <Chip label={exType} size="small" variant="outlined" color="error" />
-                          {line.match_confidence != null && (
-                            <Typography variant="caption" color="text.secondary">
-                              Confidence: {(line.match_confidence * 100).toFixed(0)}%
-                            </Typography>
-                          )}
                         </Stack>
 
                         {/* Side-by-side comparison */}
@@ -553,7 +541,6 @@ export default function SettlementReconciliation() {
               <TableCell align="right">Price/MT</TableCell>
               <TableCell align="right">Net $</TableCell>
               <TableCell>Matched Ticket</TableCell>
-              <TableCell>Confidence</TableCell>
               {!isApproved && <TableCell width={80}>Actions</TableCell>}
             </TableRow>
           </TableHead>
@@ -612,19 +599,6 @@ export default function SettlementReconciliation() {
                     })() : (
                       <Typography variant="body2" color="text.secondary">-</Typography>
                     )}
-                  </TableCell>
-                  <TableCell>
-                    {line.match_confidence != null ? (
-                      <Stack direction="row" alignItems="center" spacing={0.5}>
-                        <LinearProgress
-                          variant="determinate"
-                          value={line.match_confidence * 100}
-                          color={line.match_confidence >= 0.8 ? 'success' : line.match_confidence >= 0.5 ? 'warning' : 'error'}
-                          sx={{ flex: 1, height: 6, borderRadius: 3, minWidth: 60 }}
-                        />
-                        <Typography variant="caption">{(line.match_confidence * 100).toFixed(0)}%</Typography>
-                      </Stack>
-                    ) : '-'}
                   </TableCell>
                   {!isApproved && (
                     <TableCell>

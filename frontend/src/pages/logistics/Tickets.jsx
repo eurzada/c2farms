@@ -2,12 +2,18 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
   Box, Typography, Button, Stack, Chip, TextField, MenuItem,
-  Dialog, DialogContent, IconButton, Snackbar, Alert,
+  Dialog, DialogTitle, DialogContent, DialogActions, IconButton, Snackbar, Alert, Tooltip,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper,
+  Popover, FormControlLabel, Checkbox, FormGroup,
 } from '@mui/material';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
 import DeleteIcon from '@mui/icons-material/Delete';
 import CloseIcon from '@mui/icons-material/Close';
 import SearchIcon from '@mui/icons-material/Search';
+import SummarizeIcon from '@mui/icons-material/Summarize';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import DownloadIcon from '@mui/icons-material/Download';
+import ViewColumnIcon from '@mui/icons-material/ViewColumn';
 import InputAdornment from '@mui/material/InputAdornment';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
@@ -29,10 +35,16 @@ export default function Tickets() {
   const [stats, setStats] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
   const [settledFilter, setSettledFilter] = useState('');
+  const [matchFilter, setMatchFilter] = useState('');
   const [photoUrl, setPhotoUrl] = useState(null);
   const [selectedCount, setSelectedCount] = useState(0);
   const [searchText, setSearchText] = useState('');
   const [snack, setSnack] = useState({ open: false, message: '', severity: 'error' });
+  const [unmatchedReportOpen, setUnmatchedReportOpen] = useState(false);
+  const [colAnchor, setColAnchor] = useState(null);
+  const [hiddenCols, setHiddenCols] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('c2_tickets_hidden_cols')) || {}; } catch { return {}; }
+  });
   const { confirm, dialogProps } = useConfirmDialog();
 
   // Listen for real-time mobile ticket uploads
@@ -57,6 +69,7 @@ export default function Tickets() {
     if (!currentFarm) return;
     const params = new URLSearchParams();
     if (settledFilter !== '') params.append('settled', settledFilter);
+    if (matchFilter !== '') params.append('matched', matchFilter);
     params.append('limit', '500');
 
     Promise.all([
@@ -67,7 +80,7 @@ export default function Tickets() {
       setTotal(tRes.data.total || 0);
       setStats(sRes.data);
     });
-  }, [currentFarm, settledFilter]);
+  }, [currentFarm, settledFilter, matchFilter]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -97,8 +110,84 @@ export default function Tickets() {
     setSelectedCount(count);
   }, []);
 
+  // Build unmatched tickets report grouped by contract #
+  const unmatchedReport = useMemo(() => {
+    const unmatched = tickets.filter(t => !t.settlement_lines?.length);
+    const groups = {};
+    for (const t of unmatched) {
+      const key = t.contract_number || '(No Contract)';
+      if (!groups[key]) {
+        groups[key] = { contract_number: key, buyer: t.buyer_name || t.counterparty?.name || '', crop: t.commodity?.name || '', tickets: 0, total_mt: 0 };
+      }
+      groups[key].tickets++;
+      groups[key].total_mt += t.net_weight_mt || 0;
+      if (!groups[key].buyer && (t.buyer_name || t.counterparty?.name)) groups[key].buyer = t.buyer_name || t.counterparty?.name;
+      if (!groups[key].crop && t.commodity?.name) groups[key].crop = t.commodity.name;
+    }
+    return Object.values(groups).sort((a, b) => a.contract_number.localeCompare(b.contract_number));
+  }, [tickets]);
+
+  const unmatchedTotal = useMemo(() => ({
+    tickets: unmatchedReport.reduce((s, g) => s + g.tickets, 0),
+    mt: unmatchedReport.reduce((s, g) => s + g.total_mt, 0),
+  }), [unmatchedReport]);
+
+  const copyUnmatchedReport = () => {
+    const lines = ['Unmatched Tickets Report', `Generated: ${new Date().toLocaleDateString()}`, ''];
+    lines.push(`Total: ${unmatchedTotal.tickets} tickets, ${unmatchedTotal.mt.toFixed(2)} MT`, '');
+    lines.push('Contract #\tBuyer\tCrop\tTickets\tTotal MT');
+    for (const g of unmatchedReport) {
+      lines.push(`${g.contract_number}\t${g.buyer}\t${g.crop}\t${g.tickets}\t${g.total_mt.toFixed(2)}`);
+    }
+    navigator.clipboard.writeText(lines.join('\n'));
+    setSnack({ open: true, message: 'Report copied to clipboard', severity: 'success' });
+  };
+
+  const downloadUnmatchedCsv = () => {
+    const rows = [['Contract #', 'Buyer', 'Crop', 'Tickets', 'Total MT']];
+    for (const g of unmatchedReport) {
+      rows.push([g.contract_number, g.buyer, g.crop, g.tickets, g.total_mt.toFixed(2)]);
+    }
+    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `unmatched-tickets-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const toggleCol = (field) => {
+    setHiddenCols(prev => {
+      const next = { ...prev, [field]: !prev[field] };
+      localStorage.setItem('c2_tickets_hidden_cols', JSON.stringify(next));
+      return next;
+    });
+  };
+
   const sourceChipColors = { mobile: 'info', traction_ag: 'default', manual: 'default' };
   const sourceLabels = { mobile: 'Mobile', traction_ag: 'Traction', manual: 'Manual' };
+
+  // Toggleable columns — field key to headerName
+  const toggleableColumns = [
+    { field: 'ticket_number', headerName: 'Ticket #' },
+    { field: 'delivery_date', headerName: 'Date' },
+    { field: 'crop_year', headerName: 'Crop Yr' },
+    { field: 'commodity.name', headerName: 'Crop' },
+    { field: 'net_weight_mt', headerName: 'Net MT' },
+    { field: 'location.name', headerName: 'Location' },
+    { field: 'bin_label', headerName: 'Bin/Bag' },
+    { field: 'buyer_name', headerName: 'Buyer' },
+    { field: 'contract_number', headerName: 'Contract #' },
+    { field: 'moisture_pct', headerName: 'Moist%' },
+    { field: 'grade', headerName: 'Grade' },
+    { field: 'operator_name', headerName: 'Operator' },
+    { field: 'destination', headerName: 'Destination' },
+    { field: 'source_system', headerName: 'Source' },
+    { field: 'match', headerName: 'Match' },
+    { field: 'settled', headerName: 'Settled' },
+  ];
 
   const columnDefs = useMemo(() => [
     {
@@ -122,42 +211,61 @@ export default function Tickets() {
           />
         : null,
     },
-    { field: 'ticket_number', headerName: 'Ticket #', width: 100 },
-    {
+    !hiddenCols['ticket_number'] && { field: 'ticket_number', headerName: 'Ticket #', width: 100 },
+    !hiddenCols['delivery_date'] && {
       field: 'delivery_date', headerName: 'Date', width: 95,
       valueFormatter: p => p.value ? new Date(p.value).toLocaleDateString() : '',
     },
-    { field: 'crop_year', headerName: 'Crop Yr', width: 75 },
-    { field: 'commodity.name', headerName: 'Crop', width: 100 },
-    {
+    !hiddenCols['crop_year'] && { field: 'crop_year', headerName: 'Crop Yr', width: 75 },
+    !hiddenCols['commodity.name'] && { field: 'commodity.name', headerName: 'Crop', width: 100 },
+    !hiddenCols['net_weight_mt'] && {
       field: 'net_weight_mt', headerName: 'Net MT', width: 85,
       valueFormatter: p => p.value?.toFixed(2),
     },
-    { field: 'location.name', headerName: 'Location', width: 100 },
-    { field: 'bin_label', headerName: 'Bin/Bag', width: 100 },
-    { field: 'buyer_name', headerName: 'Buyer', width: 120 },
-    { field: 'contract_number', headerName: 'Contract #', width: 120 },
-    {
+    !hiddenCols['location.name'] && { field: 'location.name', headerName: 'Location', width: 100 },
+    !hiddenCols['bin_label'] && { field: 'bin_label', headerName: 'Bin/Bag', width: 100 },
+    !hiddenCols['buyer_name'] && { field: 'buyer_name', headerName: 'Buyer', width: 120 },
+    !hiddenCols['contract_number'] && { field: 'contract_number', headerName: 'Contract #', width: 120 },
+    !hiddenCols['moisture_pct'] && {
       field: 'moisture_pct', headerName: 'Moist%', width: 70,
       valueFormatter: p => p.value != null ? (p.value * 100).toFixed(1) + '%' : '',
     },
-    { field: 'grade', headerName: 'Grade', width: 70 },
-    { field: 'operator_name', headerName: 'Operator', width: 110 },
-    { field: 'destination', headerName: 'Destination', width: 110 },
-    {
+    !hiddenCols['grade'] && { field: 'grade', headerName: 'Grade', width: 70 },
+    !hiddenCols['operator_name'] && { field: 'operator_name', headerName: 'Operator', width: 110 },
+    !hiddenCols['destination'] && { field: 'destination', headerName: 'Destination', width: 110 },
+    !hiddenCols['source_system'] && {
       field: 'source_system', headerName: 'Source', width: 85,
       cellRenderer: p => {
         const src = p.value || 'traction_ag';
         return <Chip label={sourceLabels[src] || src} size="small" color={sourceChipColors[src] || 'default'} variant="outlined" />;
       },
     },
-    {
+    !hiddenCols['match'] && {
+      headerName: 'Match', width: 120, colId: 'match',
+      valueGetter: p => {
+        const sl = p.data?.settlement_lines?.[0];
+        if (!sl) return 'Unmatched';
+        return `#${sl.settlement?.settlement_number || '?'}`;
+      },
+      cellRenderer: p => {
+        const sl = p.data?.settlement_lines?.[0];
+        if (!sl) return <Chip label="Unmatched" size="small" color="default" variant="outlined" />;
+        const sStatus = sl.settlement?.status;
+        const color = sStatus === 'approved' ? 'success' : sStatus === 'reconciled' ? 'info' : 'warning';
+        return (
+          <Tooltip title={`Settlement ${sl.settlement?.settlement_number} (${sStatus})`}>
+            <Chip label={`#${sl.settlement?.settlement_number}`} size="small" color={color} variant="outlined" />
+          </Tooltip>
+        );
+      },
+    },
+    !hiddenCols['settled'] && {
       field: 'settled', headerName: 'Settled', width: 75,
       cellRenderer: p => p.value
         ? <Chip label="Yes" size="small" color="success" />
         : <Chip label="No" size="small" color="default" variant="outlined" />,
     },
-  ], []);
+  ].filter(Boolean), [hiddenCols]);
 
   return (
     <Box>
@@ -165,7 +273,7 @@ export default function Tickets() {
         <Box>
           <Typography variant="h5" sx={{ fontWeight: 600 }}>Delivery Tickets</Typography>
           <Typography variant="body2" color="text.secondary">
-            {total} tickets{stats ? ` | ${stats.settled} settled | ${stats.unsettled} unsettled` : ''}
+            {total} tickets{stats ? ` | ${stats.matched || 0} matched | ${stats.settled} settled | ${stats.unsettled} unsettled` : ''}
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} alignItems="center">
@@ -183,7 +291,19 @@ export default function Tickets() {
           <TextField
             select
             size="small"
-            label="Filter"
+            label="Match"
+            value={matchFilter}
+            onChange={(e) => setMatchFilter(e.target.value)}
+            sx={{ minWidth: 120 }}
+          >
+            <MenuItem value="">All</MenuItem>
+            <MenuItem value="true">Matched</MenuItem>
+            <MenuItem value="false">Unmatched</MenuItem>
+          </TextField>
+          <TextField
+            select
+            size="small"
+            label="Settled"
             value={settledFilter}
             onChange={(e) => setSettledFilter(e.target.value)}
             sx={{ minWidth: 120 }}
@@ -192,6 +312,16 @@ export default function Tickets() {
             <MenuItem value="true">Settled</MenuItem>
             <MenuItem value="false">Unsettled</MenuItem>
           </TextField>
+          <Tooltip title="Toggle columns">
+            <IconButton size="small" onClick={(e) => setColAnchor(e.currentTarget)}>
+              <ViewColumnIcon />
+            </IconButton>
+          </Tooltip>
+          {unmatchedTotal.tickets > 0 && (
+            <Button variant="outlined" color="warning" startIcon={<SummarizeIcon />} onClick={() => setUnmatchedReportOpen(true)}>
+              Unmatched ({unmatchedTotal.tickets})
+            </Button>
+          )}
           {canEdit && (
             <Button variant="contained" startIcon={<FileUploadIcon />} onClick={() => setImportOpen(true)}>
               Import CSV
@@ -240,10 +370,35 @@ export default function Tickets() {
           animateRows
           rowSelection="multiple"
           suppressRowClickSelection
+          enableCellTextSelection
+          ensureDomOrder
           getRowId={p => p.data?.id}
           onSelectionChanged={onSelectionChanged}
         />
       </Box>
+
+      {/* Column Visibility Popover */}
+      <Popover
+        open={Boolean(colAnchor)}
+        anchorEl={colAnchor}
+        onClose={() => setColAnchor(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+      >
+        <Box sx={{ p: 2, minWidth: 200 }}>
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>Show/Hide Columns</Typography>
+          <FormGroup>
+            {toggleableColumns.map(c => (
+              <FormControlLabel
+                key={c.field}
+                control={<Checkbox size="small" checked={!hiddenCols[c.field]} onChange={() => toggleCol(c.field)} />}
+                label={<Typography variant="body2">{c.headerName}</Typography>}
+                sx={{ ml: 0, mr: 0 }}
+              />
+            ))}
+          </FormGroup>
+        </Box>
+      </Popover>
 
       <TicketImportDialog
         open={importOpen}
@@ -256,6 +411,70 @@ export default function Tickets() {
       <Snackbar open={snack.open} autoHideDuration={4000} onClose={() => setSnack(s => ({ ...s, open: false }))} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
         <Alert severity={snack.severity} onClose={() => setSnack(s => ({ ...s, open: false }))}>{snack.message}</Alert>
       </Snackbar>
+
+      {/* Unmatched Tickets Report Dialog */}
+      <Dialog open={unmatchedReportOpen} onClose={() => setUnmatchedReportOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>
+          <Stack direction="row" justifyContent="space-between" alignItems="center">
+            <span>Unmatched Tickets by Contract</span>
+            {unmatchedReport.length > 0 && (
+              <Stack direction="row" spacing={1}>
+                <Tooltip title="Copy to clipboard">
+                  <IconButton size="small" onClick={copyUnmatchedReport}>
+                    <ContentCopyIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+                <Button size="small" variant="outlined" startIcon={<DownloadIcon />} onClick={downloadUnmatchedCsv}>
+                  CSV
+                </Button>
+              </Stack>
+            )}
+          </Stack>
+        </DialogTitle>
+        <DialogContent dividers>
+          {unmatchedReport.length === 0 ? (
+            <Alert severity="success">All tickets are matched to settlements.</Alert>
+          ) : (
+            <>
+              <Alert severity="info" sx={{ mb: 2 }}>
+                {unmatchedTotal.tickets} ticket{unmatchedTotal.tickets !== 1 ? 's' : ''} ({unmatchedTotal.mt.toFixed(2)} MT) not yet matched to a settlement.
+              </Alert>
+              <TableContainer component={Paper} variant="outlined">
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Contract #</TableCell>
+                      <TableCell>Buyer</TableCell>
+                      <TableCell>Crop</TableCell>
+                      <TableCell align="right">Tickets</TableCell>
+                      <TableCell align="right">Total MT</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {unmatchedReport.map(g => (
+                      <TableRow key={g.contract_number} hover>
+                        <TableCell sx={{ fontWeight: 600 }}>{g.contract_number}</TableCell>
+                        <TableCell>{g.buyer}</TableCell>
+                        <TableCell>{g.crop}</TableCell>
+                        <TableCell align="right">{g.tickets}</TableCell>
+                        <TableCell align="right">{g.total_mt.toFixed(2)}</TableCell>
+                      </TableRow>
+                    ))}
+                    <TableRow sx={{ bgcolor: 'action.hover' }}>
+                      <TableCell colSpan={3} sx={{ fontWeight: 700 }}>Total</TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 700 }}>{unmatchedTotal.tickets}</TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 700 }}>{unmatchedTotal.mt.toFixed(2)}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setUnmatchedReportOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Full-size photo viewer */}
       <Dialog open={!!photoUrl} onClose={() => setPhotoUrl(null)} maxWidth="md">

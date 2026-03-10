@@ -22,13 +22,15 @@ router.use('/:farmId/tickets', async (req, res, next) => {
 router.get('/:farmId/tickets', authenticate, async (req, res, next) => {
   try {
     const { farmId } = req.params;
-    const { contract_id, counterparty_id, commodity_id, settled, limit = '200', offset = '0' } = req.query;
+    const { contract_id, counterparty_id, commodity_id, settled, matched, limit = '200', offset = '0' } = req.query;
 
     const where = { farm_id: farmId };
     if (contract_id) where.marketing_contract_id = contract_id;
     if (counterparty_id) where.counterparty_id = counterparty_id;
     if (commodity_id) where.commodity_id = commodity_id;
     if (settled !== undefined) where.settled = settled === 'true';
+    if (matched === 'true') where.settlement_lines = { some: {} };
+    if (matched === 'false') where.settlement_lines = { none: {} };
 
     const [tickets, total] = await Promise.all([
       prisma.deliveryTicket.findMany({
@@ -39,6 +41,14 @@ router.get('/:farmId/tickets', authenticate, async (req, res, next) => {
           commodity: { select: { name: true, code: true } },
           location: { select: { name: true, code: true } },
           bin: { select: { bin_number: true } },
+          settlement_lines: {
+            select: {
+              id: true,
+              match_status: true,
+              settlement: { select: { id: true, settlement_number: true, status: true } },
+            },
+            take: 1,
+          },
         },
         orderBy: { delivery_date: 'desc' },
         take: parseInt(limit),
@@ -55,10 +65,11 @@ router.get('/:farmId/tickets', authenticate, async (req, res, next) => {
 router.get('/:farmId/tickets/stats/summary', authenticate, async (req, res, next) => {
   try {
     const farmId = req.params.farmId;
-    const [total, settled, unsettled, byCounterparty] = await Promise.all([
+    const [total, settled, unsettled, matched, byCounterparty] = await Promise.all([
       prisma.deliveryTicket.count({ where: { farm_id: farmId } }),
       prisma.deliveryTicket.count({ where: { farm_id: farmId, settled: true } }),
       prisma.deliveryTicket.count({ where: { farm_id: farmId, settled: false } }),
+      prisma.deliveryTicket.count({ where: { farm_id: farmId, settlement_lines: { some: {} } } }),
       prisma.deliveryTicket.groupBy({
         by: ['counterparty_id'],
         where: { farm_id: farmId },
@@ -80,6 +91,7 @@ router.get('/:farmId/tickets/stats/summary', authenticate, async (req, res, next
       total,
       settled,
       unsettled,
+      matched,
       by_counterparty: byCounterparty.map(g => ({
         counterparty_id: g.counterparty_id,
         counterparty_name: cpMap[g.counterparty_id] || 'Unknown',
