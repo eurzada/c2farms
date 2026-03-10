@@ -7,6 +7,7 @@ import CropInventoryTable from '../../components/inventory/CropInventoryTable';
 import FarmStatusPanel from '../../components/inventory/FarmStatusPanel';
 import AlertsPanel from '../../components/inventory/AlertsPanel';
 import DrawdownChart from '../../components/inventory/DrawdownChart';
+import LocationCommodityMatrix from '../../components/inventory/LocationCommodityMatrix';
 
 export default function InventoryDashboard() {
   const { currentFarm } = useFarm();
@@ -27,7 +28,7 @@ export default function InventoryDashboard() {
   if (error) return <Alert severity="error" sx={{ m: 2 }}>{error}</Alert>;
   if (!data) return null;
 
-  const { kpi, cropInventory, farmStatus, alerts, drawdown } = data;
+  const { kpi, cropInventory, farmStatus, alerts, drawdown, locationCommodityMatrix } = data;
 
   return (
     <Box>
@@ -61,6 +62,11 @@ export default function InventoryDashboard() {
         {/* Farm Status Panel */}
         <Grid item xs={12} md={5}>
           <FarmStatusPanel statuses={farmStatus} />
+        </Grid>
+
+        {/* Location × Commodity Matrix */}
+        <Grid item xs={12}>
+          <LocationCommodityMatrix data={locationCommodityMatrix} />
         </Grid>
 
         {/* Drawdown Chart */}

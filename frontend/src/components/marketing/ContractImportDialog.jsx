@@ -15,6 +15,7 @@ function classifyError(err) {
   if (code === 'INSUFFICIENT_CREDITS') return 'AI credits exhausted. Add funds at console.anthropic.com.';
   if (code === 'RATE_LIMITED') return 'AI service is busy. Wait a moment and try again.';
   if (code === 'API_OVERLOADED') return 'AI service is temporarily overloaded. Try again shortly.';
+  if (code === 'WRONG_DOCUMENT_TYPE') return data?.error || 'This does not appear to be a purchase contract.';
   return data?.error || err.message;
 }
 
@@ -173,8 +174,8 @@ export default function ContractImportDialog({ open, onClose, farmId, onImported
                       ['Commodity', extraction.commodity],
                       ['Grade', extraction.grade],
                       ['Quantity (MT)', fmt(extraction.quantity_mt)],
-                      ['Price/MT', extraction.price_per_mt ? `$${fmt(extraction.price_per_mt)}` : null],
-                      ['Price/bu', extraction.price_per_bu ? `$${fmt(extraction.price_per_bu)}` : null],
+                      ['$/MT', extraction.price_per_mt ? `$${fmt(extraction.price_per_mt)}` : null],
+                      ['$/bu', extraction.price_per_bu ? `$${extraction.price_per_bu.toFixed(2)}` : null],
                       ['Pricing Type', extraction.pricing_type],
                       ['Basis', extraction.basis_level ? `$${fmt(extraction.basis_level)}` : null],
                       ['Futures Ref', extraction.futures_reference],
@@ -214,6 +215,7 @@ export default function ContractImportDialog({ open, onClose, farmId, onImported
               <Chip label={contract.commodity?.name} variant="outlined" />
               <Chip label={`${fmt(contract.contracted_mt)} MT`} />
               {contract.price_per_bu && <Chip label={`$${contract.price_per_bu.toFixed(2)}/bu`} color="success" />}
+              {contract.price_per_mt && <Chip label={`$${contract.price_per_mt.toFixed(2)}/MT`} color="success" variant="outlined" />}
             </Stack>
           </Box>
         )}

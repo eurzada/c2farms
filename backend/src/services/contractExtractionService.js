@@ -1,5 +1,6 @@
 import prisma from '../config/database.js';
 import { MODELS, computeUsage, classifyApiError, getAnthropicClient, parseJsonResponse } from './aiClient.js';
+import { buToMtFactor } from './marketingService.js';
 
 /**
  * Contract PDF extraction service.
@@ -32,6 +33,7 @@ Extract ALL of the following into structured JSON:
   "elevator_site": "string or null (delivery location/elevator)",
   "crop_year": "string or null (e.g. 2025/26, 2025)",
   "special_terms": "string or null (any notable terms: specialty premium, rail, FOB, delivered, etc.)",
+  "total_contract_value": number or null,
   "tolerance_pct": number or null,
   "notes": "string or null (any other relevant details)"
 }
@@ -42,14 +44,54 @@ Important:
 - For HTA (Hedge-to-Arrive): extract futures_price and note the futures month
 - Delivery period may be free text like "September 1 - October 31, 2026" — parse into start/end dates AND keep the original text
 - Quantity may be in MT, tonnes, or bushels — convert to MT if possible (canola: 1 MT ≈ 44.09 bu, wheat/durum: 1 MT ≈ 36.74 bu)
+- If the contract states a total value (e.g. "Contract Value: $500,000"), extract it as total_contract_value — this can be used to derive $/mt if no unit price is stated
 - Look for the contract number prominently displayed (may be called Contract #, Agreement #, Confirmation #, Transaction #)
 - The document may be scanned, photographed, or rotated — read carefully
 
 Return ONLY valid JSON, no extra text.`;
 
 /**
+ * Classify whether a document is a contract or settlement using a cheap Haiku call.
+ * Returns { document_type: 'contract' | 'settlement' | 'unknown', confidence: string }.
+ */
+export async function classifyDocumentType(pdfBuffer) {
+  const pdfBase64 = pdfBuffer.toString('base64');
+  const model = MODELS.detection;
+  const client = await getAnthropicClient();
+
+  const response = await client.messages.create({
+    model,
+    max_tokens: 100,
+    messages: [{
+      role: 'user',
+      content: [
+        {
+          type: 'document',
+          source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 },
+        },
+        {
+          type: 'text',
+          text: `Classify this grain industry document. Is it a PURCHASE CONTRACT (agreement to buy/sell grain at a price, with delivery terms) or a SETTLEMENT STATEMENT (a payment/accounting document listing delivered tickets, weights, deductions, and net payment amounts)?
+
+Reply with ONLY valid JSON: {"document_type": "contract" or "settlement" or "unknown", "confidence": "high" or "medium" or "low", "reason": "brief explanation"}`,
+        },
+      ],
+    }],
+  });
+
+  const usage = computeUsage(model, response);
+  const text = response.content[0]?.text || '';
+  try {
+    const result = parseJsonResponse(text);
+    return { ...result, usage };
+  } catch {
+    return { document_type: 'unknown', confidence: 'low', reason: 'Could not classify', usage };
+  }
+}
+
+/**
  * Extract contract terms from a PDF buffer using Claude Vision.
- * Returns { extraction, usage }.
+ * Returns { extraction, usage, classification? }.
  */
 export async function extractContractFromPdf(pdfBuffer) {
   const pdfBase64 = pdfBuffer.toString('base64');
@@ -171,10 +213,29 @@ export async function saveExtractedContract(farmId, extraction, _usage = null) {
 
   const quantityMt = extraction.quantity_mt || 0;
 
+  // ─── Price normalization: ensure both $/bu and $/mt are populated ───
+  const factor = buToMtFactor(commodity.lbs_per_bu);
+  let priceBu = extraction.price_per_bu || null;
+  let priceMt = extraction.price_per_mt || null;
+
+  // Fallback: derive $/mt from total contract value ÷ tonnage
+  if (!priceBu && !priceMt && extraction.total_contract_value && quantityMt > 0) {
+    priceMt = Math.round((extraction.total_contract_value / quantityMt) * 100) / 100;
+  }
+
+  // Cross-convert whichever is missing
+  if (priceBu && !priceMt) {
+    priceMt = Math.round(priceBu * factor * 100) / 100;
+  } else if (priceMt && !priceBu) {
+    priceBu = Math.round((priceMt / factor) * 100) / 100;
+  }
+
   // Check if contract already exists (upsert)
   const existing = await prisma.marketingContract.findFirst({
     where: { farm_id: farmId, contract_number: contractNumber },
   });
+
+  const contractValue = priceMt && quantityMt ? priceMt * quantityMt : (extraction.total_contract_value || null);
 
   const contractData = {
     farm_id: farmId,
@@ -185,10 +246,15 @@ export async function saveExtractedContract(farmId, extraction, _usage = null) {
     grade: extraction.grade || null,
     contracted_mt: quantityMt,
     remaining_mt: quantityMt,
-    pricing_type: extraction.pricing_type || 'flat',
-    pricing_status: extraction.price_per_mt || extraction.price_per_bu ? 'priced' : 'unpriced',
-    price_per_bu: extraction.price_per_bu || null,
-    price_per_mt: extraction.price_per_mt || null,
+    pricing_type: extraction.pricing_type
+      || (extraction.basis_level && !priceBu && !priceMt ? 'basis'
+        : extraction.futures_price && !priceBu && !priceMt ? 'hta'
+        : 'flat'),
+    pricing_status: priceMt || priceBu ? 'priced'
+      : extraction.basis_level ? 'partially_priced'
+      : 'unpriced',
+    price_per_bu: priceBu,
+    price_per_mt: priceMt,
     basis_level: extraction.basis_level || null,
     futures_reference: extraction.futures_reference || null,
     futures_price: extraction.futures_price || null,
@@ -197,7 +263,7 @@ export async function saveExtractedContract(farmId, extraction, _usage = null) {
     delivery_end: extraction.delivery_end ? new Date(extraction.delivery_end) : null,
     elevator_site: extraction.elevator_site || null,
     tolerance_pct: extraction.tolerance_pct || null,
-    contract_value: quantityMt && extraction.price_per_mt ? quantityMt * extraction.price_per_mt : null,
+    contract_value: contractValue,
     notes: [extraction.special_terms, extraction.notes, extraction.delivery_period_text].filter(Boolean).join(' | ') || null,
     status: 'executed',
   };

@@ -1,6 +1,9 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { AgGridReact } from 'ag-grid-react';
-import { Box, Typography, Stack, FormControl, InputLabel, Select, MenuItem, Card, CardContent, Alert, CircularProgress } from '@mui/material';
+import {
+  Box, Typography, Stack, FormControl, InputLabel, Select, MenuItem,
+  Card, CardContent, Alert, CircularProgress, Grid, Chip, ToggleButton, ToggleButtonGroup,
+} from '@mui/material';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { useFarm } from '../../contexts/FarmContext';
@@ -12,6 +15,10 @@ function FlagCell({ value }) {
   const icons = { ok: '\u2705', warning: '\u26A0\uFE0F', error: '\uD83D\uDD34' };
   return <span>{icons[value] || value}</span>;
 }
+
+const fmt = (v) => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '—';
+const fmtInt = (v) => v != null ? v.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
+const formatDate = (d) => new Date(d).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' });
 
 export default function Reconciliation() {
   const { currentFarm } = useFarm();
@@ -25,7 +32,10 @@ export default function Reconciliation() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [viewMode, setViewMode] = useState('compare'); // 'compare' | 'waterfall'
+  const [history, setHistory] = useState(null);
 
+  // Fetch periods
   useEffect(() => {
     if (!currentFarm) return;
     api.get(`/api/farms/${currentFarm.id}/inventory/count-periods`)
@@ -33,83 +43,281 @@ export default function Reconciliation() {
         const p = res.data.periods || [];
         setPeriods(p);
         if (p.length >= 2) {
-          setFromPeriod(p[1].id); // second most recent
-          setToPeriod(p[0].id);   // most recent
+          setFromPeriod(p[1].id);
+          setToPeriod(p[0].id);
         }
       });
   }, [currentFarm]);
 
+  // Fetch comparison data
   useEffect(() => {
-    if (!currentFarm || !fromPeriod || !toPeriod) return;
+    if (!currentFarm || !fromPeriod || !toPeriod || viewMode !== 'compare') return;
     setLoading(true);
     api.get(`/api/farms/${currentFarm.id}/reconciliation/${fromPeriod}/${toPeriod}`)
       .then(res => { setData(res.data); setError(''); })
       .catch(() => setError('Failed to load reconciliation'))
       .finally(() => setLoading(false));
-  }, [currentFarm, fromPeriod, toPeriod]);
+  }, [currentFarm, fromPeriod, toPeriod, viewMode]);
+
+  // Fetch waterfall data (count history)
+  useEffect(() => {
+    if (!currentFarm || viewMode !== 'waterfall') return;
+    setLoading(true);
+    api.get(`/api/farms/${currentFarm.id}/inventory/count-history`)
+      .then(res => { setHistory(res.data.periods || []); setError(''); })
+      .catch(() => setError('Failed to load history'))
+      .finally(() => setLoading(false));
+  }, [currentFarm, viewMode]);
 
   const columnDefs = useMemo(() => [
     { field: 'commodity', headerName: 'Commodity', width: 150 },
-    { field: 'beginning_mt', headerName: 'Beginning MT', width: 140, valueFormatter: p => p.value?.toLocaleString(undefined, { maximumFractionDigits: 1 }) },
-    { field: 'ending_mt', headerName: 'Ending MT', width: 130, valueFormatter: p => p.value?.toLocaleString(undefined, { maximumFractionDigits: 1 }) },
-    { field: 'hauled_mt', headerName: 'Hauled MT', width: 130, valueFormatter: p => p.value?.toLocaleString(undefined, { maximumFractionDigits: 1 }) },
-    { field: 'variance_mt', headerName: 'Variance MT', width: 130, valueFormatter: p => p.value?.toLocaleString(undefined, { maximumFractionDigits: 1 }) },
+    { field: 'beginning_mt', headerName: 'Beginning MT', width: 140, valueFormatter: p => fmt(p.value) },
+    { field: 'ending_mt', headerName: 'Ending MT', width: 130, valueFormatter: p => fmt(p.value) },
+    { field: 'hauled_mt', headerName: 'Hauled MT', width: 130, valueFormatter: p => fmt(p.value) },
+    { field: 'variance_mt', headerName: 'Variance MT', width: 130, valueFormatter: p => fmt(p.value) },
     { field: 'variance_pct', headerName: 'Variance %', width: 120, valueFormatter: p => `${(p.value || 0).toFixed(1)}%` },
     { field: 'flag', headerName: 'Flag', width: 80, cellRenderer: FlagCell },
   ], []);
 
   const defaultColDef = useMemo(() => ({ sortable: true, resizable: true }), []);
 
-  const formatDate = (d) => new Date(d).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' });
+  // Build waterfall commodity data — pivot: rows=commodities, columns=periods
+  const waterfallData = useMemo(() => {
+    if (!history || history.length === 0) return null;
+    // history is newest-first, reverse for chronological
+    const chronological = [...history].reverse();
+    const allCommodities = new Set();
+    for (const p of chronological) {
+      for (const c of p.commodities) allCommodities.add(c.name);
+    }
+    const commodities = [...allCommodities].sort();
+
+    const rows = commodities.map(name => {
+      const row = { commodity: name };
+      for (const p of chronological) {
+        const key = new Date(p.period_date).toLocaleDateString('en-CA', { month: 'short', year: '2-digit' });
+        const found = p.commodities.find(c => c.name === name);
+        row[key] = found ? Math.round(found.mt * 10) / 10 : 0;
+      }
+      return row;
+    });
+
+    // Totals row
+    const totals = { commodity: 'TOTAL' };
+    for (const p of chronological) {
+      const key = new Date(p.period_date).toLocaleDateString('en-CA', { month: 'short', year: '2-digit' });
+      totals[key] = Math.round(p.total_mt * 10) / 10;
+    }
+
+    const periodKeys = chronological.map(p =>
+      new Date(p.period_date).toLocaleDateString('en-CA', { month: 'short', year: '2-digit' })
+    );
+
+    return { rows, totals, periodKeys };
+  }, [history]);
 
   return (
     <Box>
-      <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>Reconciliation</Typography>
-
-      {/* Period selectors */}
-      <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
-        <FormControl size="small" sx={{ minWidth: 200 }}>
-          <InputLabel>From Period</InputLabel>
-          <Select value={fromPeriod} label="From Period" onChange={e => setFromPeriod(e.target.value)}>
-            {periods.map(p => <MenuItem key={p.id} value={p.id}>{formatDate(p.period_date)}</MenuItem>)}
-          </Select>
-        </FormControl>
-        <FormControl size="small" sx={{ minWidth: 200 }}>
-          <InputLabel>To Period</InputLabel>
-          <Select value={toPeriod} label="To Period" onChange={e => setToPeriod(e.target.value)}>
-            {periods.map(p => <MenuItem key={p.id} value={p.id}>{formatDate(p.period_date)}</MenuItem>)}
-          </Select>
-        </FormControl>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
+        <Typography variant="h5" sx={{ fontWeight: 600 }}>Reconciliation</Typography>
+        <ToggleButtonGroup
+          value={viewMode}
+          exclusive
+          onChange={(_, v) => v && setViewMode(v)}
+          size="small"
+        >
+          <ToggleButton value="compare">Period Compare</ToggleButton>
+          <ToggleButton value="waterfall">All Periods</ToggleButton>
+        </ToggleButtonGroup>
       </Stack>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-      {loading && <CircularProgress />}
 
-      {data && (
+      {/* ─── Compare View ─── */}
+      {viewMode === 'compare' && (
         <>
-          {/* Summary stats */}
-          <Card sx={{ mb: 2 }}>
-            <CardContent>
-              <Stack direction="row" spacing={4}>
-                <Typography variant="body2"><strong>Total Beginning:</strong> {data.summary.total_beginning_mt.toLocaleString(undefined, { maximumFractionDigits: 0 })} MT</Typography>
-                <Typography variant="body2"><strong>Total Ending:</strong> {data.summary.total_ending_mt.toLocaleString(undefined, { maximumFractionDigits: 0 })} MT</Typography>
-                <Typography variant="body2"><strong>Total Hauled:</strong> {data.summary.total_hauled_mt.toLocaleString(undefined, { maximumFractionDigits: 0 })} MT</Typography>
-                <Typography variant="body2"><strong>Total Variance:</strong> {data.summary.total_variance_mt.toLocaleString(undefined, { maximumFractionDigits: 0 })} MT</Typography>
-              </Stack>
-            </CardContent>
-          </Card>
+          <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <InputLabel>From Period</InputLabel>
+              <Select value={fromPeriod} label="From Period" onChange={e => setFromPeriod(e.target.value)}>
+                {periods.map(p => <MenuItem key={p.id} value={p.id}>{formatDate(p.period_date)}</MenuItem>)}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <InputLabel>To Period</InputLabel>
+              <Select value={toPeriod} label="To Period" onChange={e => setToPeriod(e.target.value)}>
+                {periods.map(p => <MenuItem key={p.id} value={p.id}>{formatDate(p.period_date)}</MenuItem>)}
+              </Select>
+            </FormControl>
+          </Stack>
 
-          {/* Variance table */}
-          <Box className={mode === 'dark' ? 'ag-theme-alpine-dark' : 'ag-theme-alpine'} sx={{ height: 400, width: '100%' }}>
-            <AgGridReact
-              ref={gridRef}
-              rowData={data.rows}
-              columnDefs={columnDefs}
-              defaultColDef={defaultColDef}
-              animateRows
-              getRowId={p => p.data?.commodity}
-            />
-          </Box>
+          {loading && <CircularProgress />}
+
+          {data && (
+            <>
+              {/* Summary KPI cards */}
+              <Grid container spacing={2} sx={{ mb: 3 }}>
+                {[
+                  { label: 'Beginning', value: `${fmtInt(data.summary.total_beginning_mt)} MT`, color: '#1565C0' },
+                  { label: 'Ending', value: `${fmtInt(data.summary.total_ending_mt)} MT`, color: '#1565C0' },
+                  { label: 'Hauled Out', value: `${fmtInt(data.summary.total_hauled_mt)} MT`, color: '#E65100' },
+                  { label: 'Variance', value: `${fmtInt(data.summary.total_variance_mt)} MT`,
+                    color: Math.abs(data.summary.total_variance_mt) > data.summary.total_beginning_mt * 0.02 ? '#D32F2F' : '#2E7D32' },
+                ].map(kpi => (
+                  <Grid item xs={6} md={3} key={kpi.label}>
+                    <Card sx={{ textAlign: 'center' }}>
+                      <CardContent sx={{ py: 1.5 }}>
+                        <Typography variant="caption" color="text.secondary">{kpi.label}</Typography>
+                        <Typography variant="h6" sx={{ fontWeight: 700, color: kpi.color }}>{kpi.value}</Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                ))}
+              </Grid>
+
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                Variance = Beginning − Ending − Hauled. Positive = unaccounted loss. Negative = unaccounted gain.
+              </Typography>
+
+              <Box className={mode === 'dark' ? 'ag-theme-alpine-dark' : 'ag-theme-alpine'} sx={{ height: 400, width: '100%' }}>
+                <AgGridReact
+                  ref={gridRef}
+                  rowData={data.rows}
+                  columnDefs={columnDefs}
+                  defaultColDef={defaultColDef}
+                  animateRows
+                  getRowId={p => p.data?.commodity}
+                />
+              </Box>
+            </>
+          )}
+        </>
+      )}
+
+      {/* ─── Waterfall View — All Periods Side by Side ─── */}
+      {viewMode === 'waterfall' && (
+        <>
+          {loading && <CircularProgress />}
+
+          {waterfallData && (
+            <>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Inventory levels (MT) across all count periods — track how each commodity changes over time.
+              </Typography>
+
+              <Card>
+                <CardContent sx={{ p: 0, '&:last-child': { pb: 0 } }}>
+                  <Box sx={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ backgroundColor: '#1565C0' }}>
+                          <th style={{ padding: '8px 12px', textAlign: 'left', color: '#fff', fontWeight: 700, position: 'sticky', left: 0, backgroundColor: '#1565C0', zIndex: 1 }}>
+                            Commodity
+                          </th>
+                          {waterfallData.periodKeys.map((key, i) => (
+                            <th key={key} style={{ padding: '8px 12px', textAlign: 'right', color: '#fff', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                              {key}
+                              {i > 0 && <div style={{ fontSize: 10, fontWeight: 400, opacity: 0.8 }}>Δ from prev</div>}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {waterfallData.rows.map((row, ri) => (
+                          <tr key={row.commodity} style={{ backgroundColor: ri % 2 === 0 ? '#fff' : '#F5F5F5' }}>
+                            <td style={{ padding: '6px 12px', fontWeight: 600, position: 'sticky', left: 0, backgroundColor: ri % 2 === 0 ? '#fff' : '#F5F5F5', zIndex: 1 }}>
+                              {row.commodity}
+                            </td>
+                            {waterfallData.periodKeys.map((key, pi) => {
+                              const val = row[key] || 0;
+                              const prevKey = pi > 0 ? waterfallData.periodKeys[pi - 1] : null;
+                              const prevVal = prevKey ? (row[prevKey] || 0) : null;
+                              const delta = prevVal !== null ? val - prevVal : null;
+                              return (
+                                <td key={key} style={{ padding: '6px 12px', textAlign: 'right' }}>
+                                  <div>{fmt(val)}</div>
+                                  {delta !== null && delta !== 0 && (
+                                    <div style={{ fontSize: 11, color: delta < 0 ? '#D32F2F' : '#2E7D32', fontWeight: 600 }}>
+                                      {delta > 0 ? '+' : ''}{fmt(delta)}
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                        {/* Totals row */}
+                        <tr style={{ backgroundColor: '#E8EAF6', fontWeight: 700 }}>
+                          <td style={{ padding: '8px 12px', fontWeight: 700, position: 'sticky', left: 0, backgroundColor: '#E8EAF6', zIndex: 1 }}>
+                            TOTAL
+                          </td>
+                          {waterfallData.periodKeys.map((key, pi) => {
+                            const val = waterfallData.totals[key] || 0;
+                            const prevKey = pi > 0 ? waterfallData.periodKeys[pi - 1] : null;
+                            const prevVal = prevKey ? (waterfallData.totals[prevKey] || 0) : null;
+                            const delta = prevVal !== null ? val - prevVal : null;
+                            return (
+                              <td key={key} style={{ padding: '8px 12px', textAlign: 'right' }}>
+                                <div>{fmt(val)}</div>
+                                {delta !== null && delta !== 0 && (
+                                  <div style={{ fontSize: 11, color: delta < 0 ? '#D32F2F' : '#2E7D32' }}>
+                                    {delta > 0 ? '+' : ''}{fmt(delta)}
+                                  </div>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </Box>
+                </CardContent>
+              </Card>
+
+              {/* Period-over-period hauling summary */}
+              {history && history.length > 1 && (
+                <Card sx={{ mt: 3 }}>
+                  <CardContent>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>Period-over-Period Summary</Typography>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ borderBottom: '2px solid #ddd' }}>
+                          <th style={{ textAlign: 'left', padding: '4px 8px' }}>Period</th>
+                          <th style={{ textAlign: 'right', padding: '4px 8px' }}>Total MT</th>
+                          <th style={{ textAlign: 'right', padding: '4px 8px' }}>Change</th>
+                          <th style={{ textAlign: 'right', padding: '4px 8px' }}>Hauled</th>
+                          <th style={{ textAlign: 'right', padding: '4px 8px' }}>Implied Variance</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...history].reverse().map((p, i, arr) => {
+                          const prev = i > 0 ? arr[i - 1] : null;
+                          const change = prev ? p.total_mt - prev.total_mt : null;
+                          const impliedVar = prev ? (prev.total_mt - p.total_mt - p.hauled_mt) : null;
+                          return (
+                            <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
+                              <td style={{ padding: '4px 8px' }}>{formatDate(p.period_date)}</td>
+                              <td style={{ textAlign: 'right', padding: '4px 8px' }}>{fmt(p.total_mt)}</td>
+                              <td style={{ textAlign: 'right', padding: '4px 8px', color: change === null ? undefined : change < 0 ? '#D32F2F' : '#2E7D32', fontWeight: 600 }}>
+                                {change !== null ? `${change > 0 ? '+' : ''}${fmt(change)}` : '—'}
+                              </td>
+                              <td style={{ textAlign: 'right', padding: '4px 8px' }}>{p.hauled_mt > 0 ? fmt(p.hauled_mt) : '—'}</td>
+                              <td style={{ textAlign: 'right', padding: '4px 8px', color: impliedVar === null ? undefined : Math.abs(impliedVar) > 50 ? '#D32F2F' : '#2E7D32', fontWeight: 600 }}>
+                                {impliedVar !== null ? fmt(impliedVar) : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                      Implied Variance = Previous MT − Current MT − Hauled. Should be near zero if all movement is accounted for.
+                    </Typography>
+                  </CardContent>
+                </Card>
+              )}
+            </>
+          )}
         </>
       )}
     </Box>

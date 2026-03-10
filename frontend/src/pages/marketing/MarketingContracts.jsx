@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
   Box, Typography, Button, Stack, Chip, Tabs, Tab, LinearProgress,
-  Snackbar, Alert, IconButton, Tooltip, Paper,
+  Snackbar, Alert, IconButton, Tooltip, Paper, Menu, MenuItem, Checkbox, ListItemText, Divider, CircularProgress,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
@@ -12,6 +12,8 @@ import EditIcon from '@mui/icons-material/Edit';
 import CancelIcon from '@mui/icons-material/Cancel';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SettingsIcon from '@mui/icons-material/Settings';
+import ViewColumnIcon from '@mui/icons-material/ViewColumn';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { useFarm } from '../../contexts/FarmContext';
@@ -73,7 +75,80 @@ export default function MarketingContracts() {
   const [importOpen, setImportOpen] = useState(false);
   const [batchImportOpen, setBatchImportOpen] = useState(false);
   const [selectedCount, setSelectedCount] = useState(0);
+  const [columnMenuAnchor, setColumnMenuAnchor] = useState(null);
+  const [exporting, setExporting] = useState(false);
   const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
+
+  // Column visibility — keys that map to column field names
+  const TOGGLEABLE_COLUMNS = [
+    { key: 'contract_number', label: '#' },
+    { key: 'counterparty.name', label: 'Buyer' },
+    { key: 'commodity.name', label: 'Crop' },
+    { key: 'grade', label: 'Grade' },
+    { key: 'pricing_type', label: 'Type' },
+    { key: 'contracted_mt', label: 'Qty (MT)' },
+    { key: 'delivered_mt', label: 'Hauled' },
+    { key: 'remaining_mt', label: 'Remaining' },
+    { key: 'pct_complete', label: '% Done' },
+    { key: 'price_per_bu', label: '$/bu' },
+    { key: 'price_per_mt', label: '$/MT' },
+    { key: 'contract_value', label: 'Value' },
+    { key: 'elevator_site', label: 'Elevator' },
+    { key: 'delivery_window', label: 'Delivery Window' },
+    { key: 'status', label: 'Status' },
+    { key: 'pricing_status', label: 'Pricing' },
+    { key: 'notes', label: 'Notes' },
+  ];
+
+  const [hiddenColumns, setHiddenColumns] = useState(() => {
+    try {
+      const saved = localStorage.getItem('c2farms_contracts_hidden_cols');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+
+  const toggleColumn = (key) => {
+    setHiddenColumns(prev => {
+      const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
+      localStorage.setItem('c2farms_contracts_hidden_cols', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const handleExportPdf = async () => {
+    if (!currentFarm) return;
+    setExporting(true);
+    try {
+      // Map visible column keys to backend column names
+      const COL_KEY_MAP = {
+        'counterparty.name': 'buyer',
+        'commodity.name': 'commodity',
+        'pct_complete': 'pct_complete',
+        'delivery_window': 'delivery_window',
+      };
+      const visibleCols = TOGGLEABLE_COLUMNS
+        .filter(c => !hiddenColumns.includes(c.key))
+        .map(c => COL_KEY_MAP[c.key] || c.key);
+
+      const status = STATUS_MAP[STATUS_TABS[statusFilter]] || undefined;
+
+      const res = await api.post(
+        `/api/farms/${currentFarm.id}/marketing/contracts/export-pdf`,
+        { columns: visibleCols, status },
+        { responseType: 'blob' }
+      );
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'marketing-contracts.pdf';
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to export PDF'), severity: 'error' });
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const fetchData = useCallback(() => {
     if (!currentFarm) return;
@@ -113,6 +188,23 @@ export default function MarketingContracts() {
     }
   };
 
+  const handlePermanentDelete = async (c) => {
+    const ok = await confirm({
+      title: 'Permanently Delete Contract',
+      message: `Permanently delete contract #${c.contract_number}? This will erase the record and any linked deliveries. This action cannot be reversed.`,
+      confirmText: 'Delete Permanently',
+      confirmColor: 'error',
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/api/farms/${currentFarm.id}/marketing/contracts/${c.id}?permanent=true`);
+      fetchData();
+      setSnack({ open: true, message: `Contract #${c.contract_number} permanently deleted.`, severity: 'warning' });
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to delete contract'), severity: 'error' });
+    }
+  };
+
   const handleDeleteSelected = async () => {
     const selectedRows = gridRef.current?.api?.getSelectedRows() || [];
     if (selectedRows.length === 0) return;
@@ -134,12 +226,35 @@ export default function MarketingContracts() {
     }
   };
 
+  const handlePermanentDeleteSelected = async () => {
+    const selectedRows = gridRef.current?.api?.getSelectedRows() || [];
+    if (selectedRows.length === 0) return;
+    const ok = await confirm({
+      title: 'Permanently Delete Contracts',
+      message: `Permanently delete ${selectedRows.length} contract${selectedRows.length !== 1 ? 's' : ''}? This will erase all records and linked deliveries. This cannot be reversed.`,
+      confirmText: 'Delete All Permanently',
+      confirmColor: 'error',
+    });
+    if (!ok) return;
+    try {
+      const ids = selectedRows.map(r => r.id);
+      await api.delete(`/api/farms/${currentFarm.id}/marketing/contracts?permanent=true`, { data: { ids } });
+      setSelectedCount(0);
+      fetchData();
+      setSnack({ open: true, message: `${selectedRows.length} contract(s) permanently deleted.`, severity: 'warning' });
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to delete contracts'), severity: 'error' });
+    }
+  };
+
   const onSelectionChanged = useCallback(() => {
     const count = gridRef.current?.api?.getSelectedRows()?.length || 0;
     setSelectedCount(count);
   }, []);
 
-  const columnDefs = useMemo(() => [
+  const columnDefs = useMemo(() => {
+    const isHidden = (key) => hiddenColumns.includes(key);
+    return [
     {
       headerCheckboxSelection: true,
       checkboxSelection: true,
@@ -150,31 +265,32 @@ export default function MarketingContracts() {
       resizable: false,
       pinned: 'left',
     },
-    { field: 'contract_number', headerName: '#', width: 110, pinned: 'left' },
-    { field: 'counterparty.name', headerName: 'Buyer', width: 140 },
-    { field: 'commodity.name', headerName: 'Crop', width: 120 },
-    { field: 'grade', headerName: 'Grade', width: 100 },
-    { field: 'pricing_type', headerName: 'Type', width: 90, cellRenderer: p => <PricingChip value={p.value} /> },
-    { field: 'contracted_mt', headerName: 'Qty (MT)', width: 110, valueFormatter: p => fmt(p.value) },
-    { field: 'delivered_mt', headerName: 'Hauled', width: 100, valueFormatter: p => fmt(p.value) },
-    { field: 'remaining_mt', headerName: 'Remaining', width: 100, valueFormatter: p => fmt(p.value) },
-    { field: 'pct_complete', headerName: '% Done', width: 140, cellRenderer: ProgressCell },
-    { field: 'price_per_bu', headerName: '$/bu', width: 90, valueFormatter: p => p.value ? `$${p.value.toFixed(2)}` : '—' },
-    { field: 'contract_value', headerName: 'Value', width: 120, valueFormatter: p => p.value ? `$${(p.value / 1000).toFixed(0)}K` : '—' },
-    { field: 'elevator_site', headerName: 'Elevator', width: 120 },
+    { field: 'contract_number', headerName: '#', width: 110, pinned: 'left', hide: isHidden('contract_number') },
+    { field: 'counterparty.name', headerName: 'Buyer', width: 140, hide: isHidden('counterparty.name') },
+    { field: 'commodity.name', headerName: 'Crop', width: 120, hide: isHidden('commodity.name') },
+    { field: 'grade', headerName: 'Grade', width: 100, hide: isHidden('grade') },
+    { field: 'pricing_type', headerName: 'Type', width: 90, cellRenderer: p => <PricingChip value={p.value} />, hide: isHidden('pricing_type') },
+    { field: 'contracted_mt', headerName: 'Qty (MT)', width: 110, valueFormatter: p => fmt(p.value), hide: isHidden('contracted_mt') },
+    { field: 'delivered_mt', headerName: 'Hauled', width: 100, valueFormatter: p => fmt(p.value), hide: isHidden('delivered_mt') },
+    { field: 'remaining_mt', headerName: 'Remaining', width: 100, valueFormatter: p => fmt(p.value), hide: isHidden('remaining_mt') },
+    { field: 'pct_complete', headerName: '% Done', width: 140, cellRenderer: ProgressCell, hide: isHidden('pct_complete') },
+    { field: 'price_per_bu', headerName: '$/bu', width: 90, valueFormatter: p => p.value ? `$${p.value.toFixed(2)}` : '—', hide: isHidden('price_per_bu') },
+    { field: 'price_per_mt', headerName: '$/MT', width: 100, valueFormatter: p => p.value ? `$${fmt(p.value)}` : '—', hide: isHidden('price_per_mt') },
+    { field: 'contract_value', headerName: 'Value', width: 120, valueFormatter: p => p.value ? `$${(p.value / 1000).toFixed(0)}K` : '—', hide: isHidden('contract_value') },
+    { field: 'elevator_site', headerName: 'Elevator', width: 120, hide: isHidden('elevator_site') },
     {
-      headerName: 'Delivery Window', width: 160,
+      field: 'delivery_window', headerName: 'Delivery Window', width: 160, hide: isHidden('delivery_window'),
       valueGetter: p => {
         const s = p.data.delivery_start ? new Date(p.data.delivery_start).toLocaleDateString('en-CA') : '';
         const e = p.data.delivery_end ? new Date(p.data.delivery_end).toLocaleDateString('en-CA') : '';
         return s || e ? `${s} — ${e}` : '—';
       },
     },
-    { field: 'status', headerName: 'Status', width: 120, cellRenderer: p => <StatusChip value={p.value} /> },
-    { field: 'pricing_status', headerName: 'Pricing', width: 110, cellRenderer: p => <Chip label={p.value?.replace('_', ' ')} size="small" variant="outlined" sx={{ fontSize: 11 }} /> },
-    { field: 'notes', headerName: 'Notes', width: 150, flex: 1 },
+    { field: 'status', headerName: 'Status', width: 120, cellRenderer: p => <StatusChip value={p.value} />, hide: isHidden('status') },
+    { field: 'pricing_status', headerName: 'Pricing', width: 110, cellRenderer: p => <Chip label={p.value?.replace('_', ' ')} size="small" variant="outlined" sx={{ fontSize: 11 }} />, hide: isHidden('pricing_status') },
+    { field: 'notes', headerName: 'Notes', width: 150, flex: 1, hide: isHidden('notes') },
     {
-      headerName: 'Actions', width: 130, sortable: false, filter: false, pinned: 'right',
+      headerName: 'Actions', width: 160, sortable: false, filter: false, pinned: 'right',
       cellRenderer: p => {
         if (!canEdit) return null;
         const c = p.data;
@@ -208,11 +324,19 @@ export default function MarketingContracts() {
                 </IconButton>
               </Tooltip>
             )}
+            {isAdmin && (
+              <Tooltip title="Delete Permanently">
+                <IconButton size="small" color="error" onClick={() => handlePermanentDelete(c)}>
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            )}
           </Stack>
         );
       },
     },
-  ], [canEdit, isAdmin]);
+  ];
+  }, [canEdit, isAdmin, hiddenColumns]);
 
   const defaultColDef = useMemo(() => ({ sortable: true, resizable: true, filter: true }), []);
 
@@ -222,16 +346,37 @@ export default function MarketingContracts() {
         <Typography variant="h5" sx={{ fontWeight: 600 }}>Marketing Contracts</Typography>
         <Stack direction="row" spacing={1} alignItems="center">
           {selectedCount > 0 && isAdmin && (
-            <Button
-              variant="outlined"
-              color="error"
-              size="small"
-              startIcon={<DeleteIcon />}
-              onClick={handleDeleteSelected}
-            >
-              Cancel {selectedCount} contract{selectedCount !== 1 ? 's' : ''}
-            </Button>
+            <>
+              <Button
+                variant="outlined"
+                color="error"
+                size="small"
+                startIcon={<CancelIcon />}
+                onClick={handleDeleteSelected}
+              >
+                Cancel {selectedCount}
+              </Button>
+              <Button
+                variant="contained"
+                color="error"
+                size="small"
+                startIcon={<DeleteIcon />}
+                onClick={handlePermanentDeleteSelected}
+              >
+                Delete {selectedCount}
+              </Button>
+            </>
           )}
+          <Tooltip title="Export PDF">
+            <IconButton onClick={handleExportPdf} disabled={exporting}>
+              {exporting ? <CircularProgress size={20} /> : <PictureAsPdfIcon />}
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Toggle Columns">
+            <IconButton onClick={(e) => setColumnMenuAnchor(e.currentTarget)}>
+              <ViewColumnIcon />
+            </IconButton>
+          </Tooltip>
           {isAdmin && (
             <Tooltip title="Settings">
               <IconButton onClick={() => setSettingsOpen(true)}><SettingsIcon /></IconButton>
@@ -336,6 +481,25 @@ export default function MarketingContracts() {
         onClose={() => setSettingsOpen(false)}
         farmId={currentFarm?.id}
       />
+
+      {/* Column Toggle Menu */}
+      <Menu
+        anchorEl={columnMenuAnchor}
+        open={Boolean(columnMenuAnchor)}
+        onClose={() => setColumnMenuAnchor(null)}
+        slotProps={{ paper: { sx: { maxHeight: 400 } } }}
+      >
+        <MenuItem dense disabled>
+          <Typography variant="caption" sx={{ fontWeight: 600 }}>Show/Hide Columns</Typography>
+        </MenuItem>
+        <Divider />
+        {TOGGLEABLE_COLUMNS.map(col => (
+          <MenuItem key={col.key} dense onClick={() => toggleColumn(col.key)}>
+            <Checkbox size="small" checked={!hiddenColumns.includes(col.key)} sx={{ p: 0, mr: 1 }} />
+            <ListItemText primary={col.label} primaryTypographyProps={{ variant: 'body2' }} />
+          </MenuItem>
+        ))}
+      </Menu>
 
       <Snackbar open={snack.open} autoHideDuration={6000} onClose={() => setSnack(s => ({ ...s, open: false }))}>
         <Alert severity={snack.severity} onClose={() => setSnack(s => ({ ...s, open: false }))}>{snack.message}</Alert>

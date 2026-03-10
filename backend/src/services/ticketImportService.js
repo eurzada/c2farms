@@ -149,7 +149,8 @@ function findHeader(headers, ...candidates) {
  */
 export async function previewTicketImport(farmId, csvText) {
   const rows = parseCsv(csvText);
-  if (rows.length === 0) return { tickets: [], errors: ['No data rows found in CSV'] };
+  const emptySummary = { total: 0, new_count: 0, update_count: 0, matched_contracts: 0, unmatched_contracts: 0 };
+  if (rows.length === 0) return { tickets: [], errors: ['No data rows found in CSV — the file may only contain a header row.'], summary: emptySummary, column_mappings: {} };
 
   const headers = Object.keys(rows[0]);
 

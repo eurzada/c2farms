@@ -284,6 +284,7 @@ export default function ContractBatchImportDialog({ open, onClose, farmId, onImp
                     <TableCell>Commodity</TableCell>
                     <TableCell align="right">Qty (MT)</TableCell>
                     <TableCell align="right">$/bu</TableCell>
+                    <TableCell align="right">$/MT</TableCell>
                     <TableCell width={40} />
                   </TableRow>
                 </TableHead>
@@ -316,6 +317,7 @@ export default function ContractBatchImportDialog({ open, onClose, farmId, onImp
                         <TableCell>{r.extraction?.commodity || '—'}</TableCell>
                         <TableCell align="right">{r.extraction?.quantity_mt ? fmt(r.extraction.quantity_mt) : '—'}</TableCell>
                         <TableCell align="right">{r.extraction?.price_per_bu ? `$${r.extraction.price_per_bu.toFixed(2)}` : '—'}</TableCell>
+                        <TableCell align="right">{r.extraction?.price_per_mt ? `$${fmt(r.extraction.price_per_mt)}` : '—'}</TableCell>
                         <TableCell>
                           <IconButton size="small">
                             {expandedRow === r.custom_id ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
@@ -323,7 +325,7 @@ export default function ContractBatchImportDialog({ open, onClose, farmId, onImp
                         </TableCell>
                       </TableRow>
                       <TableRow key={`${r.custom_id}-detail`}>
-                        <TableCell colSpan={9} sx={{ py: 0, border: expandedRow === r.custom_id ? undefined : 'none' }}>
+                        <TableCell colSpan={10} sx={{ py: 0, border: expandedRow === r.custom_id ? undefined : 'none' }}>
                           <Collapse in={expandedRow === r.custom_id}>
                             <Box sx={{ py: 1, px: 2 }}>
                               {r.status === 'success' ? (

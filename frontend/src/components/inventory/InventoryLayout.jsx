@@ -5,11 +5,13 @@ import InventoryIcon from '@mui/icons-material/Inventory2';
 import DescriptionIcon from '@mui/icons-material/Description';
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import CountertopsIcon from '@mui/icons-material/Countertops';
+import TimelineIcon from '@mui/icons-material/Timeline';
 import { useFarm } from '../../contexts/FarmContext';
 
 const TABS = [
   { label: 'Dashboard', path: '/inventory/dashboard', icon: <DashboardIcon />, enterprise: true },
   { label: 'Bin Inventory', path: '/inventory/bins', icon: <InventoryIcon /> },
+  { label: 'Count History', path: '/inventory/history', icon: <TimelineIcon />, enterprise: true },
   { label: 'Contracts', path: '/inventory/contracts', icon: <DescriptionIcon />, enterprise: true },
   { label: 'Reconciliation', path: '/inventory/recon', icon: <CompareArrowsIcon />, enterprise: true },
   { label: 'Bin Count', path: '/inventory/count', icon: <CountertopsIcon />, roles: ['admin', 'manager'] },

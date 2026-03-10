@@ -363,6 +363,24 @@ export async function importInventoryFromExcel(farmId, buffer, fileName) {
     }
   }
 
+  // Auto-close older periods — only the most recent period stays open
+  try {
+    const allPeriods = await prisma.countPeriod.findMany({
+      where: { farm_id: farmId },
+      orderBy: { period_date: 'desc' },
+    });
+    if (allPeriods.length > 1) {
+      // Close everything except the newest
+      const toClose = allPeriods.slice(1).filter(p => p.status === 'open');
+      if (toClose.length > 0) {
+        await prisma.countPeriod.updateMany({
+          where: { id: { in: toClose.map(p => p.id) } },
+          data: { status: 'closed' },
+        });
+      }
+    }
+  } catch { /* non-fatal — don't fail the import over auto-close */ }
+
   return { summary, errors };
 }
 

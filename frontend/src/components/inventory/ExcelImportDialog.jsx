@@ -108,6 +108,50 @@ export default function ExcelImportDialog({ open, onClose, farmId, onImportCompl
               <Typography variant="body2">Contracts: {result.summary.contracts}</Typography>
               <Typography variant="body2">Count periods: {result.summary.periods}</Typography>
             </Box>
+
+            {/* Change summary — show delta from prior period */}
+            {result.changes && (
+              <Box sx={{ mt: 1, p: 1.5, bgcolor: 'grey.50', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                  Inventory Change{result.changes.prev_period_label ? ` (${result.changes.prev_period_label} → ${result.changes.period_label})` : ` (${result.changes.period_label})`}
+                </Typography>
+                <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #ddd' }}>
+                      <th style={{ textAlign: 'left', padding: '2px 4px' }}>Commodity</th>
+                      {result.changes.prev_period_label && <th style={{ textAlign: 'right', padding: '2px 4px' }}>Previous</th>}
+                      <th style={{ textAlign: 'right', padding: '2px 4px' }}>Current</th>
+                      {result.changes.prev_period_label && <th style={{ textAlign: 'right', padding: '2px 4px' }}>Change</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.changes.commodities.map(c => (
+                      <tr key={c.name}>
+                        <td style={{ padding: '2px 4px' }}>{c.name}</td>
+                        {result.changes.prev_period_label && <td style={{ textAlign: 'right', padding: '2px 4px' }}>{c.previous_mt.toLocaleString()} MT</td>}
+                        <td style={{ textAlign: 'right', padding: '2px 4px' }}>{c.current_mt.toLocaleString()} MT</td>
+                        {result.changes.prev_period_label && (
+                          <td style={{ textAlign: 'right', padding: '2px 4px', color: c.delta_mt < 0 ? '#d32f2f' : c.delta_mt > 0 ? '#2e7d32' : undefined, fontWeight: 600 }}>
+                            {c.delta_mt > 0 ? '+' : ''}{c.delta_mt.toLocaleString()} MT
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                    <tr style={{ borderTop: '1px solid #ddd', fontWeight: 700 }}>
+                      <td style={{ padding: '2px 4px' }}>Total</td>
+                      {result.changes.prev_period_label && <td style={{ textAlign: 'right', padding: '2px 4px' }}>{result.changes.total_previous_mt.toLocaleString()} MT</td>}
+                      <td style={{ textAlign: 'right', padding: '2px 4px' }}>{result.changes.total_current_mt.toLocaleString()} MT</td>
+                      {result.changes.prev_period_label && (
+                        <td style={{ textAlign: 'right', padding: '2px 4px', color: result.changes.total_delta_mt < 0 ? '#d32f2f' : result.changes.total_delta_mt > 0 ? '#2e7d32' : undefined }}>
+                          {result.changes.total_delta_mt > 0 ? '+' : ''}{result.changes.total_delta_mt.toLocaleString()} MT
+                        </td>
+                      )}
+                    </tr>
+                  </tbody>
+                </table>
+              </Box>
+            )}
+
             {result.errors?.length > 0 && (
               <Alert severity="warning">
                 {result.errors.length} warning(s):

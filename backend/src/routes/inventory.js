@@ -162,6 +162,101 @@ router.put('/:farmId/inventory/bins/:id', authenticate, requireRole('admin', 'ma
   } catch (err) { next(err); }
 });
 
+// GET count history — timeline of all periods with totals and deltas
+router.get('/:farmId/inventory/count-history', authenticate, async (req, res, next) => {
+  try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+
+    const periods = await prisma.countPeriod.findMany({
+      where: { farm_id: farmId },
+      orderBy: { period_date: 'asc' },
+    });
+
+    if (periods.length === 0) return res.json({ periods: [] });
+
+    const history = [];
+    let prevTotalMt = null;
+
+    for (let i = 0; i < periods.length; i++) {
+      const period = periods[i];
+
+      // Get all bin counts for this period
+      const counts = await prisma.binCount.findMany({
+        where: { farm_id: farmId, count_period_id: period.id },
+        include: {
+          commodity: true,
+          bin: { include: { location: true } },
+        },
+      });
+
+      // Aggregate totals (exclude FERT)
+      const grainCounts = counts.filter(c => c.commodity && c.commodity.code !== 'FERT');
+      const totalKg = grainCounts.reduce((s, c) => s + (c.kg || 0), 0);
+      const totalMt = totalKg / 1000;
+
+      // Per-commodity breakdown
+      const byCommodity = {};
+      for (const c of grainCounts) {
+        const name = c.commodity?.name || 'Unknown';
+        if (!byCommodity[name]) byCommodity[name] = { name, kg: 0, bins: 0 };
+        byCommodity[name].kg += c.kg || 0;
+        if (c.bushels > 0) byCommodity[name].bins++;
+      }
+      const commodities = Object.values(byCommodity)
+        .map(c => ({ name: c.name, mt: c.kg / 1000, bins: c.bins }))
+        .sort((a, b) => b.mt - a.mt);
+
+      // Per-location breakdown
+      const byLocation = {};
+      for (const c of grainCounts) {
+        const locName = c.bin?.location?.name || 'Unknown';
+        if (!byLocation[locName]) byLocation[locName] = { name: locName, kg: 0, bins: 0 };
+        byLocation[locName].kg += c.kg || 0;
+        if (c.bushels > 0) byLocation[locName].bins++;
+      }
+      const locations = Object.values(byLocation)
+        .map(l => ({ name: l.name, mt: l.kg / 1000, bins: l.bins }))
+        .sort((a, b) => b.mt - a.mt);
+
+      // Hauled between this and previous period
+      let hauledMt = 0;
+      if (i > 0) {
+        const prevPeriod = periods[i - 1];
+        const deliveries = await prisma.delivery.findMany({
+          where: {
+            farm_id: farmId,
+            delivery_date: { gt: prevPeriod.period_date, lte: period.period_date },
+          },
+        });
+        hauledMt = deliveries.reduce((s, d) => s + (d.mt_delivered || 0), 0);
+      }
+
+      // Delta from previous period
+      const deltaMt = prevTotalMt !== null ? totalMt - prevTotalMt : null;
+
+      history.push({
+        id: period.id,
+        period_date: period.period_date,
+        crop_year: period.crop_year,
+        status: period.status,
+        total_mt: Math.round(totalMt * 10) / 10,
+        bin_count: counts.length,
+        occupied_bins: counts.filter(c => c.bushels > 0).length,
+        location_count: Object.keys(byLocation).length,
+        delta_mt: deltaMt !== null ? Math.round(deltaMt * 10) / 10 : null,
+        hauled_mt: Math.round(hauledMt * 10) / 10,
+        commodities,
+        locations,
+      });
+
+      prevTotalMt = totalMt;
+    }
+
+    // Return in reverse chronological order (newest first)
+    res.json({ periods: history.reverse() });
+  } catch (err) { next(err); }
+});
+
 // GET count periods
 router.get('/:farmId/inventory/count-periods', authenticate, async (req, res, next) => {
   try {
@@ -453,7 +548,73 @@ router.post('/:farmId/inventory/import', authenticate, requireRole('admin', 'man
     }
     const { farmId } = await resolveInventoryFarm(req.params.farmId);
     const result = await importInventoryFromExcel(farmId, req.file.buffer, req.file.originalname);
-    res.json(result);
+
+    // Compute change summary: current period vs previous period
+    let changes = null;
+    try {
+      const periods = await prisma.countPeriod.findMany({
+        where: { farm_id: farmId },
+        orderBy: { period_date: 'desc' },
+        take: 2,
+      });
+
+      if (periods.length >= 1) {
+        const currentPeriod = periods[0];
+        const prevPeriod = periods.length >= 2 ? periods[1] : null;
+
+        // Helper to format period label
+        const formatLabel = (p) => {
+          const d = new Date(p.period_date);
+          return d.toLocaleDateString('en-CA', { year: 'numeric', month: 'short' });
+        };
+
+        // Aggregate bin counts by commodity for a period (exclude FERT)
+        const aggregatePeriod = async (periodId) => {
+          const counts = await prisma.binCount.findMany({
+            where: { farm_id: farmId, count_period_id: periodId },
+            include: { commodity: true },
+          });
+          const byCommodity = {};
+          for (const c of counts) {
+            if (!c.commodity || c.commodity.code === 'FERT') continue;
+            const name = c.commodity.name;
+            if (!byCommodity[name]) byCommodity[name] = 0;
+            byCommodity[name] += (c.kg || 0) / 1000;
+          }
+          return byCommodity;
+        };
+
+        const currentAgg = await aggregatePeriod(currentPeriod.id);
+        const prevAgg = prevPeriod ? await aggregatePeriod(prevPeriod.id) : {};
+
+        // Merge commodity keys from both periods
+        const allCommodities = [...new Set([...Object.keys(currentAgg), ...Object.keys(prevAgg)])].sort();
+
+        const commodities = allCommodities.map(name => {
+          const current_mt = Math.round((currentAgg[name] || 0) * 10) / 10;
+          const previous_mt = Math.round((prevAgg[name] || 0) * 10) / 10;
+          const delta_mt = Math.round((current_mt - previous_mt) * 10) / 10;
+          return { name, current_mt, previous_mt, delta_mt };
+        });
+
+        const total_current_mt = Math.round(commodities.reduce((s, c) => s + c.current_mt, 0) * 10) / 10;
+        const total_previous_mt = Math.round(commodities.reduce((s, c) => s + c.previous_mt, 0) * 10) / 10;
+        const total_delta_mt = Math.round((total_current_mt - total_previous_mt) * 10) / 10;
+
+        changes = {
+          period_label: formatLabel(currentPeriod),
+          prev_period_label: prevPeriod ? formatLabel(prevPeriod) : null,
+          commodities,
+          total_current_mt,
+          total_previous_mt,
+          total_delta_mt,
+        };
+      }
+    } catch (_) {
+      // Non-critical — return result without changes if summary fails
+    }
+
+    res.json({ ...result, changes });
   } catch (err) { next(err); }
 });
 

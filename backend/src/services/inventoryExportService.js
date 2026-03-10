@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs';
 import prisma from '../config/database.js';
 import {
-  getLatestPeriod, getAvailableToSell, convertKgToMt,
+  getLatestPeriod, getAvailableToSell, convertKgToMt, getLocationCommodityMatrix,
 } from './inventoryService.js';
 
 // ─── Data fetchers (shared by all export formats) ───
@@ -170,103 +170,54 @@ export async function generateInventoryExcel(farmId) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'C2 Farms';
 
-  const farm = await prisma.farm.findUnique({ where: { id: farmId } });
-  const farmName = farm?.name || 'Farm';
-  const numFmt = '#,##0.00';
-  const intFmt = '#,##0';
-
-  // Sheet 1: Current Inventory
   const { rows: binRows, periodLabel } = await getBinInventoryData(farmId);
+
+  // Sheet 1: Current Inventory (raw data)
   const invSheet = workbook.addWorksheet('Current Inventory');
-  invSheet.addRow([`${farmName} — Bin Inventory (${periodLabel})`]).font = { bold: true, size: 12 };
-  invSheet.addRow([]);
-  const invHeader = invSheet.addRow(['Location', 'Bin #', 'Type', 'Capacity (bu)', 'Commodity', 'Bushels', 'KG', 'MT', 'Crop Year']);
-  invHeader.font = { bold: true };
-  invSheet.views = [{ state: 'frozen', ySplit: 3 }];
-
+  invSheet.addRow(['Location', 'Bin #', 'Type', 'Capacity (bu)', 'Commodity', 'Bushels', 'KG', 'MT', 'Crop Year']);
+  invSheet.views = [{ state: 'frozen', ySplit: 1 }];
   for (const r of binRows) {
-    const row = invSheet.addRow([r.location, r.bin_number, r.bin_type, r.capacity_bu, r.commodity, r.bushels, r.kg, r.mt, r.crop_year]);
-    row.getCell(4).numFmt = intFmt;
-    row.getCell(6).numFmt = intFmt;
-    row.getCell(7).numFmt = intFmt;
-    row.getCell(8).numFmt = numFmt;
+    invSheet.addRow([r.location, r.bin_number, r.bin_type, r.capacity_bu, r.commodity, r.bushels, r.kg, r.mt, r.crop_year]);
   }
-
-  // Subtotals by location
-  invSheet.addRow([]);
-  const locSummary = invSheet.addRow(['TOTALS', '', '', '', '', '', '', binRows.reduce((s, r) => s + r.mt, 0)]);
-  locSummary.font = { bold: true };
-  locSummary.getCell(8).numFmt = numFmt;
-
-  invSheet.columns = [
-    { width: 14 }, { width: 10 }, { width: 10 }, { width: 14 },
-    { width: 16 }, { width: 12 }, { width: 12 }, { width: 12 }, { width: 12 },
-  ];
 
   // Sheet 2: Contracts
   const contractRows = await getContractsData(farmId);
   const conSheet = workbook.addWorksheet('Contracts');
-  conSheet.addRow([`${farmName} — Contracts`]).font = { bold: true, size: 12 };
-  conSheet.addRow([]);
-  const conHeader = conSheet.addRow(['Contract #', 'Buyer', 'Commodity', 'Contracted MT', 'Hauled MT', 'Remaining MT', '% Complete', 'Status']);
-  conHeader.font = { bold: true };
-  conSheet.views = [{ state: 'frozen', ySplit: 3 }];
-
+  conSheet.addRow(['Contract #', 'Buyer', 'Commodity', 'Contracted MT', 'Hauled MT', 'Remaining MT', '% Complete', 'Status']);
+  conSheet.views = [{ state: 'frozen', ySplit: 1 }];
   for (const c of contractRows) {
-    const row = conSheet.addRow([c.contract_number, c.buyer, c.commodity, c.contracted_mt, c.hauled_mt, c.remaining_mt, c.pct_complete / 100, c.status]);
-    row.getCell(4).numFmt = numFmt;
-    row.getCell(5).numFmt = numFmt;
-    row.getCell(6).numFmt = numFmt;
-    row.getCell(7).numFmt = '0.0%';
+    conSheet.addRow([c.contract_number, c.buyer, c.commodity, c.contracted_mt, c.hauled_mt, c.remaining_mt, c.pct_complete / 100, c.status]);
   }
-
-  conSheet.columns = [
-    { width: 14 }, { width: 22 }, { width: 16 }, { width: 16 },
-    { width: 14 }, { width: 16 }, { width: 14 }, { width: 12 },
-  ];
 
   // Sheet 3: Reconciliation
   const reconRows = await getReconciliationData(farmId);
   const reconSheet = workbook.addWorksheet('Reconciliation');
-  reconSheet.addRow([`${farmName} — Reconciliation`]).font = { bold: true, size: 12 };
-  reconSheet.addRow([]);
-  const reconHeader = reconSheet.addRow(['Commodity', 'Beginning MT', 'Ending MT', 'Hauled MT', 'Variance MT', 'Variance %']);
-  reconHeader.font = { bold: true };
-  reconSheet.views = [{ state: 'frozen', ySplit: 3 }];
-
+  reconSheet.addRow(['Commodity', 'Beginning MT', 'Ending MT', 'Hauled MT', 'Variance MT', 'Variance %']);
+  reconSheet.views = [{ state: 'frozen', ySplit: 1 }];
   for (const r of reconRows) {
-    const row = reconSheet.addRow([r.commodity, r.beginning_mt, r.ending_mt, r.hauled_mt, r.variance_mt, r.variance_pct / 100]);
-    row.getCell(2).numFmt = numFmt;
-    row.getCell(3).numFmt = numFmt;
-    row.getCell(4).numFmt = numFmt;
-    row.getCell(5).numFmt = numFmt;
-    row.getCell(6).numFmt = '0.0%';
+    reconSheet.addRow([r.commodity, r.beginning_mt, r.ending_mt, r.hauled_mt, r.variance_mt, r.variance_pct / 100]);
   }
-
-  reconSheet.columns = [
-    { width: 18 }, { width: 16 }, { width: 14 }, { width: 14 }, { width: 14 }, { width: 14 },
-  ];
 
   // Sheet 4: Available to Sell
   const atsRows = await getAvailableToSell(farmId);
   const atsSheet = workbook.addWorksheet('Available to Sell');
-  atsSheet.addRow([`${farmName} — Available to Sell`]).font = { bold: true, size: 12 };
-  atsSheet.addRow([]);
-  const atsHeader = atsSheet.addRow(['Commodity', 'Inventory MT', 'Contracted MT', 'Available MT', '% Committed']);
-  atsHeader.font = { bold: true };
-  atsSheet.views = [{ state: 'frozen', ySplit: 3 }];
-
+  atsSheet.addRow(['Commodity', 'Inventory MT', 'Contracted MT', 'Available MT', '% Committed']);
+  atsSheet.views = [{ state: 'frozen', ySplit: 1 }];
   for (const a of atsRows) {
-    const row = atsSheet.addRow([a.commodity_name, a.total_mt, a.contracted_mt, a.available_mt, a.pct_committed / 100]);
-    row.getCell(2).numFmt = numFmt;
-    row.getCell(3).numFmt = numFmt;
-    row.getCell(4).numFmt = numFmt;
-    row.getCell(5).numFmt = '0.0%';
+    atsSheet.addRow([a.commodity_name, a.total_mt, a.contracted_mt, a.available_mt, a.pct_committed / 100]);
   }
 
-  atsSheet.columns = [
-    { width: 18 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 14 },
-  ];
+  // Sheet 5: Location × Commodity Matrix
+  const matrixData = await getLocationCommodityMatrix(farmId);
+  if (matrixData.rows.length > 0) {
+    const matSheet = workbook.addWorksheet('Location × Commodity');
+    matSheet.addRow(['Location', ...matrixData.commodities, 'Total']);
+    matSheet.views = [{ state: 'frozen', ySplit: 1 }];
+    for (const r of matrixData.rows) {
+      matSheet.addRow([r.location, ...matrixData.commodities.map(c => r.values[c] || 0), r.total]);
+    }
+    matSheet.addRow(['Total', ...matrixData.commodities.map(c => matrixData.totals[c] || 0), matrixData.grandTotal]);
+  }
 
   return workbook;
 }
@@ -277,7 +228,6 @@ export async function generateInventoryPdf(farmId, { locationId } = {}) {
   const farm = await prisma.farm.findUnique({ where: { id: farmId } });
   const farmName = farm?.name || 'Farm';
 
-  // Resolve location name for header
   let locationLabel = '';
   if (locationId) {
     const loc = await prisma.inventoryLocation.findUnique({ where: { id: locationId } });
@@ -285,133 +235,377 @@ export async function generateInventoryPdf(farmId, { locationId } = {}) {
   }
 
   const noBorder = [false, false, false, false];
-  const bottomBorder = [false, false, false, true];
+  const dateStr = new Date().toLocaleDateString('en-CA', { year: 'numeric', month: 'long', day: 'numeric' });
 
-  // Fetch all data (bin inventory filtered by location if provided)
+  // Fetch all data
   const { rows: binRows, periodLabel } = await getBinInventoryData(farmId, { locationId });
   const contractRows = await getContractsData(farmId);
   const reconRows = await getReconciliationData(farmId);
   const atsRows = await getAvailableToSell(farmId);
+  const matrixData = await getLocationCommodityMatrix(farmId);
 
-  const fmtNum = (v, dec = 1) => {
-    if (v == null || v === '') return '-';
-    return typeof v === 'number' ? v.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec }) : String(v);
+  const fmtNum = (v) => {
+    if (v == null || v === '') return '—';
+    return typeof v === 'number' ? v.toLocaleString('en-US', { maximumFractionDigits: 1 }) : String(v);
   };
-  const fmtPct = (v) => v != null ? `${v.toFixed(1)}%` : '-';
-  const fmtInt = (v) => typeof v === 'number' ? v.toLocaleString('en-US', { maximumFractionDigits: 0 }) : String(v || '-');
+  const fmtDollar = (v) => v != null ? `$${v.toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '$0';
+  const fmtPct = (v) => v != null ? `${v.toFixed(1)}%` : '—';
+  const fmtInt = (v) => typeof v === 'number' ? v.toLocaleString('en-US', { maximumFractionDigits: 0 }) : String(v || '—');
 
-  const tableLayout = {
-    hLineWidth: () => 0.5,
-    vLineWidth: () => 0,
-    hLineColor: () => '#000000',
-    paddingLeft: () => 3,
-    paddingRight: () => 3,
-    paddingTop: () => 1,
-    paddingBottom: () => 1,
+  // ─── Styling ───
+  const colors = { primary: '#1565C0', accent: '#2E7D32', warn: '#E65100', grey: '#757575', lightGrey: '#F5F5F5', headerBg: '#1565C0', headerText: '#FFFFFF' };
+  const cellPad = { paddingLeft: () => 6, paddingRight: () => 6, paddingTop: () => 4, paddingBottom: () => 4 };
+  const cleanLayout = { hLineWidth: () => 0, vLineWidth: () => 0, ...cellPad };
+
+  // ─── Compute KPIs ───
+  const totalMt = binRows.reduce((s, r) => s + r.mt, 0);
+  const totalBins = binRows.length;
+  const occupiedBins = binRows.filter(r => r.mt > 0).length;
+  const totalContracted = contractRows.reduce((s, c) => s + c.contracted_mt, 0);
+  const totalHauled = contractRows.reduce((s, c) => s + c.hauled_mt, 0);
+  const availableMt = atsRows.reduce((s, a) => s + a.available_mt, 0);
+  const locationCount = matrixData.rows?.length || 0;
+  const cropCount = matrixData.commodities?.length || 0;
+
+  // ─── Title bar ───
+  const titleBar = {
+    table: {
+      widths: ['*'],
+      body: [[{
+        stack: [
+          { text: farmName.toUpperCase(), fontSize: 9, color: '#FFFFFF', bold: true, margin: [0, 0, 0, 2] },
+          { text: locationLabel ? `${locationLabel} — Grain Inventory Report` : 'Grain Inventory Report', fontSize: 16, color: '#FFFFFF', bold: true },
+          { text: `Period: ${periodLabel}  |  Generated: ${dateStr}`, fontSize: 8, color: '#B3D4FC' },
+        ],
+        fillColor: colors.primary,
+        border: noBorder,
+        margin: [8, 8, 8, 8],
+      }]],
+    },
+    layout: { hLineWidth: () => 0, vLineWidth: () => 0 },
+    margin: [0, 0, 0, 14],
   };
 
-  // Table 1: Inventory
-  const invBody = [
-    ['Location', 'Bin #', 'Type', 'Capacity', 'Commodity', 'Bushels', 'KG', 'MT', 'Crop Year'].map(h => ({ text: h, bold: true, border: bottomBorder })),
-    ...binRows.map(r => [
-      { text: r.location, border: noBorder },
-      { text: r.bin_number, border: noBorder },
-      { text: r.bin_type, border: noBorder },
-      { text: fmtInt(r.capacity_bu), alignment: 'right', border: noBorder },
-      { text: r.commodity, border: noBorder },
-      { text: fmtInt(r.bushels), alignment: 'right', border: noBorder },
-      { text: fmtInt(r.kg), alignment: 'right', border: noBorder },
-      { text: fmtNum(r.mt), alignment: 'right', border: noBorder },
-      { text: String(r.crop_year || ''), border: noBorder },
-    ]),
+  // ─── KPI cards ───
+  const kpiCard = (label, value, sub) => ({
+    stack: [
+      { text: label, fontSize: 7, color: colors.grey, margin: [0, 0, 0, 2] },
+      { text: value, fontSize: 16, bold: true, color: colors.primary },
+      ...(sub ? [{ text: sub, fontSize: 7, color: colors.grey, margin: [0, 2, 0, 0] }] : []),
+    ],
+    alignment: 'center',
+    margin: [0, 4, 0, 4],
+  });
+
+  const kpiTable = {
+    table: {
+      widths: ['*', '*', '*', '*', '*'],
+      body: [[
+        kpiCard('Total Inventory', `${fmtNum(totalMt)} MT`, `${locationCount} locations`),
+        kpiCard('Bins', `${occupiedBins}`, `of ${totalBins} total`),
+        kpiCard('Contracted', `${fmtNum(totalContracted)} MT`, `${fmtNum(totalHauled)} MT hauled`),
+        kpiCard('Available to Sell', `${fmtNum(availableMt)} MT`, totalMt > 0 ? `${((availableMt / totalMt) * 100).toFixed(0)}% of inventory` : ''),
+        kpiCard('Commodities', `${cropCount}`, `across ${locationCount} sites`),
+      ]],
+    },
+    layout: {
+      hLineWidth: () => 0.5, vLineWidth: () => 0.5,
+      hLineColor: () => '#E0E0E0', vLineColor: () => '#E0E0E0',
+      ...cellPad,
+    },
+    margin: [0, 0, 0, 16],
+  };
+
+  // ─── Crop Inventory Summary ───
+  const cropMap = {};
+  for (const r of binRows) {
+    if (!r.commodity) continue;
+    if (!cropMap[r.commodity]) cropMap[r.commodity] = { mt: 0, bins: 0, bushels: 0 };
+    cropMap[r.commodity].mt += r.mt;
+    cropMap[r.commodity].bins++;
+    cropMap[r.commodity].bushels += r.bushels;
+  }
+  const cropSummary = Object.entries(cropMap).sort((a, b) => b[1].mt - a[1].mt);
+  const maxCropMt = cropSummary.length > 0 ? cropSummary[0][1].mt : 1;
+
+  const cropTable = {
+    table: {
+      headerRows: 1,
+      widths: ['auto', 'auto', 'auto', 'auto', '*'],
+      body: [
+        [
+          { text: 'Commodity', bold: true, fontSize: 8, color: colors.headerText, fillColor: colors.headerBg, border: noBorder },
+          { text: 'Bins', bold: true, fontSize: 8, color: colors.headerText, fillColor: colors.headerBg, alignment: 'right', border: noBorder },
+          { text: 'Bushels', bold: true, fontSize: 8, color: colors.headerText, fillColor: colors.headerBg, alignment: 'right', border: noBorder },
+          { text: 'Metric Tons', bold: true, fontSize: 8, color: colors.headerText, fillColor: colors.headerBg, alignment: 'right', border: noBorder },
+          { text: '', fillColor: colors.headerBg, border: noBorder },
+        ],
+        ...cropSummary.map(([name, data], i) => {
+          const barWidth = Math.max(8, Math.round((data.mt / maxCropMt) * 140));
+          const bg = i % 2 === 0 ? '#FFFFFF' : colors.lightGrey;
+          return [
+            { text: name, bold: true, fontSize: 8, fillColor: bg, border: noBorder },
+            { text: String(data.bins), fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder },
+            { text: fmtInt(data.bushels), fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder },
+            { text: fmtNum(data.mt), fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder },
+            {
+              table: { widths: [barWidth], body: [[{ text: '', fillColor: colors.accent, border: noBorder }]] },
+              layout: { hLineWidth: () => 0, vLineWidth: () => 0, paddingLeft: () => 0, paddingRight: () => 0, paddingTop: () => 3, paddingBottom: () => 3 },
+              fillColor: bg, border: noBorder,
+            },
+          ];
+        }),
+        // Totals
+        [
+          { text: 'Total', bold: true, fontSize: 8, fillColor: '#E8EAF6', border: noBorder },
+          { text: String(cropSummary.reduce((s, [, d]) => s + d.bins, 0)), bold: true, fontSize: 8, alignment: 'right', fillColor: '#E8EAF6', border: noBorder },
+          { text: fmtInt(cropSummary.reduce((s, [, d]) => s + d.bushels, 0)), bold: true, fontSize: 8, alignment: 'right', fillColor: '#E8EAF6', border: noBorder },
+          { text: fmtNum(totalMt), bold: true, fontSize: 8, alignment: 'right', fillColor: '#E8EAF6', border: noBorder },
+          { text: '', fillColor: '#E8EAF6', border: noBorder },
+        ],
+      ],
+    },
+    layout: cleanLayout,
+    margin: [0, 0, 0, 12],
+  };
+
+  // ─── Location × Commodity Matrix ───
+  const matrixContent = [];
+  if (matrixData.rows && matrixData.rows.length > 0) {
+    matrixContent.push(
+      { text: 'Inventory by Location (MT)', style: 'sectionHeader' },
+      {
+        table: {
+          headerRows: 1,
+          widths: ['*', ...matrixData.commodities.map(() => 'auto'), 'auto'],
+          body: [
+            [
+              { text: 'Location', bold: true, fontSize: 8, color: colors.headerText, fillColor: colors.headerBg, border: noBorder },
+              ...matrixData.commodities.map(c => ({ text: c, bold: true, fontSize: 8, color: colors.headerText, fillColor: colors.headerBg, alignment: 'right', border: noBorder })),
+              { text: 'Total', bold: true, fontSize: 8, color: colors.headerText, fillColor: colors.headerBg, alignment: 'right', border: noBorder },
+            ],
+            ...matrixData.rows.map((r, i) => {
+              const bg = i % 2 === 0 ? '#FFFFFF' : colors.lightGrey;
+              return [
+                { text: r.location, bold: true, fontSize: 8, fillColor: bg, border: noBorder },
+                ...matrixData.commodities.map(c => ({ text: r.values[c] ? fmtNum(r.values[c]) : '—', fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder })),
+                { text: fmtNum(r.total), fontSize: 8, alignment: 'right', bold: true, fillColor: bg, border: noBorder },
+              ];
+            }),
+            [
+              { text: 'Total', bold: true, fontSize: 8, fillColor: '#E8EAF6', border: noBorder },
+              ...matrixData.commodities.map(c => ({ text: fmtNum(matrixData.totals[c]), bold: true, fontSize: 8, alignment: 'right', fillColor: '#E8EAF6', border: noBorder })),
+              { text: fmtNum(matrixData.grandTotal), bold: true, fontSize: 8, alignment: 'right', fillColor: '#E8EAF6', border: noBorder },
+            ],
+          ],
+        },
+        layout: cleanLayout,
+        margin: [0, 0, 0, 12],
+      },
+    );
+  }
+
+  // ─── Available to Sell table ───
+  const atsTable = {
+    table: {
+      headerRows: 1,
+      widths: ['*', 'auto', 'auto', 'auto', 'auto', 'auto'],
+      body: [
+        [
+          { text: 'Commodity', bold: true, fontSize: 8, color: colors.headerText, fillColor: colors.headerBg, border: noBorder },
+          { text: 'Inventory (MT)', bold: true, fontSize: 8, color: colors.headerText, fillColor: colors.headerBg, alignment: 'right', border: noBorder },
+          { text: 'Contracted (MT)', bold: true, fontSize: 8, color: colors.headerText, fillColor: colors.headerBg, alignment: 'right', border: noBorder },
+          { text: 'Available (MT)', bold: true, fontSize: 8, color: colors.headerText, fillColor: colors.headerBg, alignment: 'right', border: noBorder },
+          { text: '% Committed', bold: true, fontSize: 8, color: colors.headerText, fillColor: colors.headerBg, alignment: 'right', border: noBorder },
+          { text: '', fillColor: colors.headerBg, border: noBorder },
+        ],
+        ...atsRows.map((a, i) => {
+          const pct = a.pct_committed || 0;
+          const barWidth = Math.max(4, Math.round(Math.min(pct, 100) * 1.2));
+          const barColor = pct > 90 ? '#D32F2F' : pct > 70 ? '#E65100' : colors.accent;
+          const bg = i % 2 === 0 ? '#FFFFFF' : colors.lightGrey;
+          return [
+            { text: a.commodity_name, bold: true, fontSize: 8, fillColor: bg, border: noBorder },
+            { text: fmtNum(a.total_mt), fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder },
+            { text: fmtNum(a.contracted_mt), fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder },
+            { text: fmtNum(a.available_mt), fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder,
+              ...(a.available_mt <= 0 ? { color: '#D32F2F', bold: true } : {}),
+            },
+            { text: fmtPct(pct), fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder,
+              ...(pct > 90 ? { color: '#D32F2F', bold: true } : {}),
+            },
+            {
+              table: { widths: [barWidth, Math.max(0, 120 - barWidth)], body: [[{ text: '', fillColor: barColor, border: noBorder }, { text: '', fillColor: '#E0E0E0', border: noBorder }]] },
+              layout: { hLineWidth: () => 0, vLineWidth: () => 0, paddingLeft: () => 0, paddingRight: () => 0, paddingTop: () => 3, paddingBottom: () => 3 },
+              fillColor: bg, border: noBorder,
+            },
+          ];
+        }),
+      ],
+    },
+    layout: cleanLayout,
+    margin: [0, 0, 0, 12],
+  };
+
+  // ─── Reconciliation table ───
+  const reconContent = [];
+  if (reconRows.length > 0) {
+    reconContent.push(
+      { text: 'Period Reconciliation', style: 'sectionHeader' },
+      {
+        table: {
+          headerRows: 1,
+          widths: ['*', 'auto', 'auto', 'auto', 'auto', 'auto'],
+          body: [
+            ['Commodity', 'Beginning (MT)', 'Ending (MT)', 'Hauled (MT)', 'Variance (MT)', 'Variance %'].map(h =>
+              ({ text: h, bold: true, fontSize: 8, color: colors.headerText, fillColor: colors.headerBg, border: noBorder })
+            ),
+            ...reconRows.map((r, i) => {
+              const bg = i % 2 === 0 ? '#FFFFFF' : colors.lightGrey;
+              const varColor = Math.abs(r.variance_pct) > 5 ? '#D32F2F' : undefined;
+              return [
+                { text: r.commodity, bold: true, fontSize: 8, fillColor: bg, border: noBorder },
+                { text: fmtNum(r.beginning_mt), fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder },
+                { text: fmtNum(r.ending_mt), fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder },
+                { text: fmtNum(r.hauled_mt), fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder },
+                { text: fmtNum(r.variance_mt), fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder, ...(varColor ? { color: varColor, bold: true } : {}) },
+                { text: fmtPct(r.variance_pct), fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder, ...(varColor ? { color: varColor, bold: true } : {}) },
+              ];
+            }),
+          ],
+        },
+        layout: cleanLayout,
+        margin: [0, 0, 0, 12],
+      },
+    );
+  }
+
+  // ─── Contracts summary table ───
+  const contractsTable = {
+    table: {
+      headerRows: 1,
+      widths: ['auto', '*', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto'],
+      body: [
+        ['Contract #', 'Buyer', 'Commodity', 'Contracted (MT)', 'Hauled (MT)', 'Remaining (MT)', '% Complete', 'Status'].map(h =>
+          ({ text: h, bold: true, fontSize: 8, color: colors.headerText, fillColor: colors.headerBg, border: noBorder })
+        ),
+        ...contractRows.map((c, i) => {
+          const bg = i % 2 === 0 ? '#FFFFFF' : colors.lightGrey;
+          return [
+            { text: c.contract_number, fontSize: 8, fillColor: bg, border: noBorder },
+            { text: c.buyer, fontSize: 8, fillColor: bg, border: noBorder },
+            { text: c.commodity, fontSize: 8, fillColor: bg, border: noBorder },
+            { text: fmtNum(c.contracted_mt), fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder },
+            { text: fmtNum(c.hauled_mt), fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder },
+            { text: fmtNum(c.remaining_mt), fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder },
+            { text: fmtPct(c.pct_complete), fontSize: 8, alignment: 'right', fillColor: bg, border: noBorder },
+            { text: c.status, fontSize: 8, fillColor: bg, border: noBorder },
+          ];
+        }),
+        // Totals
+        [
+          { text: `${contractRows.length} contracts`, bold: true, fontSize: 8, fillColor: '#E8EAF6', border: noBorder },
+          { text: '', fillColor: '#E8EAF6', border: noBorder },
+          { text: '', fillColor: '#E8EAF6', border: noBorder },
+          { text: fmtNum(totalContracted), bold: true, fontSize: 8, alignment: 'right', fillColor: '#E8EAF6', border: noBorder },
+          { text: fmtNum(totalHauled), bold: true, fontSize: 8, alignment: 'right', fillColor: '#E8EAF6', border: noBorder },
+          { text: fmtNum(totalContracted - totalHauled), bold: true, fontSize: 8, alignment: 'right', fillColor: '#E8EAF6', border: noBorder },
+          { text: totalContracted > 0 ? fmtPct((totalHauled / totalContracted) * 100) : '—', bold: true, fontSize: 8, alignment: 'right', fillColor: '#E8EAF6', border: noBorder },
+          { text: '', fillColor: '#E8EAF6', border: noBorder },
+        ],
+      ],
+    },
+    layout: cleanLayout,
+    margin: [0, 0, 0, 12],
+  };
+
+  // ─── Bin Detail table (landscape page) ───
+  const binDetailBody = [
+    ['Location', 'Bin #', 'Type', 'Capacity (bu)', 'Commodity', 'Bushels', 'MT', 'Crop Year'].map(h =>
+      ({ text: h, bold: true, fontSize: 7, color: colors.headerText, fillColor: colors.headerBg, border: noBorder })
+    ),
+    ...binRows.map((r, i) => {
+      const bg = i % 2 === 0 ? '#FFFFFF' : colors.lightGrey;
+      return [
+        { text: r.location, fontSize: 7, fillColor: bg, border: noBorder },
+        { text: r.bin_number, fontSize: 7, fillColor: bg, border: noBorder },
+        { text: r.bin_type, fontSize: 7, fillColor: bg, border: noBorder },
+        { text: fmtInt(r.capacity_bu), fontSize: 7, alignment: 'right', fillColor: bg, border: noBorder },
+        { text: r.commodity, fontSize: 7, fillColor: bg, border: noBorder },
+        { text: fmtInt(r.bushels), fontSize: 7, alignment: 'right', fillColor: bg, border: noBorder },
+        { text: fmtNum(r.mt), fontSize: 7, alignment: 'right', fillColor: bg, border: noBorder },
+        { text: String(r.crop_year || ''), fontSize: 7, fillColor: bg, border: noBorder },
+      ];
+    }),
   ];
 
-  // Table 2: Contracts
-  const conBody = [
-    ['Contract #', 'Buyer', 'Commodity', 'Contracted MT', 'Hauled MT', 'Remaining MT', '% Complete', 'Status'].map(h => ({ text: h, bold: true, border: bottomBorder })),
-    ...contractRows.map(c => [
-      { text: c.contract_number, border: noBorder },
-      { text: c.buyer, border: noBorder },
-      { text: c.commodity, border: noBorder },
-      { text: fmtNum(c.contracted_mt), alignment: 'right', border: noBorder },
-      { text: fmtNum(c.hauled_mt), alignment: 'right', border: noBorder },
-      { text: fmtNum(c.remaining_mt), alignment: 'right', border: noBorder },
-      { text: fmtPct(c.pct_complete), alignment: 'right', border: noBorder },
-      { text: c.status, border: noBorder },
-    ]),
+  const footer = { text: `C2 Farms  |  ${farmName}  |  Generated ${dateStr}`, fontSize: 6, color: colors.grey, alignment: 'center', margin: [0, 14, 0, 0] };
+
+  // ─── Helper: wrap section header + table in unbreakable block ───
+  const section = (title, table) => ({
+    unbreakable: true,
+    stack: [
+      { text: title, style: 'sectionHeader' },
+      table,
+    ],
+  });
+
+  // ─── Build summary sections ───
+  const summaryContent = [
+    // Title + KPIs always first
+    titleBar,
+    kpiTable,
+    section('Inventory by Commodity', cropTable),
   ];
 
-  // Table 3: Reconciliation
-  const reconBody = [
-    ['Commodity', 'Beginning MT', 'Ending MT', 'Hauled MT', 'Variance MT', 'Variance %'].map(h => ({ text: h, bold: true, border: bottomBorder })),
-    ...reconRows.map(r => [
-      { text: r.commodity, border: noBorder },
-      { text: fmtNum(r.beginning_mt), alignment: 'right', border: noBorder },
-      { text: fmtNum(r.ending_mt), alignment: 'right', border: noBorder },
-      { text: fmtNum(r.hauled_mt), alignment: 'right', border: noBorder },
-      { text: fmtNum(r.variance_mt), alignment: 'right', border: noBorder },
-      { text: fmtPct(r.variance_pct), alignment: 'right', border: noBorder },
-    ]),
-  ];
+  if (matrixContent.length > 0) {
+    summaryContent.push({
+      unbreakable: true,
+      stack: matrixContent,
+    });
+  }
 
-  // Table 4: Available to Sell
-  const atsBody = [
-    ['Commodity', 'Inventory MT', 'Contracted MT', 'Available MT', '% Committed'].map(h => ({ text: h, bold: true, border: bottomBorder })),
-    ...atsRows.map(a => [
-      { text: a.commodity_name, border: noBorder },
-      { text: fmtNum(a.total_mt), alignment: 'right', border: noBorder },
-      { text: fmtNum(a.contracted_mt), alignment: 'right', border: noBorder },
-      { text: fmtNum(a.available_mt), alignment: 'right', border: noBorder },
-      { text: fmtPct(a.pct_committed), alignment: 'right', border: noBorder },
-    ]),
-  ];
+  summaryContent.push(section('Available to Sell', atsTable));
 
-  const title = locationLabel
-    ? `${farmName} — ${locationLabel} Inventory Report`
-    : `${farmName} — Grain Inventory Report`;
+  if (reconContent.length > 0) {
+    summaryContent.push({
+      unbreakable: true,
+      stack: reconContent,
+    });
+  }
 
+  summaryContent.push(section('Contracts', contractsTable));
+  summaryContent.push(footer);
+
+  // ─── Assemble document ───
   return {
-    pageOrientation: 'portrait',
+    pageOrientation: 'landscape',
     pageSize: 'LETTER',
-    pageMargins: [30, 40, 30, 30],
+    pageMargins: [28, 28, 28, 28],
     content: [
-      { text: title, style: 'header' },
-      { text: `As of ${periodLabel}`, style: 'subheader' },
-      { text: ' ' },
-      { text: 'Current Inventory', style: 'sectionHeader' },
+      ...summaryContent,
+
+      // Bin detail pages (long table — allowed to span multiple pages)
+      { text: 'Bin Inventory Detail', style: 'sectionHeader', pageBreak: 'before' },
+      { text: `${binRows.length} bins across ${locationCount} locations  |  Period: ${periodLabel}`, fontSize: 7, color: colors.grey, margin: [0, 0, 0, 6] },
       {
-        table: { headerRows: 1, widths: ['auto', 'auto', 'auto', 42, 'auto', 46, 46, 42, 'auto'], body: invBody },
-        layout: tableLayout,
-        fontSize: 7,
-        pageBreak: 'after',
+        table: {
+          headerRows: 1,
+          widths: ['auto', 'auto', 'auto', 'auto', '*', 'auto', 'auto', 'auto'],
+          body: binDetailBody,
+        },
+        layout: {
+          hLineWidth: () => 0, vLineWidth: () => 0,
+          paddingLeft: () => 4, paddingRight: () => 4,
+          paddingTop: () => 2, paddingBottom: () => 2,
+        },
       },
-      { text: 'Contracts', style: 'sectionHeader' },
-      {
-        table: { headerRows: 1, widths: ['auto', '*', 'auto', 55, 50, 55, 50, 45], body: conBody },
-        layout: tableLayout,
-        fontSize: 7,
-      },
-      { text: ' ' },
-      { text: 'Reconciliation', style: 'sectionHeader' },
-      {
-        table: { headerRows: 1, widths: ['*', 65, 65, 60, 65, 55], body: reconBody.length > 1 ? reconBody : [[{ text: 'Insufficient period data', colSpan: 6, border: noBorder }]] },
-        layout: tableLayout,
-        fontSize: 7,
-      },
-      { text: ' ' },
-      { text: 'Available to Sell', style: 'sectionHeader' },
-      {
-        table: { headerRows: 1, widths: ['*', 70, 70, 70, 60], body: atsBody },
-        layout: tableLayout,
-        fontSize: 7,
-      },
+      footer,
     ],
     styles: {
-      header: { fontSize: 14, bold: true, margin: [0, 0, 0, 5] },
-      subheader: { fontSize: 10, color: '#666', margin: [0, 0, 0, 10] },
-      sectionHeader: { fontSize: 10, bold: true, margin: [0, 10, 0, 4] },
+      sectionHeader: { fontSize: 10, bold: true, color: colors.primary, margin: [0, 4, 0, 6] },
     },
-    defaultStyle: { fontSize: 7 },
+    defaultStyle: { fontSize: 8 },
   };
 }
 
@@ -446,20 +640,40 @@ const CSV_TYPES = {
       return rows.map(a => [a.commodity_name, a.total_mt, a.contracted_mt, a.available_mt, a.pct_committed]);
     },
   },
+  'location-commodity': {
+    columns: null, // dynamic — built from matrix data
+    getData: async (farmId) => {
+      const data = await getLocationCommodityMatrix(farmId);
+      const header = ['Location', ...data.commodities, 'Total'];
+      const rows = data.rows.map(r => [r.location, ...data.commodities.map(c => r.values[c] || 0), r.total]);
+      rows.push(['Total', ...data.commodities.map(c => data.totals[c] || 0), data.grandTotal]);
+      return { header, rows };
+    },
+  },
 };
 
 export async function generateInventoryCsv(farmId, type) {
   const config = CSV_TYPES[type];
   if (!config) throw new Error(`Unknown CSV type: ${type}`);
 
-  const dataRows = await config.getData(farmId);
   const escapeCsv = (val) => {
     const s = val == null ? '' : String(val);
     return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
   };
 
+  const result = await config.getData(farmId);
+
+  // Support dynamic columns (location-commodity matrix)
+  if (result && result.header) {
+    const lines = [result.header.map(escapeCsv).join(',')];
+    for (const row of result.rows) {
+      lines.push(row.map(escapeCsv).join(','));
+    }
+    return lines.join('\n');
+  }
+
   const lines = [config.columns.map(escapeCsv).join(',')];
-  for (const row of dataRows) {
+  for (const row of result) {
     lines.push(row.map(escapeCsv).join(','));
   }
   return lines.join('\n');

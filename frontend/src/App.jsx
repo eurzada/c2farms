@@ -21,6 +21,7 @@ const BinInventory = lazy(() => import('./pages/inventory/BinInventory'));
 const Contracts = lazy(() => import('./pages/inventory/Contracts'));
 const Reconciliation = lazy(() => import('./pages/inventory/Reconciliation'));
 const FarmManagerView = lazy(() => import('./pages/inventory/FarmManagerView'));
+const CountHistory = lazy(() => import('./pages/inventory/CountHistory'));
 const LogisticsLayout = lazy(() => import('./components/logistics/LogisticsLayout'));
 const Tickets = lazy(() => import('./pages/logistics/Tickets'));
 const Settlements = lazy(() => import('./pages/logistics/Settlements'));
@@ -151,6 +152,7 @@ export default function App() {
                       <Route path="/inventory/contracts" element={<EnterpriseRoute><InventoryLayout><Contracts /></InventoryLayout></EnterpriseRoute>} />
                       <Route path="/inventory/recon" element={<EnterpriseRoute><InventoryLayout><Reconciliation /></InventoryLayout></EnterpriseRoute>} />
                       <Route path="/inventory/count" element={<ModuleRoute module="inventory"><InventoryLayout><FarmManagerView /></InventoryLayout></ModuleRoute>} />
+                      <Route path="/inventory/history" element={<EnterpriseRoute><InventoryLayout><CountHistory /></InventoryLayout></EnterpriseRoute>} />
 
                       {/* Enterprise-only modules */}
                       <Route path="/logistics" element={<EnterpriseRoute><Navigate to="/logistics/tickets" /></EnterpriseRoute>} />

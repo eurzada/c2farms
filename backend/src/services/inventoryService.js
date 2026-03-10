@@ -335,6 +335,9 @@ export async function getDashboardData(farmId) {
     });
   }
 
+  // Location × Commodity matrix
+  const locationCommodityMatrix = await getLocationCommodityMatrix(farmId);
+
   return {
     kpi: {
       total_mt: totalMt,
@@ -347,5 +350,66 @@ export async function getDashboardData(farmId) {
     alerts,
     drawdown,
     latest_period: latestPeriod,
+    locationCommodityMatrix,
   };
+}
+
+/**
+ * Build a location × commodity matrix of inventory MT.
+ * Returns { locations: string[], commodities: string[], rows: [{ location, values: { [commodity]: mt }, total }], totals: { [commodity]: mt }, grandTotal }
+ */
+export async function getLocationCommodityMatrix(farmId) {
+  const latestPeriod = await getLatestPeriod(farmId);
+  if (!latestPeriod) return { locations: [], commodities: [], rows: [], totals: {}, grandTotal: 0 };
+
+  const binCounts = await prisma.binCount.findMany({
+    where: { farm_id: farmId, count_period_id: latestPeriod.id },
+    include: {
+      commodity: true,
+      bin: { include: { location: true } },
+    },
+  });
+
+  // Aggregate MT by location × commodity
+  const matrix = {};    // { locationName: { commodityName: kgTotal } }
+  const commoditySet = new Set();
+  const locationSet = new Set();
+
+  for (const bc of binCounts) {
+    if (!bc.commodity || bc.commodity.code === 'FERT') continue;
+    if (!bc.bin?.location) continue;
+
+    const loc = bc.bin.location.name;
+    const crop = bc.commodity.name;
+    locationSet.add(loc);
+    commoditySet.add(crop);
+
+    if (!matrix[loc]) matrix[loc] = {};
+    matrix[loc][crop] = (matrix[loc][crop] || 0) + bc.kg;
+  }
+
+  const locations = [...locationSet].sort();
+  const commodities = [...commoditySet].sort();
+
+  // Build rows with MT values
+  const rows = locations.map(loc => {
+    const values = {};
+    let total = 0;
+    for (const crop of commodities) {
+      const mt = convertKgToMt(matrix[loc]?.[crop] || 0);
+      values[crop] = mt;
+      total += mt;
+    }
+    return { location: loc, values, total };
+  });
+
+  // Column totals
+  const totals = {};
+  let grandTotal = 0;
+  for (const crop of commodities) {
+    totals[crop] = rows.reduce((s, r) => s + (r.values[crop] || 0), 0);
+    grandTotal += totals[crop];
+  }
+
+  return { locations, commodities, rows, totals, grandTotal };
 }

@@ -9,7 +9,9 @@
  *   5. User confirms → save contracts
  */
 
+import prisma from '../config/database.js';
 import { MODELS, PRICING, classifyApiError, getAnthropicClient, parseJsonResponse } from './aiClient.js';
+import { buToMtFactor } from './marketingService.js';
 import createLogger from '../utils/logger.js';
 
 const log = createLogger('batch-extraction');
@@ -43,12 +45,14 @@ Extract ALL of the following into structured JSON:
   "elevator_site": "string or null (delivery location/elevator)",
   "crop_year": "string or null (e.g. 2025/26, 2025)",
   "special_terms": "string or null (any notable terms: specialty premium, rail, FOB, delivered, etc.)",
+  "total_contract_value": number or null,
   "tolerance_pct": number or null,
   "notes": "string or null (any other relevant details)"
 }
 
 Important:
 - Prices may be in $/bu or $/MT — extract whichever is stated, or both if available
+- If the contract states a total value (e.g. "Contract Value: $500,000"), extract it as total_contract_value — this can be used to derive $/mt if no unit price is stated
 - For basis contracts: extract basis_level and futures_reference separately from the flat price
 - For HTA (Hedge-to-Arrive): extract futures_price and note the futures month
 - Delivery period may be free text like "September 1 - October 31, 2026" — parse into start/end dates AND keep the original text
@@ -154,6 +158,48 @@ export async function getBatchStatus(batchId) {
 }
 
 /**
+ * Enrich extraction with computed $/bu ↔ $/mt conversions.
+ * Mutates the extraction object in place.
+ */
+async function enrichExtractionPrices(extraction, farmId) {
+  if (!extraction?.commodity || !farmId) return;
+  const COMMODITY_ALIASES = {
+    'cwrs': 'Spring Wheat', 'hard red spring': 'Spring Wheat', 'soft white spring': 'Spring Wheat',
+    'spring wheat': 'Spring Wheat', 'hrs': 'Spring Wheat', 'sws': 'Spring Wheat',
+    'cwad': 'Durum', 'durum wheat': 'Durum', 'amber durum': 'Durum',
+    'canola': 'Canola', 'nexera': 'Canola',
+    'yellow peas': 'Yellow Peas', 'yellow pea': 'Yellow Peas',
+    'lentils': 'Lentils', 'small green lentils': 'Lentils SG', 'small red lentils': 'Lentils SR',
+    'green lentils': 'Lentils SG', 'red lentils': 'Lentils SR',
+    'chickpeas': 'Chickpeas', 'chickpea': 'Chickpeas', 'desi chickpeas': 'Chickpeas',
+    'canary seed': 'Canary Seed', 'barley': 'Barley', 'feed barley': 'Barley', 'malt barley': 'Barley',
+  };
+  const nameLower = extraction.commodity.toLowerCase();
+  const aliasMatch = Object.entries(COMMODITY_ALIASES).find(([key]) => nameLower.includes(key));
+  const searchTerms = [extraction.commodity, ...(aliasMatch ? [aliasMatch[1]] : [])];
+  let commodity = null;
+  for (const term of searchTerms) {
+    commodity = await prisma.commodity.findFirst({
+      where: { farm_id: farmId, name: { contains: term, mode: 'insensitive' } },
+    });
+    if (commodity) break;
+  }
+  if (!commodity) return;
+
+  const factor = buToMtFactor(commodity.lbs_per_bu);
+  const qtyMt = extraction.quantity_mt || 0;
+
+  if (!extraction.price_per_bu && !extraction.price_per_mt && extraction.total_contract_value && qtyMt > 0) {
+    extraction.price_per_mt = Math.round((extraction.total_contract_value / qtyMt) * 100) / 100;
+  }
+  if (extraction.price_per_bu && !extraction.price_per_mt) {
+    extraction.price_per_mt = Math.round(extraction.price_per_bu * factor * 100) / 100;
+  } else if (extraction.price_per_mt && !extraction.price_per_bu) {
+    extraction.price_per_bu = Math.round((extraction.price_per_mt / factor) * 100) / 100;
+  }
+}
+
+/**
  * Retrieve and parse batch results.
  */
 async function retrieveBatchResults(client, batchId, meta) {
@@ -179,6 +225,8 @@ async function retrieveBatchResults(client, batchId, meta) {
       const text = message.content[0]?.text || '';
       try {
         const extraction = parseJsonResponse(text);
+        // Enrich with $/bu ↔ $/mt conversions
+        try { await enrichExtractionPrices(extraction, meta?.farmId); } catch { /* non-critical */ }
         results.push({
           custom_id: customId,
           filename,

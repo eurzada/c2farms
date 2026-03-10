@@ -2,10 +2,11 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
   Box, Typography, Stack, FormControl, InputLabel, Select, MenuItem,
-  Button, LinearProgress, Alert, Snackbar, IconButton,
+  Button, LinearProgress, Alert, Snackbar, IconButton, Chip, Tooltip,
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
-import SendIcon from '@mui/icons-material/Send';
+import LockIcon from '@mui/icons-material/Lock';
+import LockOpenIcon from '@mui/icons-material/LockOpen';
 import UndoIcon from '@mui/icons-material/Undo';
 import AddIcon from '@mui/icons-material/Add';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
@@ -28,7 +29,7 @@ function UndoRenderer({ data, context }) {
 }
 
 export default function FarmManagerView() {
-  const { currentFarm, canEdit, isEnterprise } = useFarm();
+  const { currentFarm, canEdit, isAdmin, isEnterprise } = useFarm();
   const { mode } = useThemeMode();
   const gridRef = useRef();
   const colors = useMemo(() => getGridColors(mode), [mode]);
@@ -196,19 +197,27 @@ export default function FarmManagerView() {
   }), []);
 
 
-  // Save / Submit
-  const handleSave = async (submit = false) => {
+  // Save — upserts counts and auto-approves submissions
+  const handleSave = async () => {
     if (!currentFarm || !period) return;
     setSaving(true);
     try {
-      // Create submissions for each unique location
+      // Create/update submissions for each unique location (auto-approved)
       const locationIds = [...new Set(rowData.map(r => r.location_id))];
-      await Promise.all(locationIds.map(locId =>
+      const submissions = await Promise.all(locationIds.map(locId =>
         api.post(`/api/farms/${currentFarm.id}/inventory/submissions`, {
           count_period_id: period.id,
           location_id: locId,
         })
       ));
+
+      // Auto-approve all submissions
+      await Promise.all(submissions.map(s => {
+        if (s.data?.submission?.status !== 'approved') {
+          return api.post(`/api/farms/${currentFarm.id}/inventory/submissions/${s.data.submission.id}/approve`);
+        }
+        return Promise.resolve();
+      }));
 
       // Bulk upsert counts
       const countsArray = rowData.map(r => ({
@@ -221,17 +230,26 @@ export default function FarmManagerView() {
 
       await api.post(`/api/farms/${currentFarm.id}/inventory/bin-counts/${period.id}`, { counts: countsArray });
 
-      setSnack({
-        open: true,
-        message: submit ? 'Count submitted for approval!' : 'Draft saved!',
-        severity: 'success',
-      });
+      setSnack({ open: true, message: 'Count saved!', severity: 'success' });
       setDirtyBinIds(new Set());
       fetchBins();
     } catch (err) {
       setSnack({ open: true, message: err.response?.data?.error || 'Failed to save', severity: 'error' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Lock/unlock period (admin only)
+  const handleToggleLock = async () => {
+    if (!currentFarm || !period) return;
+    const newStatus = period.status === 'closed' ? 'open' : 'closed';
+    try {
+      await api.put(`/api/farms/${currentFarm.id}/inventory/count-periods/${period.id}`, { status: newStatus });
+      setPeriods(prev => prev.map(p => p.id === period.id ? { ...p, status: newStatus } : p));
+      setSnack({ open: true, message: newStatus === 'closed' ? 'Period locked.' : 'Period unlocked.', severity: 'success' });
+    } catch (err) {
+      setSnack({ open: true, message: err.response?.data?.error || 'Failed to update period', severity: 'error' });
     }
   };
 
@@ -253,11 +271,35 @@ export default function FarmManagerView() {
           >
             {periods.map(p => (
               <MenuItem key={p.id} value={p.id}>
-                {new Date(p.period_date).toLocaleDateString('en-CA')} ({p.status})
+                {new Date(p.period_date).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' })}
+                {p.status === 'closed' ? ' 🔒' : ''}
               </MenuItem>
             ))}
           </Select>
         </FormControl>
+
+        {period && (
+          <Chip
+            icon={period.status === 'closed' ? <LockIcon /> : <LockOpenIcon />}
+            label={period.status === 'closed' ? 'Locked' : 'Editable'}
+            color={period.status === 'closed' ? 'default' : 'success'}
+            size="small"
+            variant="outlined"
+          />
+        )}
+
+        {isAdmin && period && (
+          <Tooltip title={period.status === 'closed' ? 'Unlock this period to allow edits' : 'Lock this period to prevent changes'}>
+            <Button
+              variant="outlined" size="small"
+              startIcon={period.status === 'closed' ? <LockOpenIcon /> : <LockIcon />}
+              onClick={handleToggleLock}
+              color={period.status === 'closed' ? 'primary' : 'warning'}
+            >
+              {period.status === 'closed' ? 'Unlock' : 'Lock Period'}
+            </Button>
+          </Tooltip>
+        )}
 
         <Button variant="outlined" size="small" startIcon={<AddIcon />} onClick={() => setNewPeriodOpen(true)}>
           New Period
@@ -304,16 +346,20 @@ export default function FarmManagerView() {
 
       {periodIsEditable && (
         <Stack direction="row" spacing={2} sx={{ mt: 2 }}>
-          <Button variant="outlined" startIcon={<SaveIcon />} onClick={() => handleSave(false)} disabled={saving}>
-            Save Draft
+          <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSave} disabled={saving || dirtyBinIds.size === 0}>
+            Save Count
           </Button>
-          <Button variant="contained" startIcon={<SendIcon />} onClick={() => handleSave(true)} disabled={saving}>
-            Submit for Approval
-          </Button>
+          {dirtyBinIds.size > 0 && (
+            <Typography variant="body2" color="text.secondary" sx={{ alignSelf: 'center' }}>
+              {dirtyBinIds.size} bin(s) modified
+            </Typography>
+          )}
         </Stack>
       )}
       {!periodIsEditable && period && (
-        <Alert severity="warning" sx={{ mt: 2 }}>This period is closed and read-only.</Alert>
+        <Alert severity="info" sx={{ mt: 2 }}>
+          This period is locked — no changes allowed.{isAdmin ? ' Use the Unlock button above to re-enable editing.' : ' Ask an admin to unlock if changes are needed.'}
+        </Alert>
       )}
 
       {currentFarm && (
