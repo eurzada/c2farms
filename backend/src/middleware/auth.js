@@ -89,7 +89,7 @@ export function requireModule(module) {
       where: { id: req.userId },
       select: { modules: true },
     });
-    const modules = user?.modules || ['forecast', 'inventory', 'marketing', 'logistics', 'agronomy', 'enterprise'];
+    const modules = user?.modules || ['forecast', 'inventory', 'marketing', 'logistics', 'agronomy', 'enterprise', 'terminal'];
     if (!modules.includes(module)) {
       return res.status(403).json({ error: `Access denied: ${module} module not enabled` });
     }

@@ -17,6 +17,7 @@ import GroupsIcon from '@mui/icons-material/Groups';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import SupervisorAccountIcon from '@mui/icons-material/SupervisorAccount';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import StorageIcon from '@mui/icons-material/Storage';
 import { useFarm } from '../../contexts/FarmContext';
 
 // Farm Unit nav items (per-location data entry)
@@ -48,6 +49,19 @@ const ENTERPRISE_ITEMS = [
   { label: 'Forecast Rollup', path: '/enterprise/forecast', icon: <DashboardIcon />, module: 'forecast', readOnly: true },
 ];
 
+// Terminal nav items (shown when a terminal farm is selected)
+const TERMINAL_ITEMS = [
+  { section: 'Terminal Operations' },
+  { label: 'Dashboard', path: '/terminal/dashboard', icon: <DashboardIcon />, module: 'terminal' },
+  { label: 'Incoming', path: '/terminal/incoming', icon: <WarehouseIcon />, module: 'terminal' },
+  { label: 'Outgoing', path: '/terminal/outgoing', icon: <LocalShippingIcon />, module: 'terminal' },
+  { label: 'Bins', path: '/terminal/bins', icon: <StorageIcon />, module: 'terminal' },
+  { section: 'Operations' },
+  { label: 'Blending', path: '/terminal/blending', icon: <PrecisionManufacturingIcon />, module: 'terminal' },
+  { label: 'Contracts', path: '/terminal/contracts', icon: <ListAltIcon />, module: 'terminal', roles: ['admin', 'manager'] },
+  { label: 'Settlements', path: '/terminal/settlements', icon: <AccountBalanceIcon />, module: 'terminal', roles: ['admin', 'manager'] },
+];
+
 function SectionHeader({ label }) {
   return (
     <Typography
@@ -62,10 +76,10 @@ function SectionHeader({ label }) {
 export default function Sidebar({ width }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAdmin, farms, hasModule, isEnterprise } = useFarm();
+  const { isAdmin, farms, hasModule, isEnterprise, isTerminal } = useFarm();
   const isAnyFarmAdmin = farms.some(f => f.role === 'admin');
 
-  const items = isEnterprise ? ENTERPRISE_ITEMS : FARM_UNIT_ITEMS;
+  const items = isTerminal ? TERMINAL_ITEMS : isEnterprise ? ENTERPRISE_ITEMS : FARM_UNIT_ITEMS;
   const visibleItems = items.filter(item => {
     if (item.section) return true;
     if (item.module && !hasModule(item.module)) return false;
@@ -76,7 +90,7 @@ export default function Sidebar({ width }) {
   const isSelected = (path) => {
     if (location.pathname === path) return true;
     // Prefix matching for module roots
-    const prefixes = ['/inventory', '/marketing', '/logistics', '/agronomy', '/enterprise', '/labour'];
+    const prefixes = ['/inventory', '/marketing', '/logistics', '/agronomy', '/enterprise', '/labour', '/terminal'];
     for (const p of prefixes) {
       if (path === p && location.pathname.startsWith(p + '/')) return true;
       if (path.startsWith(p + '/') && location.pathname.startsWith(p + '/') && path === location.pathname) return true;

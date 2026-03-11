@@ -33,6 +33,7 @@ import settlementRoutes from './routes/settlements.js';
 import { fieldOpsGeneralRouter, fieldOpsFarmRouter } from './routes/fieldOps.js';
 import mobileTicketRoutes from './routes/mobileTickets.js';
 import labourRoutes, { labourGeneralRouter } from './routes/labour.js';
+import terminalRoutes from './routes/terminal.js';
 
 import { errorHandler } from './middleware/errorHandler.js';
 import { authenticate, requireFarmAccess, requireModule } from './middleware/auth.js';
@@ -140,6 +141,10 @@ app.use('/api/farms/:farmId/settlements', requireModule('logistics'));
 app.use('/api/farms', ticketRoutes);
 app.use('/api/farms', settlementRoutes);
 app.use('/api/farms', mobileTicketRoutes);
+
+// Terminal operations module (LGX)
+app.use('/api/farms/:farmId/terminal', requireModule('terminal'));
+app.use('/api/farms', terminalRoutes);
 
 // Serve frontend static files in production
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

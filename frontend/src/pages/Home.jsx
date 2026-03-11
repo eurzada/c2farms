@@ -8,6 +8,8 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import GroupsIcon from '@mui/icons-material/Groups';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import StorageIcon from '@mui/icons-material/Storage';
+import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing';
 import { useFarm } from '../contexts/FarmContext';
 
 const FARM_MODULES = [
@@ -71,6 +73,34 @@ const ENTERPRISE_MODULES = [
   },
 ];
 
+const TERMINAL_MODULES = [
+  {
+    key: 'terminal', label: 'Dashboard',
+    description: 'Terminal overview, bin status, recent activity',
+    path: '/terminal/dashboard', icon: DashboardIcon, color: '#1565c0',
+  },
+  {
+    key: 'terminal', label: 'Incoming',
+    description: 'Receive inbound loads from growers',
+    path: '/terminal/incoming', icon: WarehouseIcon, color: '#2e7d32',
+  },
+  {
+    key: 'terminal', label: 'Outgoing',
+    description: 'Ship outbound rail cars and truck loads',
+    path: '/terminal/outgoing', icon: LocalShippingIcon, color: '#ef6c00',
+  },
+  {
+    key: 'terminal', label: 'Bins',
+    description: 'Bin ledger, running balances, ownership',
+    path: '/terminal/bins', icon: StorageIcon, color: '#6d4c41',
+  },
+  {
+    key: 'terminal', label: 'Blending',
+    description: 'Blend events, ratio calculations, rail car loading',
+    path: '/terminal/blending', icon: PrecisionManufacturingIcon, color: '#7b1fa2',
+  },
+];
+
 function ModuleCard({ mod, onClick }) {
   const Icon = mod.icon;
   return (
@@ -106,10 +136,10 @@ function ModuleCard({ mod, onClick }) {
 
 export default function Home() {
   const navigate = useNavigate();
-  const { currentFarm, hasModule, isEnterprise, farms, selectedId } = useFarm();
+  const { currentFarm, hasModule, isEnterprise, isTerminal, farms, selectedId } = useFarm();
   const displayFarm = farms.find(f => f.id === selectedId);
 
-  const moduleList = isEnterprise ? ENTERPRISE_MODULES : FARM_MODULES;
+  const moduleList = isTerminal ? TERMINAL_MODULES : isEnterprise ? ENTERPRISE_MODULES : FARM_MODULES;
   const available = moduleList.filter(m => hasModule(m.key));
 
   return (

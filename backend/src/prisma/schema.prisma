@@ -26,6 +26,7 @@ model Farm {
   id              String           @id @default(uuid())
   name            String
   is_enterprise   Boolean          @default(false)
+  farm_type       String           @default("farm") // farm | terminal
   created_at      DateTime         @default(now())
   updated_at      DateTime         @updatedAt
   user_roles      UserFarmRole[]
@@ -34,6 +35,13 @@ model Farm {
   agro_products   AgroProduct[]
   season_profiles SeasonProfile[]
   labour_plans    LabourPlan[]
+
+  terminal_bins         TerminalBin[]
+  terminal_tickets      TerminalTicket[]
+  terminal_blend_events TerminalBlendEvent[]
+  terminal_contracts    TerminalContract[]
+  terminal_settlements  TerminalSettlement[]
+  daily_positions       DailyPosition[]
 
   @@map("farms")
 }
@@ -280,6 +288,8 @@ model Commodity {
   market_prices       MarketPrice[]
   price_alerts        PriceAlert[]
   delivery_tickets    DeliveryTicket[]
+  terminal_bins       TerminalBin[]
+  terminal_contracts  TerminalContract[]
 
   @@unique([farm_id, code])
   @@map("commodities")
@@ -427,9 +437,12 @@ model Counterparty {
   notes               String?
   created_at          DateTime            @default(now())
   updated_at          DateTime            @updatedAt
-  marketing_contracts MarketingContract[]
-  delivery_tickets    DeliveryTicket[]
-  settlements         Settlement[]
+  marketing_contracts   MarketingContract[]
+  delivery_tickets      DeliveryTicket[]
+  settlements           Settlement[]
+  terminal_tickets      TerminalTicket[]
+  terminal_contracts    TerminalContract[]
+  terminal_settlements  TerminalSettlement[]
 
   @@unique([farm_id, name])
   @@map("counterparties")
@@ -870,4 +883,202 @@ model AuditLog {
   @@index([farm_id, entity_type, entity_id])
   @@index([farm_id, created_at])
   @@map("audit_logs")
+}
+
+// ─── Terminal Operations (LGX) ──────────────────────────────────────
+
+model TerminalBin {
+  id                    String    @id @default(uuid())
+  farm_id               String
+  bin_number            Int
+  name                  String
+  current_commodity_id  String?
+  current_product_label String?
+  balance_kg            Float     @default(0)
+  c2_balance_kg         Float     @default(0)
+  non_c2_balance_kg     Float     @default(0)
+  capacity_kg           Float?
+  is_active             Boolean   @default(true)
+  swept_clean_at        DateTime?
+  notes                 String?
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @updatedAt
+
+  farm      Farm           @relation(fields: [farm_id], references: [id])
+  commodity Commodity?     @relation(fields: [current_commodity_id], references: [id])
+  tickets   TerminalTicket[]
+  blend_events_as_source TerminalBlendEvent[] @relation("BlendSource")
+  blend_events_as_blend  TerminalBlendEvent[] @relation("BlendTarget")
+  daily_positions        DailyPosition[]
+
+  @@unique([farm_id, bin_number])
+  @@map("terminal_bins")
+}
+
+model TerminalTicket {
+  id              String    @id @default(uuid())
+  farm_id         String
+  bin_id          String?
+  ticket_number   Int
+  direction       String    // inbound | outbound
+  ticket_date     DateTime
+
+  grower_name     String?
+  grower_id       String?
+  product         String
+  weight_kg       Float
+  fmo_number      String?
+  buyer           String?
+
+  dockage_pct     Float?
+  moisture_pct    Float?
+  test_weight     Float?
+  protein_pct     Float?
+  hvk_pct         Float?
+
+  rail_car_number String?
+  vehicle_id      String?
+  sold_to         String?
+  seal_numbers    String?
+  outbound_kg     Float?
+
+  is_c2_farms     Boolean   @default(false)
+  balance_after_kg Float?
+
+  status          String    @default("complete") // complete | voided
+  scale_source    String    @default("manual")   // manual | scale_api
+  notes           String?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  farm    Farm          @relation(fields: [farm_id], references: [id])
+  bin     TerminalBin?  @relation(fields: [bin_id], references: [id])
+  grower  Counterparty? @relation(fields: [grower_id], references: [id])
+  samples TerminalSample[]
+
+  @@unique([farm_id, ticket_number])
+  @@index([farm_id, direction])
+  @@index([farm_id, ticket_date])
+  @@index([farm_id, grower_name])
+  @@map("terminal_tickets")
+}
+
+model TerminalBlendEvent {
+  id              String    @id @default(uuid())
+  farm_id         String
+  blend_date      DateTime
+  description     String
+  outbound_buyer  String
+
+  source_bin_id   String
+  source_bin_pct  Float
+  blend_bin_id    String
+  blend_bin_pct   Float
+
+  total_output_kg Float
+  source_bin_kg   Float
+  blend_bin_kg    Float
+  rail_car_numbers String[]
+  car_count       Int
+  target_protein  Float?
+  notes           String?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  farm       Farm        @relation(fields: [farm_id], references: [id])
+  source_bin TerminalBin @relation("BlendSource", fields: [source_bin_id], references: [id])
+  blend_bin  TerminalBin @relation("BlendTarget", fields: [blend_bin_id], references: [id])
+
+  @@index([farm_id, blend_date])
+  @@map("terminal_blend_events")
+}
+
+model TerminalSample {
+  id              String    @id @default(uuid())
+  ticket_id       String
+  inspector       String
+  sample_type     String    // onsite | shipped | lit_graded
+  send_date       DateTime?
+  tracking_number String?
+  notes           String?
+  created_at      DateTime  @default(now())
+
+  ticket TerminalTicket @relation(fields: [ticket_id], references: [id], onDelete: Cascade)
+
+  @@map("terminal_samples")
+}
+
+model TerminalContract {
+  id              String    @id @default(uuid())
+  farm_id         String
+  contract_number String
+  direction       String    // purchase | sale
+  counterparty_id String
+  commodity_id    String
+  contracted_mt   Float
+  delivered_mt    Float     @default(0)
+  remaining_mt    Float
+  price_per_mt    Float?
+  ship_mode       String?   // truck | rail
+  delivery_point  String?
+  start_date      DateTime?
+  end_date        DateTime?
+  status          String    @default("executed") // executed | in_delivery | fulfilled | settled | cancelled
+  notes           String?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  farm         Farm                @relation(fields: [farm_id], references: [id])
+  counterparty Counterparty        @relation(fields: [counterparty_id], references: [id])
+  commodity    Commodity           @relation(fields: [commodity_id], references: [id])
+  settlements  TerminalSettlement[]
+
+  @@unique([farm_id, contract_number])
+  @@index([farm_id, direction])
+  @@map("terminal_contracts")
+}
+
+model TerminalSettlement {
+  id                String    @id @default(uuid())
+  farm_id           String
+  settlement_number String
+  direction         String    // payable | receivable
+  counterparty_id   String
+  contract_id       String?
+  settlement_date   DateTime
+  gross_amount      Float
+  deductions        Json?
+  net_amount        Float
+  payment_status    String    @default("pending") // pending | paid | received
+  payment_date      DateTime?
+  payment_reference String?
+  notes             String?
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+
+  farm         Farm              @relation(fields: [farm_id], references: [id])
+  counterparty Counterparty      @relation(fields: [counterparty_id], references: [id])
+  contract     TerminalContract? @relation(fields: [contract_id], references: [id])
+
+  @@unique([farm_id, settlement_number])
+  @@map("terminal_settlements")
+}
+
+model DailyPosition {
+  id            String   @id @default(uuid())
+  farm_id       String
+  position_date DateTime
+  bin_id        String
+  commodity     String
+  balance_kg    Float
+  c2_kg         Float    @default(0)
+  non_c2_kg     Float    @default(0)
+  computed_at   DateTime @default(now())
+
+  farm Farm        @relation(fields: [farm_id], references: [id])
+  bin  TerminalBin @relation(fields: [bin_id], references: [id])
+
+  @@unique([farm_id, position_date, bin_id])
+  @@index([farm_id, position_date])
+  @@map("daily_positions")
 }

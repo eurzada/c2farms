@@ -43,6 +43,14 @@ const EnterpriseForecast = lazy(() => import('./pages/enterprise/EnterpriseForec
 const EnterpriseAgronomy = lazy(() => import('./pages/enterprise/EnterpriseAgronomy'));
 const EnterpriseAgroPlan = lazy(() => import('./pages/enterprise/EnterpriseAgroPlan'));
 const EnterpriseLabour = lazy(() => import('./pages/enterprise/EnterpriseLabour'));
+const TerminalLayout = lazy(() => import('./components/terminal/TerminalLayout'));
+const TerminalDashboard = lazy(() => import('./pages/terminal/TerminalDashboard'));
+const TerminalIncoming = lazy(() => import('./pages/terminal/TerminalIncoming'));
+const TerminalOutgoing = lazy(() => import('./pages/terminal/TerminalOutgoing'));
+const TerminalBins = lazy(() => import('./pages/terminal/TerminalBins'));
+const TerminalBlending = lazy(() => import('./pages/terminal/TerminalBlending'));
+const TerminalContracts = lazy(() => import('./pages/terminal/TerminalContracts'));
+const TerminalSettlements = lazy(() => import('./pages/terminal/TerminalSettlements'));
 
 function LazyFallback() {
   return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 8 }}><CircularProgress /></Box>;
@@ -95,6 +103,13 @@ function FarmUnitRoute({ module, children }) {
   const { isEnterprise, hasModule } = useFarm();
   if (isEnterprise) return <SmartRedirect />;
   if (module && !hasModule(module)) return <SmartRedirect />;
+  return children;
+}
+
+function TerminalRoute({ children }) {
+  const { isTerminal, hasModule, currentFarm } = useFarm();
+  if (!currentFarm) return null;
+  if (!isTerminal || !hasModule('terminal')) return <SmartRedirect />;
   return children;
 }
 
@@ -167,6 +182,16 @@ export default function App() {
                       <Route path="/marketing/cash-flow" element={<EnterpriseRoute><MarketingLayout><MarketingCashFlow /></MarketingLayout></EnterpriseRoute>} />
                       <Route path="/marketing/sell-tool" element={<EnterpriseRoute><MarketingLayout><SellDecisionTool /></MarketingLayout></EnterpriseRoute>} />
                       <Route path="/marketing/buyers" element={<EnterpriseRoute><MarketingLayout><MarketingBuyers /></MarketingLayout></EnterpriseRoute>} />
+
+                      {/* Terminal Operations (LGX) */}
+                      <Route path="/terminal" element={<TerminalRoute><Navigate to="/terminal/dashboard" /></TerminalRoute>} />
+                      <Route path="/terminal/dashboard" element={<TerminalRoute><TerminalLayout><TerminalDashboard /></TerminalLayout></TerminalRoute>} />
+                      <Route path="/terminal/incoming" element={<TerminalRoute><TerminalLayout><TerminalIncoming /></TerminalLayout></TerminalRoute>} />
+                      <Route path="/terminal/outgoing" element={<TerminalRoute><TerminalLayout><TerminalOutgoing /></TerminalLayout></TerminalRoute>} />
+                      <Route path="/terminal/bins" element={<TerminalRoute><TerminalLayout><TerminalBins /></TerminalLayout></TerminalRoute>} />
+                      <Route path="/terminal/blending" element={<TerminalRoute><TerminalLayout><TerminalBlending /></TerminalLayout></TerminalRoute>} />
+                      <Route path="/terminal/contracts" element={<TerminalRoute><TerminalLayout><TerminalContracts /></TerminalLayout></TerminalRoute>} />
+                      <Route path="/terminal/settlements" element={<TerminalRoute><TerminalLayout><TerminalSettlements /></TerminalLayout></TerminalRoute>} />
 
                       {/* Enterprise rollup pages (read-only) */}
                       <Route path="/enterprise/forecast" element={<EnterpriseRoute><EnterpriseForecast /></EnterpriseRoute>} />

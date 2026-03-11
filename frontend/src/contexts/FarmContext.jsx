@@ -4,7 +4,7 @@ import { useAuth } from './AuthContext';
 const FarmContext = createContext(null);
 
 const ENTERPRISE_ID = '__enterprise__';
-const DEFAULT_MODULES = ['forecast', 'inventory', 'marketing', 'logistics', 'agronomy', 'enterprise'];
+const DEFAULT_MODULES = ['forecast', 'inventory', 'marketing', 'logistics', 'agronomy', 'enterprise', 'terminal'];
 
 export function FarmProvider({ children }) {
   const { user, farms: authFarms, refreshAuthFarms } = useAuth();
@@ -25,11 +25,12 @@ export function FarmProvider({ children }) {
   const currentFarm = useMemo(() => {
     if (!authFarms?.length) return null;
     if (isEnterprise) {
-      // Use the dedicated Enterprise farm for API calls
       return enterpriseFarm || authFarms[0];
     }
     return authFarms.find(f => f.id === selectedId) || authFarms[0];
   }, [authFarms, selectedId, isEnterprise, enterpriseFarm]);
+
+  const isTerminal = !isEnterprise && currentFarm?.farm_type === 'terminal';
 
   // Build dropdown list: Enterprise + individual BU farms (exclude Enterprise farm record from BU list)
   const allFarms = useMemo(() => {
@@ -96,11 +97,11 @@ export function FarmProvider({ children }) {
     farms: allFarms, farmUnits, currentFarm, setCurrentFarm,
     fiscalYear, setFiscalYear, refreshFarms,
     currentRole, isAdmin, canEdit, modules, hasModule,
-    isEnterprise, selectedId,
+    isEnterprise, isTerminal, selectedId,
   }), [allFarms, farmUnits, currentFarm, setCurrentFarm,
        fiscalYear, refreshFarms,
        currentRole, isAdmin, canEdit, modules, hasModule,
-       isEnterprise, selectedId]);
+       isEnterprise, isTerminal, selectedId]);
 
   return (
     <FarmContext.Provider value={value}>
