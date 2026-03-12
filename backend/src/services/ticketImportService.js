@@ -68,25 +68,48 @@ export function parseCsv(csvText) {
 }
 
 /**
- * Parse "From" field: "Lewvan: 508 Bag 1 - Canola 2025 crop"
- * Returns { locationName, binNumber, binLabel }
+ * Parse "From" field: "Lewvan: 508 Bag 1 - Durum #4 2025 crop"
+ * Returns { locationName, binNumber, binLabel, grade }
  *   locationName: "Lewvan"
  *   binNumber: "508" (just the number, for matching to InventoryBin)
  *   binLabel: "508 Bag 1" (full storage identifier including bag/bag#)
+ *   grade: "Durum #4" (parsed from text after " - ")
  */
 export function parseFromField(fromValue) {
-  if (!fromValue) return { locationName: null, binNumber: null, binLabel: null };
-  // Pattern: "LocationName: BinNumber [Bag N] [- Crop Year crop]"
-  const match = fromValue.match(/^([^:]+):\s*(.+?)(?:\s*-\s*.+)?$/);
+  if (!fromValue) return { locationName: null, binNumber: null, binLabel: null, grade: null };
+  // Pattern: "LocationName: BinPart - Rest" where Rest contains grade
+  const match = fromValue.match(/^([^:]+):\s*(.+?)(?:\s*-\s*(.+))?$/);
   if (match) {
     const locationName = match[1].trim();
-    const binPart = match[2].trim(); // e.g. "508 Bag 1" or "504" or "LGX Yard"
-    // Extract leading number as the bin number for DB matching
+    const binPart = match[2].trim(); // e.g. "508 Bag 1" or "703" or "Field 711 Bag 3"
+    const afterDash = match[3] ? match[3].trim() : null; // e.g. "Durum #4 2025 crop"
     const numMatch = binPart.match(/^(\d+)/);
     const binNumber = numMatch ? numMatch[1] : binPart.split(/\s/)[0];
-    return { locationName, binNumber, binLabel: binPart };
+    const grade = parseGradeFromFromField(afterDash);
+    return { locationName, binNumber, binLabel: binPart, grade };
   }
-  return { locationName: null, binNumber: null, binLabel: null };
+  return { locationName: null, binNumber: null, binLabel: null, grade: null };
+}
+
+/**
+ * Extract grade from the part after " - " in Traction "From" field.
+ * Examples: "Durum #4 2025 crop" → "Durum #4", "2025 crop Durum bag711" → "Durum"
+ */
+export function parseGradeFromFromField(afterDash) {
+  if (!afterDash) return null;
+  // Prefer "Commodity #N" pattern (Durum #1, Durum #3, CWRS #2, Canola #1, etc.)
+  const gradeNumMatch = afterDash.match(/([A-Za-z]+)\s*#\s*(\d+)/);
+  if (gradeNumMatch) return `${gradeNumMatch[1]} #${gradeNumMatch[2]}`.trim();
+  // Fallback 1: commodity name before "2025 crop" or " crop" (e.g. "Canola 2025 crop")
+  const beforeCrop = afterDash.match(/^(.+?)\s+(?:\d{4}\s+)?crop/i);
+  if (beforeCrop) {
+    const candidate = beforeCrop[1].trim();
+    if (candidate && !/^(bag|field)\s*\d+/i.test(candidate)) return candidate;
+  }
+  // Fallback 2: "2025 crop Durum bag711" — commodity between "crop" and "bag"
+  const afterCrop = afterDash.match(/crop\s+([A-Za-z]+)(?:\s+bag|$)/i);
+  if (afterCrop) return afterCrop[1].trim();
+  return null;
 }
 
 /**
@@ -204,7 +227,7 @@ export async function previewTicketImport(farmId, csvText) {
 
     // Parse fields
     const cropName = parseCropName(row[colMap.crop]);
-    const { locationName, binNumber, binLabel } = parseFromField(row[colMap.from]);
+    const { locationName, binNumber, binLabel, grade } = parseFromField(row[colMap.from]);
     const { buyerName: contractBuyer, contractNumber } = parseContractField(row[colMap.contract]);
     const { buyerName: toBuyer, destination } = parseToField(row[colMap.to]);
 
@@ -278,7 +301,7 @@ export async function previewTicketImport(farmId, csvText) {
       moisture_pct: moisturePct,
       dockage_pct: dockagePct,
       protein_pct: proteinPct,
-      grade: row[colMap.fromGrade] || null,
+      grade: grade ?? row[colMap.fromGrade] ?? null,
       operator_name: row[colMap.operator] || null,
       vehicle: row[colMap.equipment] || null,
       source_ref: row[colMap.loadId] || null,

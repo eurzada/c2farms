@@ -276,7 +276,17 @@ export default function Settlements() {
   };
 
   const columnDefs = useMemo(() => [
-    { field: 'settlement_number', headerName: 'Settlement #', width: 140 },
+    {
+      field: 'settlement_number', headerName: 'Settlement #', width: 160,
+      cellRenderer: p => (
+        <Stack direction="row" alignItems="center" spacing={0.5}>
+          <span>{p.value}</span>
+          {p.data?.source === 'lgx_transfer' && (
+            <Chip label="LGX" size="small" color="secondary" variant="outlined" sx={{ fontSize: 10, height: 18 }} />
+          )}
+        </Stack>
+      ),
+    },
     {
       field: 'settlement_date', headerName: 'Date', width: 110,
       valueFormatter: p => p.value ? new Date(p.value).toLocaleDateString() : '',

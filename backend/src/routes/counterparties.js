@@ -2,6 +2,7 @@ import { Router } from 'express';
 import prisma from '../config/database.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { resolveInventoryFarm } from '../services/resolveInventoryFarm.js';
+import { getNextCounterpartyCode } from '../services/marketingService.js';
 
 const router = Router();
 
@@ -44,12 +45,16 @@ router.get('/:farmId/marketing/counterparties', authenticate, async (req, res, n
 router.post('/:farmId/marketing/counterparties', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { name, short_code, type, contact_name, contact_email, contact_phone, default_elevator_site, notes } = req.body;
-    if (!name || !short_code) return res.status(400).json({ error: 'name and short_code are required' });
+    if (!name) return res.status(400).json({ error: 'name is required' });
+
+    const code = (short_code && /^\d{3}$/.test(String(short_code).trim()))
+      ? String(short_code).trim()
+      : await getNextCounterpartyCode(req.params.farmId);
 
     const counterparty = await prisma.counterparty.create({
       data: {
         farm_id: req.params.farmId,
-        name, short_code,
+        name, short_code: code,
         type: type || 'buyer',
         contact_name: contact_name || null,
         contact_email: contact_email || null,

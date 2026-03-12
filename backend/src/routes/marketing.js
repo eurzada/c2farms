@@ -5,6 +5,9 @@ import { logAudit, diffChanges } from '../services/auditService.js';
 import {
   getMarketingDashboard,
   getPositionByCommodity,
+  getCommitmentMatrix,
+  getDeliveredUnsettled,
+  getCropYears,
   getLatestPrices,
   updatePrice,
   createContract,
@@ -12,6 +15,8 @@ import {
   settleContract,
   computeSellAnalysis,
   buToMtFactor,
+  getTerminalContractsForTransfer,
+  createTransferAgreementFromTerminal,
 } from '../services/marketingService.js';
 import { broadcastMarketingEvent } from '../socket/handler.js';
 import multer from 'multer';
@@ -47,6 +52,27 @@ router.get('/:farmId/marketing/position', authenticate, async (req, res, next) =
   } catch (err) { next(err); }
 });
 
+router.get('/:farmId/marketing/commitment-matrix', authenticate, async (req, res, next) => {
+  try {
+    const data = await getCommitmentMatrix(req.params.farmId, req.query.crop_year || null);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/:farmId/marketing/delivered-unsettled', authenticate, async (req, res, next) => {
+  try {
+    const data = await getDeliveredUnsettled(req.params.farmId, req.query.crop_year || null);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/:farmId/marketing/crop-years', authenticate, async (req, res, next) => {
+  try {
+    const cropYears = await getCropYears(req.params.farmId);
+    res.json({ cropYears });
+  } catch (err) { next(err); }
+});
+
 // ─── Contracts ───────────────────────────────────────────────────────
 
 router.get('/:farmId/marketing/contracts', authenticate, async (req, res, next) => {
@@ -64,6 +90,7 @@ router.get('/:farmId/marketing/contracts', authenticate, async (req, res, next) 
       include: {
         counterparty: true,
         commodity: true,
+        linked_terminal_contract: { select: { id: true, contract_number: true } },
         deliveries: { orderBy: { delivery_date: 'desc' } },
       },
       orderBy: { created_at: 'desc' },
@@ -95,6 +122,33 @@ router.post('/:farmId/marketing/contracts', authenticate, requireRole('admin', '
     const io = req.app.get('io');
     if (io) broadcastMarketingEvent(io, req.params.farmId, 'marketing:contract:created', { id: contract.id });
 
+    res.status(201).json({ contract, warning });
+  } catch (err) { next(err); }
+});
+
+router.get('/:farmId/marketing/terminal-contracts-for-transfer', authenticate, async (req, res, next) => {
+  try {
+    const contracts = await getTerminalContractsForTransfer();
+    res.json({ contracts });
+  } catch (err) { next(err); }
+});
+
+router.post('/:farmId/marketing/transfer-agreement-from-terminal', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { terminal_contract_id, grade_prices_json, blend_requirement_json, crop_year } = req.body;
+    if (!terminal_contract_id) return res.status(400).json({ error: 'terminal_contract_id required' });
+    const { contract, warning } = await createTransferAgreementFromTerminal(
+      req.params.farmId,
+      terminal_contract_id,
+      { grade_prices_json, blend_requirement_json, crop_year, created_by: req.userId }
+    );
+    logAudit({
+      farmId: req.params.farmId, userId: req.userId,
+      entityType: 'MarketingContract', entityId: contract.id, action: 'create',
+      changes: { source: 'lgx_one_click', contract_number: contract.contract_number, terminal_contract_id },
+    });
+    const io = req.app.get('io');
+    if (io) broadcastMarketingEvent(io, req.params.farmId, 'marketing:contract:created', { id: contract.id });
     res.status(201).json({ contract, warning });
   } catch (err) { next(err); }
 });

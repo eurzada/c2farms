@@ -53,7 +53,15 @@ export default function CounterpartyFormDialog({ open, onClose, farmId, initial,
             <TextField fullWidth label="Name" value={form.name} onChange={set('name')} required />
           </Grid>
           <Grid item xs={4}>
-            <TextField fullWidth label="Short Code" value={form.short_code} onChange={set('short_code')} required />
+            <TextField
+              fullWidth
+              label="Short Code"
+              value={form.short_code}
+              onChange={set('short_code')}
+              placeholder={initial?.id ? undefined : 'Auto (001, 002…)'}
+              inputProps={{ maxLength: 3 }}
+              helperText={!initial?.id ? 'Leave blank for auto-assigned 3-digit code' : undefined}
+            />
           </Grid>
           <Grid item xs={6}>
             <TextField select fullWidth label="Type" value={form.type} onChange={set('type')}>
@@ -79,7 +87,7 @@ export default function CounterpartyFormDialog({ open, onClose, farmId, initial,
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
-        <Button variant="contained" onClick={handleSubmit} disabled={saving || !form.name || !form.short_code}>
+        <Button variant="contained" onClick={handleSubmit} disabled={saving || !form.name}>
           {saving ? 'Saving...' : (initial?.id ? 'Update' : 'Add Buyer')}
         </Button>
       </DialogActions>

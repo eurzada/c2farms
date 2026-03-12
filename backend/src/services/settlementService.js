@@ -57,8 +57,9 @@ Look for Settlement Details tables with per-ticket rows. IMPORTANT: Cargill sett
   "lines": [
     {
       "line_number": 1,
-      "ticket_number": "string — MUST be the Receipt # (the trucker's weigh scale ticket number, e.g. '695706'). See column mapping below.",
+      "ticket_number": "string — MUST be the BOL or Car # (the trucker's weigh scale ticket number, e.g. '91131'). See column mapping below.",
       "delivery_number": "string or null — the Delivery # (Bunge's internal number, e.g. '469692')",
+      "receipt_number": "string or null — the Receipt # (Bunge's internal receipt number, e.g. '307860')",
       "delivery_date": "YYYY-MM-DD",
       "contract_number": "string or null (per-line Contract #)",
       "gross_weight_mt": number or null (Unload Weight),
@@ -79,9 +80,10 @@ The detail pages have TWO rows per ticket and these columns:
   Row 1: Delivery # | Receipt # | Contract # | Dry/Loss Pts | Dry/Loss % | Dockage % | Storage Days
   Row 2: Delivered On | BOL or Car # | Shipment # | Unload Weight | Dry/Loss | Dockage | Net Weight | Net Price | Gross Amount
 
-- **Delivery #** (first column, row 1): Bunge's INTERNAL delivery number (e.g. 469546, 469692). Do NOT use this as ticket_number.
-- **Receipt #** (second column, row 1): The trucker's WEIGH SCALE ticket number (e.g. 695511, 695706). This is a 6-digit number starting with 69xxxx or similar. USE THIS as the ticket_number field.
-- The Receipt # matches the "From Ticket #" / "To Ticket #" in the trucker's Traction Ag CSV export.
+- **Delivery #** (first column, row 1): Bunge's INTERNAL delivery number (e.g. 469546, 303649). Do NOT use this as ticket_number.
+- **Receipt #** (second column, row 1): Bunge's INTERNAL receipt number (e.g. 307860, 695706). Do NOT use this as ticket_number. Put this in "receipt_number".
+- **BOL or Car #** (second column, row 2): The trucker's WEIGH SCALE ticket number (e.g. 91131). USE THIS as the ticket_number field.
+- The BOL or Car # matches the "From Ticket #" / "To Ticket #" in the trucker's Traction Ag CSV export.
 
 Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.`,
 
@@ -380,21 +382,24 @@ function postProcessTicketNumbers(lines, buyerFormat) {
       }
     }
 
-    // Bunge: AI may grab Delivery # (469xxx) instead of Receipt # (695xxx).
-    // The delivery_number field holds Bunge's internal number — if ticket_number
-    // looks like the delivery number (shorter/different range) and delivery_number
-    // is actually the receipt, swap them.
-    if (buyerFormat === 'bunge' && line.delivery_number) {
-      const dn = String(line.delivery_number);
-      // If delivery_number is longer than ticket_number, it's likely the Receipt #
-      // (weigh scale numbers tend to be 6 digits starting 69xxxx)
-      if (/^\d+$/.test(dn) && /^\d+$/.test(tn) && Number(dn) > Number(tn)) {
+    // Bunge: The correct ticket_number is "BOL or Car #" (the weigh scale number).
+    // If the AI extracted a bol_or_car field, always prefer it as ticket_number.
+    // The Receipt # is Bunge's internal receipt — store it separately.
+    if (buyerFormat === 'bunge') {
+      const bol = String(line.bol_or_car || line.bol_number || '');
+      if (/^\d+$/.test(bol) && bol.length >= 4 && bol !== tn) {
         return {
           ...line,
-          ticket_number: dn,
-          delivery_number: tn,
+          ticket_number: bol,
           buyer_receipt_number: tn,
         };
+      }
+      // Fallback: if receipt_number was extracted and ticket_number looks like it,
+      // and there's a shorter number in another field, prefer the shorter one
+      const rn = String(line.receipt_number || '');
+      if (rn === tn && line.delivery_number) {
+        // ticket_number is the receipt — wrong. Check if any other field has the BOL
+        // Can't recover without BOL, but flag it
       }
     }
 

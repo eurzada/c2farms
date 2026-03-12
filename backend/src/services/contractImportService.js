@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import prisma from '../config/database.js';
+import { getNextCounterpartyCode } from './marketingService.js';
 
 /**
  * Import contracts from the "2026 FY Contracts.xlsx" format.
@@ -248,23 +249,16 @@ export async function commitContractImport(farmId, contracts, options = {}) {
 
     for (const name of newCpNames) {
       try {
-        const shortCode = name
-          .replace(/[^a-zA-Z0-9\s]/g, '')
-          .split(/\s+/)
-          .map(w => w[0]?.toUpperCase() || '')
-          .join('');
-
-        const cp = await prisma.counterparty.upsert({
-          where: { farm_id_name: { farm_id: farmId, name } },
-          update: {},
-          create: {
-            farm_id: farmId,
-            name,
-            short_code: shortCode || name.substring(0, 5).toUpperCase(),
-            type: 'buyer',
-          },
+        let cp = await prisma.counterparty.findFirst({
+          where: { farm_id: farmId, name },
         });
-        results.counterparties_created++;
+        if (!cp) {
+          const shortCode = await getNextCounterpartyCode(farmId);
+          cp = await prisma.counterparty.create({
+            data: { farm_id: farmId, name, short_code: shortCode, type: 'buyer' },
+          });
+          results.counterparties_created++;
+        }
 
         // Update contract references
         for (const c of contracts) {

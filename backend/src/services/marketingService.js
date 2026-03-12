@@ -95,6 +95,21 @@ export async function getContractNextNumber(farmId) {
 }
 
 /**
+ * Atomically get next 3-digit counterparty code (001, 002, ...).
+ */
+export async function getNextCounterpartyCode(farmId) {
+  return prisma.$transaction(async (tx) => {
+    const settings = await tx.marketingSettings.upsert({
+      where: { farm_id: farmId },
+      update: { next_counterparty_seq: { increment: 1 } },
+      create: { farm_id: farmId, next_counterparty_seq: 2 },
+    });
+    const seq = settings.next_counterparty_seq - 1;
+    return String(seq).padStart(3, '0');
+  });
+}
+
+/**
  * Compute carry cost from farm settings.
  */
 export async function computeCarryCost(farmId) {
@@ -341,6 +356,9 @@ export async function getMarketingDashboard(farmId) {
     available: r.available_mt,
   }));
 
+  // Commitment matrix (buyer × crop pivot) — included so UI gets full matrix in one call
+  const commitmentMatrix = await getCommitmentMatrix(farmId, null);
+
   return {
     kpis: {
       total_mt: totalMt,
@@ -353,7 +371,189 @@ export async function getMarketingDashboard(farmId) {
     },
     positionGrid,
     chartData,
+    commitmentMatrix,
   };
+}
+
+// ─── Group D2: Commitment Matrix & Delivered Unsettled ───────────────
+
+/**
+ * Commitment matrix: crops as columns, buyers as rows.
+ * Returns { crops, rows, totals_row, available_row, pct_row } where:
+ * - crops: column metadata (code, name, id, total_committed, on_hand, available, pct_available)
+ * - rows: one per buyer with { buyer_name, buyer_code, crops: { cropCode: mt }, total_mt }
+ * - totals_row: column totals + grand total
+ * - available_row: available MT per crop
+ * - pct_row: % available per crop
+ * cropYear filter: null = all active, otherwise e.g. '2025/26'.
+ */
+export async function getCommitmentMatrix(farmId, cropYear = null) {
+  // Active contracts
+  const where = {
+    farm_id: farmId,
+    status: { in: ['executed', 'in_delivery'] },
+  };
+  if (cropYear) where.crop_year = cropYear;
+
+  const contracts = await prisma.marketingContract.findMany({
+    where,
+    include: { commodity: true, counterparty: true },
+  });
+
+  // Get on-hand inventory
+  const latestPeriod = await prisma.countPeriod.findFirst({
+    where: { farm_id: farmId },
+    orderBy: { period_date: 'desc' },
+  });
+  const binCounts = latestPeriod ? await prisma.binCount.findMany({
+    where: { farm_id: farmId, count_period_id: latestPeriod.id },
+    include: { commodity: true },
+  }) : [];
+
+  const inventoryMap = {};
+  for (const bc of binCounts) {
+    if (!bc.commodity || bc.commodity.code === 'FERT') continue;
+    const code = bc.commodity.code;
+    if (!inventoryMap[code]) inventoryMap[code] = { mt: 0, name: bc.commodity.name, id: bc.commodity.id };
+    inventoryMap[code].mt += convertKgToMt(bc.kg);
+  }
+
+  // Pivot: { commodityCode: { buyerName: remaining_mt } }
+  const pivot = {};
+  const buyerSet = new Map(); // name → short_code
+  for (const c of contracts) {
+    const code = c.commodity?.code;
+    const buyerName = c.counterparty?.name || 'Unknown';
+    const buyerCode = c.counterparty?.short_code || '';
+    if (!code) continue;
+    if (!pivot[code]) pivot[code] = { commodity_name: c.commodity.name, commodity_id: c.commodity.id };
+    pivot[code][buyerName] = (pivot[code][buyerName] || 0) + c.remaining_mt;
+    if (!buyerSet.has(buyerName)) buyerSet.set(buyerName, buyerCode);
+  }
+
+  // Ensure all commodities with inventory appear
+  for (const [code, inv] of Object.entries(inventoryMap)) {
+    if (!pivot[code]) pivot[code] = { commodity_name: inv.name, commodity_id: inv.id };
+  }
+
+  const buyers = Array.from(buyerSet.entries())
+    .map(([name, short_code]) => ({ name, short_code }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const allCodes = [...new Set([...Object.keys(pivot), ...Object.keys(inventoryMap)])].sort();
+
+  // Build crop columns (metadata per crop)
+  const crops = [];
+  const cropTotals = {};
+  const cropAvailable = {};
+  const cropPctAvailable = {};
+  let grandTotal = 0;
+
+  for (const code of allCodes) {
+    const p = pivot[code] || {};
+    const inv = inventoryMap[code];
+    const onHand = inv?.mt || 0;
+    let totalCommitted = 0;
+    for (const buyer of buyers) {
+      totalCommitted += p[buyer.name] || 0;
+    }
+    const available = Math.max(0, onHand - totalCommitted);
+    const pctAvailable = onHand > 0 ? (available / onHand) * 100 : 0;
+
+    crops.push({
+      code,
+      name: p.commodity_name || inv?.name || code,
+      id: p.commodity_id || inv?.id,
+      total_committed: totalCommitted,
+      on_hand: onHand,
+      available,
+      pct_available: pctAvailable,
+    });
+    cropTotals[code] = totalCommitted;
+    cropAvailable[code] = available;
+    cropPctAvailable[code] = pctAvailable;
+    grandTotal += totalCommitted;
+  }
+
+  // Build buyer rows (one row per buyer)
+  const rows = buyers.map(buyer => {
+    const cropValues = {};
+    let totalMt = 0;
+    for (const code of allCodes) {
+      const val = pivot[code]?.[buyer.name] || 0;
+      cropValues[code] = val;
+      totalMt += val;
+    }
+    return {
+      buyer_name: buyer.name,
+      buyer_code: buyer.short_code,
+      crops: cropValues,
+      total_mt: totalMt,
+    };
+  });
+
+  const totalAvailable = Object.values(cropAvailable).reduce((s, v) => s + v, 0);
+  const totalOnHand = crops.reduce((s, c) => s + c.on_hand, 0);
+  const overallPctAvailable = totalOnHand > 0 ? (totalAvailable / totalOnHand) * 100 : 0;
+
+  return {
+    crops,
+    rows,
+    totals_row: { label: 'Total', crops: cropTotals, total_mt: grandTotal },
+    available_row: { label: 'Available', crops: cropAvailable, total_mt: totalAvailable },
+    pct_row: { label: '% Avail', crops: cropPctAvailable, total_mt: overallPctAvailable },
+  };
+}
+
+/**
+ * Contracts that are fully delivered but not yet settled.
+ * Grouped by buyer × commodity with totals.
+ */
+export async function getDeliveredUnsettled(farmId, cropYear = null) {
+  const where = {
+    farm_id: farmId,
+    status: 'delivered',
+  };
+  if (cropYear) where.crop_year = cropYear;
+
+  const contracts = await prisma.marketingContract.findMany({
+    where,
+    include: { commodity: true, counterparty: true },
+  });
+
+  const rows = contracts.map(c => ({
+    id: c.id,
+    contract_number: c.contract_number,
+    crop_year: c.crop_year,
+    buyer: c.counterparty?.name || 'Unknown',
+    buyer_code: c.counterparty?.short_code || '',
+    commodity: c.commodity?.name || 'Unknown',
+    commodity_code: c.commodity?.code || '',
+    contracted_mt: c.contracted_mt,
+    delivered_mt: c.delivered_mt,
+    price_per_bu: c.price_per_bu,
+    price_per_mt: c.price_per_mt,
+    contract_value: c.contract_value,
+    delivery_end: c.delivery_end,
+  }));
+
+  const total_mt = rows.reduce((s, r) => s + r.delivered_mt, 0);
+  const total_value = rows.reduce((s, r) => s + (r.contract_value || 0), 0);
+
+  return { contracts: rows, total_mt, total_value };
+}
+
+/**
+ * Get distinct crop years from marketing contracts for filter dropdown.
+ */
+export async function getCropYears(farmId) {
+  const results = await prisma.marketingContract.findMany({
+    where: { farm_id: farmId, status: { not: 'cancelled' } },
+    select: { crop_year: true },
+    distinct: ['crop_year'],
+    orderBy: { crop_year: 'desc' },
+  });
+  return results.map(r => r.crop_year).filter(Boolean);
 }
 
 // ─── Group E: Contract Lifecycle ─────────────────────────────────────
@@ -370,23 +570,33 @@ export async function createContract(farmId, data) {
   const priceMt = data.price_per_bu ? data.price_per_bu * factor : null;
   const contractValue = priceMt ? priceMt * data.contracted_mt : null;
 
+  const contractType = data.contract_type || 'third_party';
+  const pricePerMt = data.price_per_mt ?? priceMt;
+
+  const contractNumberToUse = (data.contract_type === 'transfer' && data.contract_number)
+    ? data.contract_number
+    : contractNumber;
+
   const contract = await prisma.marketingContract.create({
     data: {
       farm_id: farmId,
-      contract_number: contractNumber,
+      contract_number: contractNumberToUse,
+      contract_type: contractType,
+      linked_terminal_contract_id: data.linked_terminal_contract_id || null,
       crop_year: data.crop_year || '2025/26',
       commodity_id: data.commodity_id,
       counterparty_id: data.counterparty_id,
       grade: data.grade || null,
       broker: data.broker || null,
       contracted_mt: data.contracted_mt,
+      contracted_bu: data.contracted_bu ?? null,
       delivered_mt: 0,
       remaining_mt: data.contracted_mt,
       tolerance_pct: data.tolerance_pct || null,
       pricing_type: data.pricing_type || 'flat',
-      pricing_status: data.pricing_status || (data.price_per_bu ? 'priced' : 'unpriced'),
+      pricing_status: data.pricing_status || (data.price_per_bu || data.price_per_mt ? 'priced' : 'unpriced'),
       price_per_bu: data.price_per_bu || null,
-      price_per_mt: priceMt,
+      price_per_mt: pricePerMt,
       basis_level: data.basis_level || null,
       futures_reference: data.futures_reference || null,
       futures_price: data.futures_price || null,
@@ -396,12 +606,14 @@ export async function createContract(farmId, data) {
       elevator_site: data.elevator_site || null,
       farm_origin: data.farm_origin || null,
       status: 'executed',
-      contract_value: contractValue,
+      contract_value: pricePerMt ? pricePerMt * data.contracted_mt : contractValue,
       cop_per_mt: data.cop_per_mt || null,
       notes: data.notes || null,
+      grade_prices_json: data.grade_prices_json ?? null,
+      blend_requirement_json: data.blend_requirement_json ?? null,
       created_by: data.created_by || null,
     },
-    include: { counterparty: true, commodity: true },
+    include: { counterparty: true, commodity: true, linked_terminal_contract: true },
   });
 
   // Check if this oversells inventory
@@ -413,6 +625,131 @@ export async function createContract(farmId, data) {
   }
 
   return { contract, warning };
+}
+
+/**
+ * List terminal sale contracts available for creating a transfer agreement.
+ * Used by enterprise to pick a buyer contract (e.g. JGL 30040) and one-click create LGX transfer agreement.
+ */
+export async function getTerminalContractsForTransfer() {
+  const terminalFarm = await prisma.farm.findFirst({
+    where: { farm_type: 'terminal' },
+    select: { id: true },
+  });
+  if (!terminalFarm) return [];
+
+  const contracts = await prisma.terminalContract.findMany({
+    where: { farm_id: terminalFarm.id, direction: 'sale', status: { not: 'cancelled' } },
+    include: {
+      counterparty: { select: { id: true, name: true, short_code: true } },
+      commodity: { select: { id: true, name: true, code: true } },
+    },
+    orderBy: { created_at: 'desc' },
+    take: 100,
+  });
+
+  // Check which contracts already have a linked MarketingContract (transfer agreement)
+  const contractIds = contracts.map(c => c.id);
+  const linkedAgreements = await prisma.marketingContract.findMany({
+    where: { linked_terminal_contract_id: { in: contractIds } },
+    select: { linked_terminal_contract_id: true },
+  });
+  const acceptedSet = new Set(linkedAgreements.map(a => a.linked_terminal_contract_id));
+
+  return contracts.map(c => ({
+    ...c,
+    is_accepted: acceptedSet.has(c.id),
+  }));
+}
+
+/**
+ * Find or create LGX counterparty on enterprise farm (for transfer agreements).
+ */
+export async function getOrCreateLgxCounterparty(enterpriseFarmId) {
+  let cp = await prisma.counterparty.findFirst({
+    where: {
+      farm_id: enterpriseFarmId,
+      OR: [
+        { name: { contains: 'LGX', mode: 'insensitive' } },
+        { short_code: { equals: 'LGX', mode: 'insensitive' } },
+      ],
+    },
+  });
+  if (!cp) {
+    const shortCode = await getNextCounterpartyCode(enterpriseFarmId);
+    cp = await prisma.counterparty.create({
+      data: {
+        farm_id: enterpriseFarmId,
+        name: 'LGX Terminals',
+        short_code: shortCode,
+        type: 'buyer',
+      },
+    });
+  }
+  return cp;
+}
+
+const COMMODITY_ALIASES = {
+  cwrs: 'Spring Wheat', 'spring wheat': 'Spring Wheat', cwad: 'Durum', 'durum wheat': 'Durum',
+  canola: 'Canola', 'yellow peas': 'Yellow Peas', lentils: 'Lentils', chickpeas: 'Chickpeas',
+  'canary seed': 'Canary Seed', barley: 'Barley',
+};
+
+/**
+ * Create transfer agreement from terminal contract. Pre-populates terms; user adds grade prices.
+ */
+export async function createTransferAgreementFromTerminal(enterpriseFarmId, terminalContractId, data) {
+  const terminal = await prisma.terminalContract.findFirst({
+    where: { id: terminalContractId, direction: 'sale' },
+    include: {
+      counterparty: { select: { short_code: true, name: true } },
+      commodity: { select: { name: true } },
+    },
+  });
+  if (!terminal) throw new Error('Terminal contract not found');
+
+  const buyerCode = terminal.counterparty?.short_code || terminal.counterparty?.name?.replace(/\s+/g, '').slice(0, 6) || 'BUY';
+  const contractNumber = `LGX-${buyerCode}-${terminal.contract_number}`;
+
+  const existing = await prisma.marketingContract.findFirst({
+    where: { farm_id: enterpriseFarmId, contract_number: contractNumber },
+  });
+  if (existing) throw new Error(`Transfer agreement ${contractNumber} already exists`);
+
+  const commodityName = terminal.commodity?.name;
+  if (!commodityName) throw new Error('Terminal contract has no commodity');
+  const nameLower = commodityName.toLowerCase();
+  const aliasMatch = Object.entries(COMMODITY_ALIASES).find(([k]) => nameLower.includes(k));
+  const searchTerms = [commodityName, ...(aliasMatch ? [aliasMatch[1]] : []), ...commodityName.split(/\s+/).filter(w => w.length > 2)];
+  let commodity = null;
+  for (const term of searchTerms) {
+    commodity = await prisma.commodity.findFirst({
+      where: { farm_id: enterpriseFarmId, name: { contains: term, mode: 'insensitive' } },
+    });
+    if (commodity) break;
+  }
+  if (!commodity) throw new Error(`Commodity "${commodityName}" not found on enterprise. Add it in Inventory first.`);
+
+  const lgxCounterparty = await getOrCreateLgxCounterparty(enterpriseFarmId);
+
+  return createContract(enterpriseFarmId, {
+    contract_type: 'transfer',
+    contract_number: contractNumber,
+    linked_terminal_contract_id: terminalContractId,
+    counterparty_id: lgxCounterparty.id,
+    commodity_id: commodity.id,
+    contracted_mt: terminal.contracted_mt,
+    price_per_mt: terminal.price_per_mt || data.price_per_mt || null,
+    grade: terminal.notes?.split('|')[0]?.trim() || null,
+    crop_year: data.crop_year || '2025/26',
+    delivery_start: terminal.start_date,
+    delivery_end: terminal.end_date,
+    elevator_site: terminal.delivery_point || null,
+    grade_prices_json: data.grade_prices_json || null,
+    blend_requirement_json: data.blend_requirement_json || null,
+    notes: terminal.notes || null,
+    created_by: data.created_by || null,
+  });
 }
 
 /**

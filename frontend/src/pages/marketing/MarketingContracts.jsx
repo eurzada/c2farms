@@ -6,6 +6,7 @@ import {
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
+import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import EditIcon from '@mui/icons-material/Edit';
@@ -22,6 +23,7 @@ import api from '../../services/api';
 import ContractFormDialog from '../../components/marketing/ContractFormDialog';
 import ContractImportDialog from '../../components/marketing/ContractImportDialog';
 import ContractBatchImportDialog from '../../components/marketing/ContractBatchImportDialog';
+import TransferAgreementFromTerminalDialog from '../../components/marketing/TransferAgreementFromTerminalDialog';
 import DeliveryFormDialog from '../../components/marketing/DeliveryFormDialog';
 import SettlementDialog from '../../components/marketing/SettlementDialog';
 import MarketingSettingsDialog from '../../components/marketing/MarketingSettingsDialog';
@@ -29,6 +31,7 @@ import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { extractErrorMessage } from '../../utils/errorHelpers';
 import { fmt, fmtDollar } from '../../utils/formatting';
+import { getSocket } from '../../services/socket';
 
 const STATUS_TABS = ['All', 'Executed', 'In Delivery', 'Delivered', 'Settled', 'Cancelled'];
 const STATUS_MAP = { 'All': null, 'Executed': 'executed', 'In Delivery': 'in_delivery', 'Delivered': 'delivered', 'Settled': 'settled', 'Cancelled': 'cancelled' };
@@ -74,6 +77,7 @@ export default function MarketingContracts() {
   const [snack, setSnack] = useState({ open: false, message: '', severity: 'info' });
   const [importOpen, setImportOpen] = useState(false);
   const [batchImportOpen, setBatchImportOpen] = useState(false);
+  const [lgxTransferOpen, setLgxTransferOpen] = useState(false);
   const [selectedCount, setSelectedCount] = useState(0);
   const [columnMenuAnchor, setColumnMenuAnchor] = useState(null);
   const [exporting, setExporting] = useState(false);
@@ -159,6 +163,17 @@ export default function MarketingContracts() {
   }, [currentFarm, statusFilter]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Listen for blend mix updates from terminal
+  useEffect(() => {
+    const socket = getSocket();
+    const handler = () => {
+      setSnack({ open: true, message: 'Blend mix updated for a transfer contract', severity: 'info' });
+      fetchData();
+    };
+    socket.on('marketing:blend_mix_updated', handler);
+    return () => { socket.off('marketing:blend_mix_updated', handler); };
+  }, [fetchData]);
 
   // KPI computations
   const kpis = useMemo(() => {
@@ -265,7 +280,24 @@ export default function MarketingContracts() {
       resizable: false,
       pinned: 'left',
     },
-    { field: 'contract_number', headerName: '#', width: 110, pinned: 'left', hide: isHidden('contract_number') },
+    {
+      field: 'contract_number',
+      headerName: '#',
+      width: 130,
+      pinned: 'left',
+      hide: isHidden('contract_number'),
+      cellRenderer: p => (
+        <Stack direction="row" alignItems="center" spacing={0.5}>
+          <span>{p.value}</span>
+          {p.data?.contract_type === 'transfer' && (
+            <Chip label="LGX" size="small" color="secondary" variant="outlined" sx={{ fontSize: 10, height: 18 }} />
+          )}
+          {p.data?.blend_mix_updated_at && (Date.now() - new Date(p.data.blend_mix_updated_at).getTime()) < 86400000 && (
+            <Chip label="Blend Updated" size="small" color="info" variant="outlined" sx={{ fontSize: 9, height: 16 }} />
+          )}
+        </Stack>
+      ),
+    },
     { field: 'counterparty.name', headerName: 'Buyer', width: 140, hide: isHidden('counterparty.name') },
     { field: 'commodity.name', headerName: 'Crop', width: 120, hide: isHidden('commodity.name') },
     { field: 'grade', headerName: 'Grade', width: 100, hide: isHidden('grade') },
@@ -384,6 +416,9 @@ export default function MarketingContracts() {
           )}
           {canEdit && (
             <>
+              <Button variant="outlined" startIcon={<SwapHorizIcon />} onClick={() => setLgxTransferOpen(true)}>
+                LGX Transfer
+              </Button>
               <Button variant="outlined" startIcon={<FileUploadIcon />} onClick={() => setImportOpen(true)}>
                 Import PDF
               </Button>
@@ -474,6 +509,13 @@ export default function MarketingContracts() {
         onClose={() => setBatchImportOpen(false)}
         farmId={currentFarm?.id}
         onImported={fetchData}
+      />
+
+      <TransferAgreementFromTerminalDialog
+        open={lgxTransferOpen}
+        onClose={() => setLgxTransferOpen(false)}
+        farmId={currentFarm?.id}
+        onCreated={fetchData}
       />
 
       <MarketingSettingsDialog

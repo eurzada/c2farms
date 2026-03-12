@@ -48,7 +48,6 @@ const TerminalDashboard = lazy(() => import('./pages/terminal/TerminalDashboard'
 const TerminalIncoming = lazy(() => import('./pages/terminal/TerminalIncoming'));
 const TerminalOutgoing = lazy(() => import('./pages/terminal/TerminalOutgoing'));
 const TerminalBins = lazy(() => import('./pages/terminal/TerminalBins'));
-const TerminalBlending = lazy(() => import('./pages/terminal/TerminalBlending'));
 const TerminalContracts = lazy(() => import('./pages/terminal/TerminalContracts'));
 const TerminalSettlements = lazy(() => import('./pages/terminal/TerminalSettlements'));
 
@@ -189,7 +188,6 @@ export default function App() {
                       <Route path="/terminal/incoming" element={<TerminalRoute><TerminalLayout><TerminalIncoming /></TerminalLayout></TerminalRoute>} />
                       <Route path="/terminal/outgoing" element={<TerminalRoute><TerminalLayout><TerminalOutgoing /></TerminalLayout></TerminalRoute>} />
                       <Route path="/terminal/bins" element={<TerminalRoute><TerminalLayout><TerminalBins /></TerminalLayout></TerminalRoute>} />
-                      <Route path="/terminal/blending" element={<TerminalRoute><TerminalLayout><TerminalBlending /></TerminalLayout></TerminalRoute>} />
                       <Route path="/terminal/contracts" element={<TerminalRoute><TerminalLayout><TerminalContracts /></TerminalLayout></TerminalRoute>} />
                       <Route path="/terminal/settlements" element={<TerminalRoute><TerminalLayout><TerminalSettlements /></TerminalLayout></TerminalRoute>} />
 

@@ -45,22 +45,22 @@ export default function MarketingBuyers() {
   };
 
   const columnDefs = useMemo(() => [
-    { field: 'name', headerName: 'Name', width: 180 },
-    { field: 'short_code', headerName: 'Code', width: 80 },
+    { field: 'name', headerName: 'Name', flex: 1, minWidth: 140 },
+    { field: 'short_code', headerName: 'Code', width: 56, maxWidth: 64 },
     {
-      field: 'type', headerName: 'Type', width: 110,
+      field: 'type', headerName: 'Type', width: 88,
       cellRenderer: p => <Chip label={p.value} size="small" color={TYPE_COLORS[p.value] || 'default'} variant="outlined" />,
     },
-    { field: 'contact_name', headerName: 'Contact', width: 140 },
-    { field: 'contact_email', headerName: 'Email', width: 180 },
-    { field: 'contact_phone', headerName: 'Phone', width: 130 },
-    { field: 'default_elevator_site', headerName: 'Default Elevator', width: 150 },
-    { field: 'total_contracts', headerName: 'Contracts', width: 100 },
-    { field: 'total_mt', headerName: 'Total MT', width: 110, valueFormatter: p => fmt(p.value) },
-    { field: 'total_value', headerName: 'Total Value', width: 120, valueFormatter: p => p.value ? `$${(p.value / 1000).toFixed(0)}K` : '—' },
-    { field: 'active_contracts', headerName: 'Active', width: 80 },
+    { field: 'contact_name', headerName: 'Contact', width: 110 },
+    { field: 'contact_email', headerName: 'Email', width: 140 },
+    { field: 'contact_phone', headerName: 'Phone', width: 108 },
+    { field: 'default_elevator_site', headerName: 'Default Elevator', width: 120 },
+    { field: 'total_contracts', headerName: 'Contracts', width: 76 },
+    { field: 'total_mt', headerName: 'Total MT', width: 88, valueFormatter: p => fmt(p.value) },
+    { field: 'total_value', headerName: 'Total Value', width: 90, valueFormatter: p => p.value ? `$${(p.value / 1000).toFixed(0)}K` : '—' },
+    { field: 'active_contracts', headerName: 'Active', width: 64 },
     {
-      headerName: 'Actions', width: 100, sortable: false, filter: false,
+      headerName: 'Actions', width: 88, sortable: false, filter: false,
       cellRenderer: p => {
         if (!canEdit) return null;
         return (
@@ -96,7 +96,7 @@ export default function MarketingBuyers() {
         )}
       </Stack>
 
-      <Box className={mode === 'dark' ? 'ag-theme-alpine-dark' : 'ag-theme-alpine'} sx={{ height: 450, width: '100%' }}>
+      <Box className={mode === 'dark' ? 'ag-theme-alpine-dark' : 'ag-theme-alpine'} sx={{ height: 450, width: '100%', minWidth: 0 }}>
         <AgGridReact
           ref={gridRef}
           rowData={counterparties}
@@ -104,6 +104,8 @@ export default function MarketingBuyers() {
           defaultColDef={defaultColDef}
           animateRows
           getRowId={p => p.data?.id}
+          onGridReady={({ api }) => api.sizeColumnsToFit()}
+          onFirstDataRendered={({ api }) => api.sizeColumnsToFit()}
         />
       </Box>
 
