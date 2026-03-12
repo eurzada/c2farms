@@ -64,6 +64,7 @@ export default function Settlements() {
   const [totalMt, setTotalMt] = useState(0);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState(savedState.current.statusFilter || '');
+  const [fiscalYearFilter, setFiscalYearFilter] = useState('2026');
   const [detailOpen, setDetailOpen] = useState(false);
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -82,12 +83,13 @@ export default function Settlements() {
     if (!currentFarm) return;
     const params = new URLSearchParams();
     if (statusFilter) params.append('status', statusFilter);
+    if (fiscalYearFilter) params.append('fiscal_year', fiscalYearFilter);
     api.get(`/api/farms/${currentFarm.id}/settlements?${params}`).then(res => {
       setSettlements(res.data.settlements || []);
       setTotal(res.data.total || 0);
       setTotalMt(res.data.total_mt || 0);
     });
-  }, [currentFarm, statusFilter]);
+  }, [currentFarm, statusFilter, fiscalYearFilter]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -342,6 +344,16 @@ export default function Settlements() {
           </Typography>
         </Box>
         <Stack direction="row" spacing={1}>
+          <TextField
+            select size="small" label="Fiscal Year" value={fiscalYearFilter}
+            onChange={(e) => setFiscalYearFilter(e.target.value)}
+            sx={{ minWidth: 120 }}
+          >
+            <MenuItem value="">All Years</MenuItem>
+            <MenuItem value="2025">FY2025</MenuItem>
+            <MenuItem value="2026">FY2026</MenuItem>
+            <MenuItem value="2027">FY2027</MenuItem>
+          </TextField>
           <TextField
             select size="small" label="Status" value={statusFilter}
             onChange={(e) => { setStatusFilter(e.target.value); saveGridState({ statusFilter: e.target.value }); }}

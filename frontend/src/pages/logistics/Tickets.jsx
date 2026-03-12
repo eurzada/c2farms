@@ -36,6 +36,7 @@ export default function Tickets() {
   const [importOpen, setImportOpen] = useState(false);
   const [settledFilter, setSettledFilter] = useState('');
   const [matchFilter, setMatchFilter] = useState('');
+  const [fiscalYearFilter, setFiscalYearFilter] = useState('2026');
   const [photoUrl, setPhotoUrl] = useState(null);
   const [selectedCount, setSelectedCount] = useState(0);
   const [searchText, setSearchText] = useState('');
@@ -70,17 +71,21 @@ export default function Tickets() {
     const params = new URLSearchParams();
     if (settledFilter !== '') params.append('settled', settledFilter);
     if (matchFilter !== '') params.append('matched', matchFilter);
+    if (fiscalYearFilter !== '') params.append('fiscal_year', fiscalYearFilter);
     params.append('limit', '500');
+
+    const statsParams = new URLSearchParams();
+    if (fiscalYearFilter !== '') statsParams.append('fiscal_year', fiscalYearFilter);
 
     Promise.all([
       api.get(`/api/farms/${currentFarm.id}/tickets?${params}`),
-      api.get(`/api/farms/${currentFarm.id}/tickets/stats/summary`),
+      api.get(`/api/farms/${currentFarm.id}/tickets/stats/summary?${statsParams}`),
     ]).then(([tRes, sRes]) => {
       setTickets(tRes.data.tickets || []);
       setTotal(tRes.data.total || 0);
       setStats(sRes.data);
     });
-  }, [currentFarm, settledFilter, matchFilter]);
+  }, [currentFarm, settledFilter, matchFilter, fiscalYearFilter]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -288,6 +293,19 @@ export default function Tickets() {
               Delete {selectedCount} ticket{selectedCount !== 1 ? 's' : ''}
             </Button>
           )}
+          <TextField
+            select
+            size="small"
+            label="Fiscal Year"
+            value={fiscalYearFilter}
+            onChange={(e) => setFiscalYearFilter(e.target.value)}
+            sx={{ minWidth: 120 }}
+          >
+            <MenuItem value="">All Years</MenuItem>
+            <MenuItem value="2025">FY2025 (Nov 23 – Oct 24)</MenuItem>
+            <MenuItem value="2026">FY2026 (Nov 24 – Oct 25)</MenuItem>
+            <MenuItem value="2027">FY2027 (Nov 25 – Oct 26)</MenuItem>
+          </TextField>
           <TextField
             select
             size="small"

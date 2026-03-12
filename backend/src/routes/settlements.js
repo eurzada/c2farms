@@ -30,11 +30,20 @@ router.use('/:farmId/settlements', async (req, res, next) => {
 router.get('/:farmId/settlements', authenticate, async (req, res, next) => {
   try {
     const { farmId } = req.params;
-    const { status, counterparty_id, limit = '50', offset = '0' } = req.query;
+    const { status, counterparty_id, fiscal_year, limit = '50', offset = '0' } = req.query;
 
     const where = { farm_id: farmId };
     if (status) where.status = status;
     if (counterparty_id) where.counterparty_id = counterparty_id;
+    if (fiscal_year) {
+      const fy = parseInt(fiscal_year);
+      if (fy) {
+        where.settlement_date = {
+          gte: new Date(`${fy - 1}-11-01T00:00:00Z`),
+          lt: new Date(`${fy}-11-01T00:00:00Z`),
+        };
+      }
+    }
 
     const [settlements, total, mtAgg] = await Promise.all([
       prisma.settlement.findMany({

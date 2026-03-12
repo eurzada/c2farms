@@ -18,11 +18,24 @@ router.use('/:farmId/tickets', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Build fiscal year date range filter (Nov-Oct fiscal year)
+function fiscalYearDateFilter(fy) {
+  const year = parseInt(fy);
+  if (!year) return {};
+  // FY2026 = Nov 1 2025 to Oct 31 2026
+  return {
+    delivery_date: {
+      gte: new Date(`${year - 1}-11-01T00:00:00Z`),
+      lt: new Date(`${year}-11-01T00:00:00Z`),
+    },
+  };
+}
+
 // GET all delivery tickets for a farm
 router.get('/:farmId/tickets', authenticate, async (req, res, next) => {
   try {
     const { farmId } = req.params;
-    const { contract_id, counterparty_id, commodity_id, settled, matched, limit = '200', offset = '0' } = req.query;
+    const { contract_id, counterparty_id, commodity_id, settled, matched, fiscal_year, limit = '200', offset = '0' } = req.query;
 
     const where = { farm_id: farmId };
     if (contract_id) where.marketing_contract_id = contract_id;
@@ -31,6 +44,7 @@ router.get('/:farmId/tickets', authenticate, async (req, res, next) => {
     if (settled !== undefined) where.settled = settled === 'true';
     if (matched === 'true') where.settlement_lines = { some: {} };
     if (matched === 'false') where.settlement_lines = { none: {} };
+    if (fiscal_year) Object.assign(where, fiscalYearDateFilter(fiscal_year));
 
     const [tickets, total] = await Promise.all([
       prisma.deliveryTicket.findMany({
@@ -65,14 +79,16 @@ router.get('/:farmId/tickets', authenticate, async (req, res, next) => {
 router.get('/:farmId/tickets/stats/summary', authenticate, async (req, res, next) => {
   try {
     const farmId = req.params.farmId;
+    const { fiscal_year } = req.query;
+    const baseWhere = { farm_id: farmId, ...(fiscal_year ? fiscalYearDateFilter(fiscal_year) : {}) };
     const [total, settled, unsettled, matched, byCounterparty] = await Promise.all([
-      prisma.deliveryTicket.count({ where: { farm_id: farmId } }),
-      prisma.deliveryTicket.count({ where: { farm_id: farmId, settled: true } }),
-      prisma.deliveryTicket.count({ where: { farm_id: farmId, settled: false } }),
-      prisma.deliveryTicket.count({ where: { farm_id: farmId, settlement_lines: { some: {} } } }),
+      prisma.deliveryTicket.count({ where: baseWhere }),
+      prisma.deliveryTicket.count({ where: { ...baseWhere, settled: true } }),
+      prisma.deliveryTicket.count({ where: { ...baseWhere, settled: false } }),
+      prisma.deliveryTicket.count({ where: { ...baseWhere, settlement_lines: { some: {} } } }),
       prisma.deliveryTicket.groupBy({
         by: ['counterparty_id'],
-        where: { farm_id: farmId },
+        where: baseWhere,
         _count: true,
         _sum: { net_weight_mt: true },
       }),
