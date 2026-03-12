@@ -109,7 +109,7 @@ export async function updateBin(farmId, binId, data) {
   }
 }
 
-export async function sweepClean(farmId, binId, newCommodityId, newProductLabel) {
+export async function sweepBin(farmId, binId, { commodity_id: newCommodityId, product_label: newProductLabel } = {}) {
   try {
     const bin = await prisma.terminalBin.findFirst({
       where: { id: binId, farm_id: farmId },
@@ -139,7 +139,7 @@ export async function sweepClean(farmId, binId, newCommodityId, newProductLabel)
   }
 }
 
-export async function recalculateBalance(farmId, binId) {
+export async function recalculateBin(farmId, binId) {
   try {
     const bin = await prisma.terminalBin.findFirst({
       where: { id: binId, farm_id: farmId },

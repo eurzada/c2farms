@@ -43,9 +43,9 @@ export async function getSamples(farmId, { page = 1, limit = 50 } = {}) {
   }
 }
 
-export async function createSample(ticketId, data) {
+export async function createSample(farmId, ticketId, data) {
   try {
-    const ticket = await prisma.terminalTicket.findUnique({ where: { id: ticketId } });
+    const ticket = await prisma.terminalTicket.findFirst({ where: { id: ticketId, farm_id: farmId } });
     if (!ticket) throw Object.assign(new Error('Ticket not found'), { status: 404 });
 
     const sample = await prisma.terminalSample.create({
@@ -73,9 +73,11 @@ export async function createSample(ticketId, data) {
   }
 }
 
-export async function updateSample(sampleId, data) {
+export async function updateSample(farmId, sampleId, data) {
   try {
-    const existing = await prisma.terminalSample.findUnique({ where: { id: sampleId } });
+    const existing = await prisma.terminalSample.findFirst({
+      where: { id: sampleId, ticket: { farm_id: farmId } },
+    });
     if (!existing) throw Object.assign(new Error('Sample not found'), { status: 404 });
 
     const updateData = {};
@@ -104,9 +106,11 @@ export async function updateSample(sampleId, data) {
   }
 }
 
-export async function deleteSample(sampleId) {
+export async function deleteSample(farmId, sampleId) {
   try {
-    const existing = await prisma.terminalSample.findUnique({ where: { id: sampleId } });
+    const existing = await prisma.terminalSample.findFirst({
+      where: { id: sampleId, ticket: { farm_id: farmId } },
+    });
     if (!existing) throw Object.assign(new Error('Sample not found'), { status: 404 });
 
     await prisma.terminalSample.delete({ where: { id: sampleId } });
