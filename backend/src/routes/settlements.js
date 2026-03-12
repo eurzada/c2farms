@@ -140,7 +140,8 @@ router.get('/:farmId/settlements/reports/missing-contracts', authenticate, async
 // GET recon gap report — JSON
 router.get('/:farmId/settlements/reports/recon-gaps', authenticate, async (req, res, next) => {
   try {
-    const data = await generateReconGapData(req.params.farmId);
+    const opts = { fiscalYear: req.query.fiscal_year, month: req.query.month };
+    const data = await generateReconGapData(req.params.farmId, opts);
     res.json(data);
   } catch (err) { next(err); }
 });
@@ -148,7 +149,8 @@ router.get('/:farmId/settlements/reports/recon-gaps', authenticate, async (req, 
 // GET recon gap report — Excel download
 router.get('/:farmId/settlements/reports/recon-gaps/excel', authenticate, async (req, res, next) => {
   try {
-    const wb = await generateReconGapExcel(req.params.farmId);
+    const opts = { fiscalYear: req.query.fiscal_year, month: req.query.month };
+    const wb = await generateReconGapExcel(req.params.farmId, opts);
     const filename = `recon-gap-report-${new Date().toISOString().slice(0, 10)}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -160,7 +162,8 @@ router.get('/:farmId/settlements/reports/recon-gaps/excel', authenticate, async 
 // GET recon gap report — PDF download
 router.get('/:farmId/settlements/reports/recon-gaps/pdf', authenticate, async (req, res, next) => {
   try {
-    const docDefinition = await generateReconGapPdf(req.params.farmId);
+    const opts = { fiscalYear: req.query.fiscal_year, month: req.query.month };
+    const docDefinition = await generateReconGapPdf(req.params.farmId, opts);
     const pdfDoc = printer.createPdfKitDocument(docDefinition);
     const filename = `recon-gap-report-${new Date().toISOString().slice(0, 10)}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
@@ -173,7 +176,8 @@ router.get('/:farmId/settlements/reports/recon-gaps/pdf', authenticate, async (r
 // GET recon gap report — CSV download
 router.get('/:farmId/settlements/reports/recon-gaps/csv', authenticate, async (req, res, next) => {
   try {
-    const csv = await generateReconGapCsv(req.params.farmId);
+    const opts = { fiscalYear: req.query.fiscal_year, month: req.query.month };
+    const csv = await generateReconGapCsv(req.params.farmId, opts);
     const filename = `recon-gap-report-${new Date().toISOString().slice(0, 10)}.csv`;
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -625,6 +629,56 @@ router.patch('/:farmId/settlements/:id', authenticate, requireRole('admin', 'man
     });
 
     res.json({ settlement: updated });
+  } catch (err) { next(err); }
+});
+
+// POST bulk approve settlements (admin cutoff tool)
+router.post('/:farmId/settlements/bulk-approve', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const { ids, notes } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids array is required' });
+    }
+
+    const results = { approved: 0, errors: [] };
+
+    for (const id of ids) {
+      try {
+        // Dismiss all unresolved lines so approval doesn't block
+        await prisma.settlementLine.updateMany({
+          where: {
+            settlement_id: id,
+            match_status: { in: ['unmatched', 'exception', null] },
+          },
+          data: {
+            match_status: 'manual',
+            exception_reason: notes || 'Approved — prior year cutoff',
+          },
+        });
+
+        await prisma.settlement.update({
+          where: { id },
+          data: {
+            status: 'approved',
+            notes: notes || 'Approved — prior year cutoff',
+          },
+        });
+        results.approved++;
+      } catch (err) {
+        results.errors.push(`${id}: ${err.message}`);
+      }
+    }
+
+    logAudit({
+      farmId: req.params.farmId,
+      userId: req.userId,
+      entityType: 'Settlement',
+      entityId: 'bulk_approve',
+      action: 'bulk_approve',
+      changes: { approved: results.approved, requested: ids.length, notes },
+    });
+
+    res.json(results);
   } catch (err) { next(err); }
 });
 

@@ -423,6 +423,13 @@ router.put('/:farmId/terminal/settlements/:settlementId', authenticate, requireR
   } catch (err) { next(err); }
 });
 
+router.patch('/:farmId/terminal/settlements/:settlementId/lines/:lineId', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const data = await settlementService.updateSettlementLine(req.params.farmId, req.params.settlementId, req.params.lineId, req.body);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
 router.post('/:farmId/terminal/settlements/:settlementId/apply-pricing', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const data = await settlementService.applyGradePricing(req.params.settlementId);

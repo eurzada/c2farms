@@ -1,8 +1,26 @@
 import ExcelJS from 'exceljs';
 import prisma from '../config/database.js';
 import createLogger from '../utils/logger.js';
+import { fiscalToCalendar } from '../utils/fiscalYear.js';
 
 const log = createLogger('recon-gap-report');
+
+// Build a date range for fiscal year (Nov-Oct) with optional single-month filter
+function buildDateRange(fiscalYear, month) {
+  if (fiscalYear && month) {
+    // Single month: first day to last day of that month
+    const start = fiscalToCalendar(fiscalYear, month);
+    const end = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+    return { gte: start, lt: end };
+  }
+  if (fiscalYear) {
+    // Full fiscal year: Nov of prior year through Oct of fiscal year
+    const start = fiscalToCalendar(fiscalYear, 'Nov'); // Nov of FY-1
+    const end = new Date(fiscalYear, 10, 1); // Nov 1 of FY (exclusive)
+    return { gte: start, lt: end };
+  }
+  return null;
+}
 
 function fmtMT(v) {
   return v != null ? Math.round(v * 100) / 100 : null;
@@ -20,12 +38,14 @@ function fmtDollar(v) {
 
 // Section 1: Tickets not matched to any settlement
 // Cross-reference with settlements that share the same contract number
-async function getShippedNoSettlement(farmId) {
+async function getShippedNoSettlement(farmId, dateRange) {
+  const where = {
+    farm_id: farmId,
+    settlement_lines: { none: {} },
+  };
+  if (dateRange) where.delivery_date = dateRange;
   const tickets = await prisma.deliveryTicket.findMany({
-    where: {
-      farm_id: farmId,
-      settlement_lines: { none: {} },
-    },
+    where,
     include: {
       commodity: { select: { name: true, code: true } },
     },
@@ -73,9 +93,11 @@ async function getShippedNoSettlement(farmId) {
 }
 
 // Section 2: Settlements referencing contracts not in MarketingContract
-async function getSettledNoContract(farmId) {
+async function getSettledNoContract(farmId, dateRange) {
+  const where = { farm_id: farmId, marketing_contract_id: null };
+  if (dateRange) where.settlement_date = dateRange;
   const settlements = await prisma.settlement.findMany({
-    where: { farm_id: farmId, marketing_contract_id: null },
+    where,
     include: {
       counterparty: { select: { name: true } },
     },
@@ -106,12 +128,14 @@ async function getSettledNoContract(farmId) {
 }
 
 // Section 3: Settlement lines with ticket numbers that don't exist
-async function getMissingTicketLines(farmId) {
+async function getMissingTicketLines(farmId, dateRange) {
+  const settlementWhere = { farm_id: farmId };
+  if (dateRange) settlementWhere.settlement_date = dateRange;
   const lines = await prisma.settlementLine.findMany({
     where: {
       match_status: 'exception',
       exception_reason: { contains: 'ticket_not_found' },
-      settlement: { farm_id: farmId },
+      settlement: settlementWhere,
     },
     include: {
       settlement: {
@@ -135,13 +159,15 @@ async function getMissingTicketLines(farmId) {
 }
 
 // Section 4: Tickets with no contract reference and not settled
-async function getShippedNoContractRef(farmId) {
+async function getShippedNoContractRef(farmId, dateRange) {
+  const where = {
+    farm_id: farmId,
+    OR: [{ contract_number: null }, { contract_number: '' }],
+    settlement_lines: { none: {} },
+  };
+  if (dateRange) where.delivery_date = dateRange;
   const tickets = await prisma.deliveryTicket.findMany({
-    where: {
-      farm_id: farmId,
-      OR: [{ contract_number: null }, { contract_number: '' }],
-      settlement_lines: { none: {} },
-    },
+    where,
     include: {
       commodity: { select: { name: true } },
     },
@@ -169,13 +195,23 @@ async function getShippedNoContractRef(farmId) {
 }
 
 // Section 5: Contracts with no tickets and no settlements
-async function getContractsNoActivity(farmId) {
+async function getContractsNoActivity(farmId, dateRange) {
+  const where = {
+    farm_id: farmId,
+    delivery_tickets: { none: {} },
+    settlements: { none: {} },
+  };
+  // For contracts, filter by delivery window overlapping the date range
+  if (dateRange) {
+    where.OR = [
+      { delivery_start: dateRange },
+      { delivery_end: dateRange },
+      // Contract spans the range (starts before, ends after)
+      { AND: [{ delivery_start: { lt: dateRange.gte } }, { delivery_end: { gte: dateRange.gte } }] },
+    ];
+  }
   const contracts = await prisma.marketingContract.findMany({
-    where: {
-      farm_id: farmId,
-      delivery_tickets: { none: {} },
-      settlements: { none: {} },
-    },
+    where,
     include: {
       counterparty: { select: { name: true } },
       commodity: { select: { name: true } },
@@ -206,16 +242,18 @@ async function getContractsNoActivity(farmId) {
   });
 }
 
-export async function generateReconGapData(farmId) {
-  log.info('Generating recon gap data', { farmId });
+export async function generateReconGapData(farmId, { fiscalYear, month } = {}) {
+  const fy = fiscalYear ? parseInt(fiscalYear, 10) : null;
+  const dateRange = buildDateRange(fy, month);
+  log.info('Generating recon gap data', { farmId, fiscalYear: fy, month, hasDateRange: !!dateRange });
 
   const [shippedNoSettlement, settledNoContract, missingTicketLines, shippedNoContractRef, contractsNoActivity] =
     await Promise.all([
-      getShippedNoSettlement(farmId),
-      getSettledNoContract(farmId),
-      getMissingTicketLines(farmId),
-      getShippedNoContractRef(farmId),
-      getContractsNoActivity(farmId),
+      getShippedNoSettlement(farmId, dateRange),
+      getSettledNoContract(farmId, dateRange),
+      getMissingTicketLines(farmId, dateRange),
+      getShippedNoContractRef(farmId, dateRange),
+      getContractsNoActivity(farmId, dateRange),
     ]);
 
   const summary = {
@@ -228,6 +266,8 @@ export async function generateReconGapData(farmId) {
 
   return {
     generated_at: new Date().toISOString(),
+    fiscal_year: fy || null,
+    month: month || null,
     summary,
     sections: {
       shipped_no_settlement: shippedNoSettlement,
@@ -241,8 +281,8 @@ export async function generateReconGapData(farmId) {
 
 // ─── Excel Export ────────────────────────────────────────────────────
 
-export async function generateReconGapExcel(farmId) {
-  const data = await generateReconGapData(farmId);
+export async function generateReconGapExcel(farmId, opts) {
+  const data = await generateReconGapData(farmId, opts);
   const wb = new ExcelJS.Workbook();
   wb.creator = 'C2 Farms';
   wb.created = new Date();
@@ -266,6 +306,8 @@ export async function generateReconGapExcel(farmId) {
   const sumWs = wb.addWorksheet('Summary');
   sumWs.addRow(['Reconciliation Gap Report']);
   sumWs.getRow(1).font = { bold: true, size: 14 };
+  const periodLabel = data.fiscal_year ? (data.month ? `FY${data.fiscal_year} — ${data.month}` : `FY${data.fiscal_year}`) : 'All Time';
+  sumWs.addRow([`Period: ${periodLabel}`]);
   sumWs.addRow([`Generated: ${new Date().toLocaleString('en-CA')}`]);
   sumWs.addRow([]);
   sumWs.addRow(['Section', 'Count']);
@@ -367,8 +409,8 @@ export async function generateReconGapExcel(farmId) {
 
 // ─── PDF Export ──────────────────────────────────────────────────────
 
-export async function generateReconGapPdf(farmId) {
-  const data = await generateReconGapData(farmId);
+export async function generateReconGapPdf(farmId, opts) {
+  const data = await generateReconGapData(farmId, opts);
 
   function sectionTable(title, headers, rows) {
     if (rows.length === 0) {
@@ -397,6 +439,7 @@ export async function generateReconGapPdf(farmId) {
 
   const content = [
     { text: 'Reconciliation Gap Report', style: 'title' },
+    { text: `Period: ${data.fiscal_year ? (data.month ? `FY${data.fiscal_year} — ${data.month}` : `FY${data.fiscal_year}`) : 'All Time'}`, style: 'subtitle' },
     { text: `Generated: ${new Date().toLocaleString('en-CA')}`, style: 'subtitle', margin: [0, 0, 0, 15] },
 
     // Summary
@@ -481,8 +524,8 @@ export async function generateReconGapPdf(farmId) {
 
 // ─── CSV Export (flat format) ────────────────────────────────────────
 
-export async function generateReconGapCsv(farmId) {
-  const data = await generateReconGapData(farmId);
+export async function generateReconGapCsv(farmId, opts) {
+  const data = await generateReconGapData(farmId, opts);
   const rows = [['Section', 'Action Required', 'Contract #', 'Buyer', 'Commodity', 'Count', 'Total MT/Amount', 'Related Settlements', 'Delivery Start', 'Delivery End', 'Urgency', 'Status']];
 
   for (const r of data.sections.shipped_no_settlement) {

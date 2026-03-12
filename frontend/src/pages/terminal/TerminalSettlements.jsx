@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Box, Typography, Button, Alert, Chip, Paper, Grid,
-  ToggleButton, ToggleButtonGroup,
+  ToggleButton, ToggleButtonGroup, Dialog, DialogTitle, DialogContent, DialogActions,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
+  CircularProgress, TextField, InputAdornment,
 } from '@mui/material';
 import { AgGridReact } from 'ag-grid-react';
 import 'ag-grid-community/styles/ag-grid.css';
@@ -37,6 +39,9 @@ export default function TerminalSettlements() {
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState('all');
   const [createOpen, setCreateOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detail, setDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   const farmId = currentFarm?.id;
 
@@ -70,6 +75,42 @@ export default function TerminalSettlements() {
     }
     return byType;
   }, [rows]);
+
+  const handleApplyGradePricing = async (id) => {
+    try {
+      await api.post(`/api/farms/${farmId}/terminal/settlements/${id}/apply-pricing`);
+      load();
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Failed to apply grade pricing — set grade prices on the contract first'));
+    }
+  };
+
+  const openDetail = async (id) => {
+    setDetailOpen(true);
+    setDetailLoading(true);
+    try {
+      const res = await api.get(`/api/farms/${farmId}/terminal/settlements/${id}`);
+      setDetail(res.data);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Failed to load settlement'));
+      setDetailOpen(false);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const handleLineUpdate = async (settlementId, lineId, field, value) => {
+    try {
+      const res = await api.patch(
+        `/api/farms/${farmId}/terminal/settlements/${settlementId}/lines/${lineId}`,
+        { [field]: value }
+      );
+      setDetail(res.data);
+      load(); // refresh grid totals too
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Failed to update line'));
+    }
+  };
 
   const handleFinalize = async (id) => {
     try {
@@ -149,14 +190,22 @@ export default function TerminalSettlements() {
       ),
     },
     {
-      headerName: 'Actions', width: 180, sortable: false, filter: false, pinned: 'right',
+      headerName: 'Actions', width: 250, sortable: false, filter: false, pinned: 'right',
       cellRenderer: p => {
-        const { id, status, type: sType, settlement_number } = p.data;
+        const { id, status, type: sType, settlement_number, net_amount } = p.data;
         if (status === 'draft') {
+          const needsPricing = !net_amount || net_amount === 0;
           return (
-            <Button size="small" variant="outlined" onClick={() => handleFinalize(id)}>
-              Finalize
-            </Button>
+            <Box sx={{ display: 'flex', gap: 0.5 }}>
+              {needsPricing && (
+                <Button size="small" variant="outlined" color="warning" onClick={() => handleApplyGradePricing(id)}>
+                  Apply Pricing
+                </Button>
+              )}
+              <Button size="small" variant="outlined" onClick={() => handleFinalize(id)}>
+                Finalize
+              </Button>
+            </Box>
           );
         }
         if (status === 'finalized' && sType === 'transfer') {
@@ -236,6 +285,7 @@ export default function TerminalSettlements() {
           animateRows
           getRowId={p => p.data.id}
           loading={loading}
+          onRowDoubleClicked={p => openDetail(p.data.id)}
         />
       </Box>
 
@@ -245,6 +295,113 @@ export default function TerminalSettlements() {
         farmId={farmId}
         onSaved={() => { setCreateOpen(false); load(); }}
       />
+
+      {/* Settlement Detail Dialog */}
+      <Dialog open={detailOpen} onClose={() => { setDetailOpen(false); setDetail(null); }} maxWidth="lg" fullWidth>
+        <DialogTitle>
+          {detail ? (
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>{detail.settlement_number}</span>
+              <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                <Chip label={detail.type === 'transfer' ? 'Transfer' : 'Transloading'} size="small" color={TYPE_COLORS[detail.type] || 'default'} variant="outlined" />
+                <Chip label={detail.status} size="small" color={STATUS_COLORS[detail.status] || 'default'} />
+              </Box>
+            </Box>
+          ) : 'Settlement Detail'}
+        </DialogTitle>
+        <DialogContent dividers>
+          {detailLoading && <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}><CircularProgress /></Box>}
+          {detail && !detailLoading && (
+            <>
+              <Box sx={{ display: 'flex', gap: 4, mb: 2 }}>
+                <Typography variant="body2"><strong>Contract:</strong> {detail.contract?.contract_number || '—'}</Typography>
+                <Typography variant="body2"><strong>Counterparty:</strong> {detail.counterparty?.name || '—'}</Typography>
+                <Typography variant="body2"><strong>Date:</strong> {detail.settlement_date ? new Date(detail.settlement_date).toLocaleDateString('en-CA') : '—'}</Typography>
+                <Typography variant="body2"><strong>Net Amount:</strong> {fmtDollar(detail.net_amount)}</Typography>
+              </Box>
+
+              <TableContainer component={Paper} variant="outlined">
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Line #</TableCell>
+                      <TableCell>Ticket #</TableCell>
+                      <TableCell>Source</TableCell>
+                      <TableCell>Grade</TableCell>
+                      <TableCell align="right">Net MT</TableCell>
+                      <TableCell align="right">$/MT</TableCell>
+                      <TableCell align="right">Amount</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {(detail.lines || []).map(l => {
+                      const isDraft = detail.status === 'draft';
+                      return (
+                        <TableRow key={l.id}>
+                          <TableCell>{l.line_number}</TableCell>
+                          <TableCell>{l.ticket?.ticket_number || '—'}</TableCell>
+                          <TableCell>{l.source_farm_name || '—'}</TableCell>
+                          <TableCell>
+                            {isDraft ? (
+                              <TextField
+                                size="small" variant="standard" defaultValue={l.grade || ''}
+                                onBlur={e => { if (e.target.value !== (l.grade || '')) handleLineUpdate(detail.id, l.id, 'grade', e.target.value); }}
+                                sx={{ width: 110 }}
+                              />
+                            ) : (l.grade || '—')}
+                          </TableCell>
+                          <TableCell align="right">{l.net_weight_mt != null ? fmt(l.net_weight_mt) : '—'}</TableCell>
+                          <TableCell align="right">
+                            {isDraft ? (
+                              <TextField
+                                size="small" variant="standard" type="number" defaultValue={l.price_per_mt ?? ''}
+                                onBlur={e => { if (e.target.value !== String(l.price_per_mt ?? '')) handleLineUpdate(detail.id, l.id, 'price_per_mt', e.target.value); }}
+                                sx={{ width: 90 }}
+                                InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }}
+                              />
+                            ) : (l.price_per_mt != null ? fmtDollar(l.price_per_mt) : '—')}
+                          </TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 600 }}>{l.line_amount != null ? fmtDollar(l.line_amount) : '—'}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    <TableRow sx={{ '& td': { fontWeight: 700, borderTop: '2px solid', borderColor: 'divider' } }}>
+                      <TableCell colSpan={4}>Totals ({(detail.lines || []).length} lines)</TableCell>
+                      <TableCell align="right">{fmt((detail.lines || []).reduce((s, l) => s + (l.net_weight_mt || 0), 0))}</TableCell>
+                      <TableCell />
+                      <TableCell align="right">{fmtDollar(detail.net_amount)}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </TableContainer>
+
+              {detail.notes && (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                  <strong>Notes:</strong> {detail.notes}
+                </Typography>
+              )}
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          {detail?.status === 'draft' && (
+            <>
+              <Button color="warning" onClick={() => { handleApplyGradePricing(detail.id); openDetail(detail.id); }}>
+                Apply Pricing
+              </Button>
+              <Button onClick={() => { handleFinalize(detail.id); setDetailOpen(false); setDetail(null); }}>
+                Finalize
+              </Button>
+            </>
+          )}
+          {detail?.status === 'finalized' && detail?.type === 'transfer' && (
+            <Button variant="contained" onClick={() => { handlePush(detail.id); setDetailOpen(false); setDetail(null); }}>
+              Push to Logistics
+            </Button>
+          )}
+          <Button onClick={() => { setDetailOpen(false); setDetail(null); }}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

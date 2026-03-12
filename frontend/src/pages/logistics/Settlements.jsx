@@ -20,6 +20,7 @@ import DownloadIcon from '@mui/icons-material/Download';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import { useNavigate } from 'react-router-dom';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
@@ -76,7 +77,9 @@ export default function Settlements() {
   const [gapOpen, setGapOpen] = useState(false);
   const [gapData, setGapData] = useState(null);
   const [gapLoading, setGapLoading] = useState(false);
+  const [gapMonth, setGapMonth] = useState('');
   const [expandedSections, setExpandedSections] = useState({});
+  const [selectedCount, setSelectedCount] = useState(0);
   const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
   const fetchData = useCallback(() => {
@@ -126,6 +129,39 @@ export default function Settlements() {
 
   const pendingCount = settlements.filter(s => s.status === 'pending').length;
 
+  const handleBulkApprove = async () => {
+    const selectedRows = gridRef.current?.api?.getSelectedRows() || [];
+    const approvable = selectedRows.filter(s => s.status !== 'approved');
+    if (approvable.length === 0) {
+      setSnack({ open: true, message: 'All selected settlements are already approved', severity: 'info' });
+      return;
+    }
+    const ok = await confirm({
+      title: 'Bulk Approve Settlements',
+      message: `Approve ${approvable.length} settlement${approvable.length !== 1 ? 's' : ''}? Unresolved lines will be dismissed as prior-year cutoff.`,
+      confirmText: 'Approve All',
+      confirmColor: 'success',
+    });
+    if (!ok) return;
+
+    try {
+      const ids = approvable.map(s => s.id);
+      const res = await api.post(`/api/farms/${currentFarm.id}/settlements/bulk-approve`, {
+        ids,
+        notes: 'Approved — prior year cutoff',
+      });
+      setSnack({ open: true, message: `${res.data.approved} settlement(s) approved`, severity: 'success' });
+      setSelectedCount(0);
+      fetchData();
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to approve settlements'), severity: 'error' });
+    }
+  };
+
+  const onSelectionChanged = useCallback(() => {
+    setSelectedCount(gridRef.current?.api?.getSelectedRows()?.length || 0);
+  }, []);
+
   const handleReconcileAll = async () => {
     const ok = await confirm({
       title: 'Reconcile All Pending',
@@ -150,11 +186,15 @@ export default function Settlements() {
     }
   };
 
-  const handleReconGapReport = async () => {
+  const handleReconGapReport = async (monthOverride) => {
     setGapOpen(true);
     setGapLoading(true);
     try {
-      const res = await api.get(`/api/farms/${currentFarm.id}/settlements/reports/recon-gaps`);
+      const params = new URLSearchParams();
+      if (fiscalYearFilter) params.append('fiscal_year', fiscalYearFilter);
+      const m = typeof monthOverride === 'string' ? monthOverride : gapMonth;
+      if (m) params.append('month', m);
+      const res = await api.get(`/api/farms/${currentFarm.id}/settlements/reports/recon-gaps?${params}`);
       setGapData(res.data);
     } catch (err) {
       setSnack({ open: true, message: extractErrorMessage(err, 'Failed to load report'), severity: 'error' });
@@ -172,8 +212,11 @@ export default function Settlements() {
     try {
       const mimeTypes = { excel: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', pdf: 'application/pdf', csv: 'text/csv' };
       const extensions = { excel: 'xlsx', pdf: 'pdf', csv: 'csv' };
+      const params = new URLSearchParams();
+      if (fiscalYearFilter) params.append('fiscal_year', fiscalYearFilter);
+      if (gapMonth) params.append('month', gapMonth);
       const res = await api.get(
-        `/api/farms/${currentFarm.id}/settlements/reports/recon-gaps/${format}`,
+        `/api/farms/${currentFarm.id}/settlements/reports/recon-gaps/${format}?${params}`,
         { responseType: 'blob' }
       );
       const blob = new Blob([res.data], { type: mimeTypes[format] });
@@ -193,8 +236,10 @@ export default function Settlements() {
   const copyGapReport = () => {
     if (!gapData) return;
     const { summary, sections } = gapData;
+    const periodLabel = gapData.fiscal_year ? (gapData.month ? `FY${gapData.fiscal_year} — ${gapData.month}` : `FY${gapData.fiscal_year}`) : 'All Time';
     const lines = [
       'Reconciliation Gap Report',
+      `Period: ${periodLabel}`,
       `Generated: ${new Date().toLocaleDateString()}`,
       '',
       `Shipped, No Settlement: ${summary.shipped_no_settlement}`,
@@ -279,6 +324,16 @@ export default function Settlements() {
 
   const columnDefs = useMemo(() => [
     {
+      headerCheckboxSelection: true,
+      checkboxSelection: true,
+      headerCheckboxSelectionFilteredOnly: true,
+      width: 44,
+      sortable: false,
+      filter: false,
+      resizable: false,
+      pinned: 'left',
+    },
+    {
       field: 'settlement_number', headerName: 'Settlement #', width: 160,
       cellRenderer: p => (
         <Stack direction="row" alignItems="center" spacing={0.5}>
@@ -350,6 +405,9 @@ export default function Settlements() {
             sx={{ minWidth: 120 }}
           >
             <MenuItem value="">All Years</MenuItem>
+            <MenuItem value="2022">FY2022</MenuItem>
+            <MenuItem value="2023">FY2023</MenuItem>
+            <MenuItem value="2024">FY2024</MenuItem>
             <MenuItem value="2025">FY2025</MenuItem>
             <MenuItem value="2026">FY2026</MenuItem>
             <MenuItem value="2027">FY2027</MenuItem>
@@ -365,6 +423,17 @@ export default function Settlements() {
             <MenuItem value="disputed">Disputed</MenuItem>
             <MenuItem value="approved">Approved</MenuItem>
           </TextField>
+          {selectedCount > 0 && isAdmin && (
+            <Button
+              variant="outlined"
+              color="success"
+              size="small"
+              startIcon={<CheckCircleOutlineIcon />}
+              onClick={handleBulkApprove}
+            >
+              Approve ({selectedCount})
+            </Button>
+          )}
           <Button variant="outlined" color="warning" startIcon={<SummarizeIcon />} onClick={handleReconGapReport}>
             Recon Gap Report
           </Button>
@@ -396,9 +465,12 @@ export default function Settlements() {
           columnDefs={columnDefs}
           defaultColDef={{ sortable: true, resizable: true, filter: true }}
           animateRows
+          rowSelection="multiple"
+          suppressRowClickSelection
           enableCellTextSelection
           ensureDomOrder
           getRowId={p => p.data?.id}
+          onSelectionChanged={onSelectionChanged}
           onRowDoubleClicked={p => openDetail(p.data.id)}
           onGridReady={(params) => {
             const s = savedState.current;
@@ -653,7 +725,22 @@ export default function Settlements() {
       <Dialog open={gapOpen} onClose={() => setGapOpen(false)} maxWidth="lg" fullWidth>
         <DialogTitle>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <span>Reconciliation Gap Report</span>
+            <Stack direction="row" spacing={2} alignItems="center">
+              <span>Reconciliation Gap Report</span>
+              <Typography variant="body2" color="text.secondary">
+                {fiscalYearFilter ? `FY${fiscalYearFilter}` : 'All Years'}{gapMonth ? ` — ${gapMonth}` : ''}
+              </Typography>
+              <TextField
+                select size="small" label="Month" value={gapMonth}
+                onChange={(e) => { setGapMonth(e.target.value); handleReconGapReport(e.target.value); }}
+                sx={{ minWidth: 120 }}
+              >
+                <MenuItem value="">All Months</MenuItem>
+                {['Nov','Dec','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct'].map(m => (
+                  <MenuItem key={m} value={m}>{m}</MenuItem>
+                ))}
+              </TextField>
+            </Stack>
             {gapData && (
               <Stack direction="row" spacing={1}>
                 <Tooltip title="Copy to clipboard">

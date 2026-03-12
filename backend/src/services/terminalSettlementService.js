@@ -204,25 +204,47 @@ export async function pushToLogistics(farmId, settlementId, io) {
       },
     });
 
-    // 4b. Create SettlementLine records
-    const lineData = terminalSettlement.lines.map(line => ({
-      settlement_id: settlement.id,
-      line_number: line.line_number,
-      ticket_number_on_settlement: line.ticket?.ticket_number?.toString() || null,
-      delivery_date: line.ticket?.ticket_date || null,
-      commodity: line.commodity?.name || null,
-      grade: line.grade || null,
-      gross_weight_mt: line.gross_weight_mt || null,
-      net_weight_mt: line.net_weight_mt || null,
-      price_per_mt: line.price_per_mt || null,
-      line_gross: line.line_amount || null,
-      line_net: line.line_amount || null,
-      match_status: 'unmatched',
-    }));
+    // 4b. Match terminal ticket numbers → DeliveryTickets for auto-reconciliation
+    const ticketNumbers = terminalSettlement.lines
+      .filter(l => l.ticket?.ticket_number)
+      .map(l => String(l.ticket.ticket_number));
+
+    const deliveryTickets = ticketNumbers.length > 0
+      ? await tx.deliveryTicket.findMany({
+          where: { farm_id: enterpriseFarmId, ticket_number: { in: ticketNumbers } },
+          select: { id: true, ticket_number: true },
+        })
+      : [];
+    const dtMap = new Map(deliveryTickets.map(dt => [dt.ticket_number, dt.id]));
+
+    // 4c. Create SettlementLine records — auto-matched where possible
+    const lineData = terminalSettlement.lines.map(line => {
+      const ticketNum = line.ticket?.ticket_number?.toString() || null;
+      const deliveryTicketId = ticketNum ? dtMap.get(ticketNum) || null : null;
+      return {
+        settlement_id: settlement.id,
+        line_number: line.line_number,
+        ticket_number_on_settlement: ticketNum,
+        delivery_ticket_id: deliveryTicketId,
+        delivery_date: line.ticket?.ticket_date || null,
+        commodity: line.commodity?.name || null,
+        grade: line.grade || null,
+        gross_weight_mt: line.gross_weight_mt || null,
+        net_weight_mt: line.net_weight_mt || null,
+        price_per_mt: line.price_per_mt || null,
+        line_gross: line.line_amount || null,
+        line_net: line.line_amount || null,
+        match_status: deliveryTicketId ? 'matched' : 'unmatched',
+        match_confidence: deliveryTicketId ? 1.0 : null,
+      };
+    });
 
     if (lineData.length > 0) {
       await tx.settlementLine.createMany({ data: lineData });
     }
+
+    const matchedCount = lineData.filter(l => l.delivery_ticket_id).length;
+    logger.info('Auto-reconciled settlement lines', { matchedCount, totalLines: lineData.length });
 
     // 4c. Mark terminal settlement as pushed
     await tx.terminalSettlement.update({
@@ -276,8 +298,37 @@ export async function getEligibleTickets(farmId, type = 'transfer') {
       test_weight: true,
       dockage_pct: true,
     },
-    orderBy: { ticket_date: 'desc' },
+    orderBy: { ticket_number: 'asc' },
   });
+
+  // For C2 transfers, look up matching DeliveryTickets to pull grade + date
+  if (isC2 && tickets.length > 0) {
+    const { farmId: enterpriseFarmId } = await resolveInventoryFarm(farmId);
+    const ticketNumbers = tickets.map(t => String(t.ticket_number));
+    const deliveryTickets = await prisma.deliveryTicket.findMany({
+      where: {
+        farm_id: enterpriseFarmId,
+        ticket_number: { in: ticketNumbers },
+      },
+      select: {
+        ticket_number: true,
+        grade: true,
+        delivery_date: true,
+        commodity: { select: { id: true, name: true, code: true } },
+      },
+    });
+    const dtMap = new Map(deliveryTickets.map(dt => [dt.ticket_number, dt]));
+
+    return tickets.map(t => {
+      const dt = dtMap.get(String(t.ticket_number));
+      return {
+        ...t,
+        grade: dt?.grade || null,
+        delivery_date: dt?.delivery_date || t.ticket_date,
+        logistics_commodity: dt?.commodity || null,
+      };
+    });
+  }
 
   return tickets;
 }
@@ -397,6 +448,46 @@ export async function updateSettlement(farmId, settlementId, data) {
       include: standardIncludes,
     });
   });
+}
+
+/**
+ * Update a single settlement line (grade, price). Recomputes line amount and settlement totals.
+ */
+export async function updateSettlementLine(farmId, settlementId, lineId, data) {
+  const settlement = await prisma.terminalSettlement.findFirst({
+    where: { id: settlementId, farm_id: farmId },
+  });
+  if (!settlement) throw Object.assign(new Error('Settlement not found'), { status: 404 });
+  if (settlement.status !== 'draft') {
+    throw Object.assign(new Error('Can only edit draft settlements'), { status: 400 });
+  }
+
+  const line = await prisma.terminalSettlementLine.findFirst({
+    where: { id: lineId, terminal_settlement_id: settlementId },
+  });
+  if (!line) throw Object.assign(new Error('Line not found'), { status: 404 });
+
+  const grade = data.grade !== undefined ? data.grade : line.grade;
+  const pricePmt = data.price_per_mt !== undefined ? parseFloat(data.price_per_mt) : line.price_per_mt;
+  const netMt = line.net_weight_mt;
+  const lineAmount = (netMt != null && pricePmt != null) ? netMt * pricePmt : null;
+
+  await prisma.terminalSettlementLine.update({
+    where: { id: lineId },
+    data: { grade, price_per_mt: pricePmt, line_amount: lineAmount },
+  });
+
+  // Recompute settlement totals
+  const allLines = await prisma.terminalSettlementLine.findMany({
+    where: { terminal_settlement_id: settlementId },
+  });
+  const grossAmount = allLines.reduce((sum, l) => sum + (l.line_amount || 0), 0);
+  await prisma.terminalSettlement.update({
+    where: { id: settlementId },
+    data: { gross_amount: grossAmount, net_amount: grossAmount },
+  });
+
+  return getSettlement(farmId, settlementId);
 }
 
 /**
