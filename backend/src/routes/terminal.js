@@ -1,8 +1,12 @@
 import { Router } from 'express';
+import multer from 'multer';
 import prisma from '../config/database.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
+import { logAudit } from '../services/auditService.js';
+import { extractContractFromPdf } from '../services/contractExtractionService.js';
 import * as binService from '../services/terminalBinService.js';
 import * as ticketService from '../services/terminalTicketService.js';
+import * as ticketImportService from '../services/terminalTicketImportService.js';
 import * as blendService from '../services/terminalBlendService.js';
 import * as sampleService from '../services/terminalSampleService.js';
 import * as dashboardService from '../services/terminalDashboardService.js';
@@ -15,6 +19,7 @@ import { getFontPaths } from '../utils/fontPaths.js';
 const pdfPrinter = new PdfPrinter({ Roboto: getFontPaths() });
 
 const router = Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 // ── Bins ─────────────────────────────────────────────────────────────────────
 
@@ -57,7 +62,48 @@ router.post('/:farmId/terminal/bins/:binId/recalculate', authenticate, requireRo
   } catch (err) { next(err); }
 });
 
+router.post('/:farmId/terminal/bins/:binId/allocate-tickets', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { ticket_ids } = req.body;
+    if (!Array.isArray(ticket_ids) || ticket_ids.length === 0) {
+      return res.status(400).json({ error: 'ticket_ids is required and must be a non-empty array' });
+    }
+    const result = await ticketService.allocateTicketsToBin(req.params.farmId, req.params.binId, ticket_ids);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 // ── Tickets ──────────────────────────────────────────────────────────────────
+
+// ── Ticket Import (CSV) ─────────────────────────────────────────────────────
+// Must come before :ticketId to avoid route conflicts
+
+router.post('/:farmId/terminal/tickets/import/preview', authenticate, requireRole('admin', 'manager'), upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const csvText = req.file.buffer.toString('utf-8');
+    const result = await ticketImportService.previewTerminalImport(req.params.farmId, csvText);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+router.post('/:farmId/terminal/tickets/import/commit', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { tickets } = req.body;
+    if (!Array.isArray(tickets) || tickets.length === 0) {
+      return res.status(400).json({ error: 'tickets array is required' });
+    }
+    const result = await ticketImportService.commitTerminalImport(req.params.farmId, tickets);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+router.get('/:farmId/terminal/tickets/unallocated', authenticate, async (req, res, next) => {
+  try {
+    const tickets = await ticketService.getUnallocatedTickets(req.params.farmId);
+    res.json({ tickets });
+  } catch (err) { next(err); }
+});
 
 // Stats must come before :ticketId to avoid route conflicts
 router.get('/:farmId/terminal/tickets/stats', authenticate, async (req, res, next) => {
@@ -94,6 +140,34 @@ router.put('/:farmId/terminal/tickets/:ticketId', authenticate, requireRole('adm
   try {
     const data = await ticketService.updateTicket(req.params.farmId, req.params.ticketId, req.body);
     res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.post('/:farmId/terminal/tickets/batch-assign-contract', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { ticket_ids, contract_id } = req.body;
+    if (!Array.isArray(ticket_ids) || ticket_ids.length === 0) {
+      return res.status(400).json({ error: 'ticket_ids is required and must be a non-empty array' });
+    }
+    if (!contract_id) {
+      return res.status(400).json({ error: 'contract_id is required' });
+    }
+    // Verify contract belongs to this farm
+    const contract = await prisma.terminalContract.findFirst({
+      where: { id: contract_id, farm_id: req.params.farmId },
+    });
+    if (!contract) return res.status(404).json({ error: 'Contract not found' });
+
+    // Update all specified tickets
+    const result = await prisma.terminalTicket.updateMany({
+      where: {
+        id: { in: ticket_ids },
+        farm_id: req.params.farmId,
+        direction: 'inbound',
+      },
+      data: { contract_id },
+    });
+    res.json({ updated: result.count });
   } catch (err) { next(err); }
 });
 
@@ -205,6 +279,54 @@ router.get('/:farmId/terminal/contracts/summary', authenticate, async (req, res,
   } catch (err) { next(err); }
 });
 
+// Single-file import (must come before /:contractId)
+router.post('/:farmId/terminal/contracts/import-pdf', authenticate, requireRole('admin', 'manager'), upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    if (!req.file.originalname.match(/\.(pdf|jpg|jpeg|png)$/i)) {
+      return res.status(400).json({ error: 'Only PDF and image files are supported' });
+    }
+    let extraction, usage;
+    try {
+      ({ extraction, usage } = await extractContractFromPdf(req.file.buffer));
+    } catch (apiErr) {
+      const status = apiErr.code === 'NO_API_KEY' || apiErr.code === 'INVALID_API_KEY' ? 500
+        : apiErr.code === 'RATE_LIMITED' ? 429
+        : apiErr.code === 'INSUFFICIENT_CREDITS' ? 402
+        : apiErr.code === 'API_OVERLOADED' ? 503
+        : 422;
+      return res.status(status).json({ error: apiErr.message, code: apiErr.code, usage: apiErr.usage || null });
+    }
+    res.json({ extraction, usage });
+  } catch (err) { next(err); }
+});
+
+router.post('/:farmId/terminal/contracts/import-pdf/check-duplicate', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { contract_number } = req.body;
+    if (!contract_number) return res.json({ duplicate: false });
+    const existing = await prisma.terminalContract.findFirst({
+      where: { farm_id: req.params.farmId, contract_number },
+      include: { counterparty: true, commodity: true },
+    });
+    if (existing) {
+      return res.json({
+        duplicate: true,
+        existing: {
+          id: existing.id,
+          contract_number: existing.contract_number,
+          buyer: existing.counterparty?.name,
+          commodity: existing.commodity?.name,
+          contracted_mt: existing.contracted_mt,
+          status: existing.status,
+          delivered_mt: existing.delivered_mt,
+        },
+      });
+    }
+    res.json({ duplicate: false });
+  } catch (err) { next(err); }
+});
+
 router.get('/:farmId/terminal/contracts', authenticate, async (req, res, next) => {
   try {
     const { direction, status, page = '1', limit = '50' } = req.query;
@@ -231,7 +353,8 @@ router.post('/:farmId/terminal/contracts', authenticate, requireRole('admin', 'm
 
 router.put('/:farmId/terminal/contracts/:contractId', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
-    const data = await contractService.updateContract(req.params.farmId, req.params.contractId, req.body);
+    const io = req.app.get('io');
+    const data = await contractService.updateContract(req.params.farmId, req.params.contractId, req.body, io);
     res.json(data);
   } catch (err) { next(err); }
 });
@@ -254,17 +377,41 @@ router.get('/:farmId/terminal/settlements/summary', authenticate, async (req, re
 
 router.get('/:farmId/terminal/settlements', authenticate, async (req, res, next) => {
   try {
-    const { direction, status, page = '1', limit = '50' } = req.query;
+    const { type, status, page = '1', limit = '50' } = req.query;
     const data = await settlementService.getSettlements(req.params.farmId, {
-      direction, status, page: parseInt(page), limit: parseInt(limit),
+      type, status, page: parseInt(page), limit: parseInt(limit),
     });
     res.json(data);
   } catch (err) { next(err); }
 });
 
+router.get('/:farmId/terminal/settlements/:settlementId', authenticate, async (req, res, next) => {
+  try {
+    const data = await settlementService.getSettlement(req.params.farmId, req.params.settlementId);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/:farmId/terminal/settlements/:settlementId/eligible-tickets', authenticate, async (req, res, next) => {
+  try {
+    const settlement = await settlementService.getSettlement(req.params.farmId, req.params.settlementId);
+    const tickets = await settlementService.getEligibleTickets(req.params.farmId, settlement.type);
+    res.json({ tickets });
+  } catch (err) { next(err); }
+});
+
+// Also expose eligible tickets without a settlement context
+router.get('/:farmId/terminal/eligible-tickets', authenticate, async (req, res, next) => {
+  try {
+    const { type = 'transfer' } = req.query;
+    const tickets = await settlementService.getEligibleTickets(req.params.farmId, type);
+    res.json({ tickets });
+  } catch (err) { next(err); }
+});
+
 router.post('/:farmId/terminal/settlements', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
-    const data = await settlementService.createSettlement(req.params.farmId, req.body);
+    const data = await settlementService.createSettlementWithLines(req.params.farmId, req.body);
     res.status(201).json(data);
   } catch (err) { next(err); }
 });
@@ -276,10 +423,34 @@ router.put('/:farmId/terminal/settlements/:settlementId', authenticate, requireR
   } catch (err) { next(err); }
 });
 
-router.post('/:farmId/terminal/settlements/:settlementId/pay', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+router.post('/:farmId/terminal/settlements/:settlementId/apply-pricing', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
-    const data = await settlementService.markPaid(req.params.farmId, req.params.settlementId, req.body);
+    const data = await settlementService.applyGradePricing(req.params.settlementId);
     res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.post('/:farmId/terminal/settlements/:settlementId/finalize', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const data = await settlementService.finalizeSettlement(req.params.farmId, req.params.settlementId);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.post('/:farmId/terminal/settlements/:settlementId/push', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const io = req.app.get('io');
+    const data = await settlementService.pushToLogistics(req.params.farmId, req.params.settlementId, io);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/:farmId/terminal/settlements/:settlementId/invoice', authenticate, async (req, res, next) => {
+  try {
+    const pdfBuffer = await settlementService.generateTransloadingInvoice(req.params.farmId, req.params.settlementId);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=transloading-invoice-${req.params.settlementId}.pdf`);
+    res.send(pdfBuffer);
   } catch (err) { next(err); }
 });
 

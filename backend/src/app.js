@@ -34,7 +34,6 @@ import { fieldOpsGeneralRouter, fieldOpsFarmRouter } from './routes/fieldOps.js'
 import mobileTicketRoutes from './routes/mobileTickets.js';
 import labourRoutes, { labourGeneralRouter } from './routes/labour.js';
 import terminalRoutes from './routes/terminal.js';
-
 import { errorHandler } from './middleware/errorHandler.js';
 import { authenticate, requireFarmAccess, requireModule } from './middleware/auth.js';
 

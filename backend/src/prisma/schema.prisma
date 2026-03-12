@@ -36,12 +36,12 @@ model Farm {
   season_profiles SeasonProfile[]
   labour_plans    LabourPlan[]
 
-  terminal_bins         TerminalBin[]
-  terminal_tickets      TerminalTicket[]
-  terminal_blend_events TerminalBlendEvent[]
-  terminal_contracts    TerminalContract[]
-  terminal_settlements  TerminalSettlement[]
-  daily_positions       DailyPosition[]
+  terminal_bins              TerminalBin[]
+  terminal_tickets           TerminalTicket[]
+  terminal_blend_events      TerminalBlendEvent[]
+  terminal_contracts         TerminalContract[]
+  terminal_settlements       TerminalSettlement[]
+  daily_positions            DailyPosition[]
 
   @@map("farms")
 }
@@ -287,9 +287,10 @@ model Commodity {
   marketing_contracts MarketingContract[]
   market_prices       MarketPrice[]
   price_alerts        PriceAlert[]
-  delivery_tickets    DeliveryTicket[]
-  terminal_bins       TerminalBin[]
-  terminal_contracts  TerminalContract[]
+  delivery_tickets        DeliveryTicket[]
+  terminal_bins           TerminalBin[]
+  terminal_contracts      TerminalContract[]
+  terminal_settlement_lines TerminalSettlementLine[]
 
   @@unique([farm_id, code])
   @@map("commodities")
@@ -449,49 +450,58 @@ model Counterparty {
 }
 
 model MarketingContract {
-  id                String        @id @default(uuid())
-  farm_id           String
-  contract_number   String
-  crop_year         String        // e.g. "2025/26"
-  commodity_id      String
-  counterparty_id   String
-  grade             String?
-  broker            String?
-  contracted_mt     Float
-  delivered_mt      Float         @default(0)
-  remaining_mt      Float
-  tolerance_pct     Float?
-  pricing_type      String        @default("flat") // flat, basis, hta, min_price, deferred
-  pricing_status    String        @default("priced") // priced, unpriced, partially_priced
-  price_per_bu      Float?
-  price_per_mt      Float?
-  basis_level       Float?        // $/bu
-  futures_reference String?       // e.g. "ICE RS May26"
-  futures_price     Float?        // $/bu for HTA
-  currency          String        @default("CAD")
-  delivery_start    DateTime?     @db.Date
-  delivery_end      DateTime?     @db.Date
-  elevator_site     String?
-  farm_origin       String?
-  status            String        @default("executed") // executed, in_delivery, delivered, settled, cancelled
-  settlement_date   DateTime?     @db.Date
-  settlement_amount Float?
-  contract_value    Float?
-  cop_per_mt        Float?
-  notes             String?
-  created_by        String?
-  created_at        DateTime      @default(now())
-  updated_at        DateTime      @updatedAt
-  counterparty      Counterparty    @relation(fields: [counterparty_id], references: [id])
-  commodity         Commodity       @relation(fields: [commodity_id], references: [id])
-  deliveries        Delivery[]
-  cash_flow_entries CashFlowEntry[]
-  delivery_tickets  DeliveryTicket[]
-  settlements       Settlement[]
+  id                        String        @id @default(uuid())
+  farm_id                   String
+  contract_number           String
+  contract_type             String        @default("third_party") // third_party | transfer (LGX inter-company blending agreement)
+  linked_terminal_contract_id String?     // LGX sale to JGL etc.; only for contract_type=transfer
+  crop_year                 String        // e.g. "2025/26"
+  commodity_id              String
+  counterparty_id           String
+  grade                     String?
+  broker                    String?
+  contracted_mt             Float
+  contracted_bu             Float?        // for transfer: blend recipe component (both bu and mt available)
+  delivered_mt              Float         @default(0)
+  remaining_mt              Float
+  tolerance_pct             Float?
+  pricing_type              String        @default("flat") // flat, basis, hta, min_price, deferred
+  pricing_status            String        @default("priced") // priced, unpriced, partially_priced
+  price_per_bu              Float?
+  price_per_mt              Float?
+  basis_level               Float?        // $/bu
+  futures_reference         String?       // e.g. "ICE RS May26"
+  futures_price             Float?        // $/bu for HTA
+  currency                  String        @default("CAD")
+  delivery_start            DateTime?     @db.Date
+  delivery_end              DateTime?     @db.Date
+  elevator_site             String?
+  farm_origin               String?
+  status                    String        @default("executed") // executed, in_delivery, delivered, settled, cancelled
+  settlement_date           DateTime?     @db.Date
+  settlement_amount         Float?
+  contract_value            Float?
+  cop_per_mt                Float?
+  notes                     String?
+  grade_prices_json         Json?        // for transfer: [{ grade: "Durum #1", price_per_mt: 288 }, ...]
+  blend_requirement_json    Json?        // for transfer: [{ grade: "Durum #1", mt: 800 }, ...]
+  blend_mix_updated_at      DateTime?
+  created_by                String?
+  created_at                DateTime      @default(now())
+  updated_at                DateTime      @updatedAt
+  counterparty              Counterparty    @relation(fields: [counterparty_id], references: [id])
+  commodity                 Commodity       @relation(fields: [commodity_id], references: [id])
+  linked_terminal_contract  TerminalContract? @relation(fields: [linked_terminal_contract_id], references: [id])
+  deliveries                Delivery[]
+  cash_flow_entries         CashFlowEntry[]
+  delivery_tickets          DeliveryTicket[]
+  settlements               Settlement[]
 
   @@unique([farm_id, contract_number])
   @@index([farm_id, commodity_id])
   @@index([farm_id, status])
+  @@index([farm_id, contract_type])
+  @@index([linked_terminal_contract_id])
   @@map("marketing_contracts")
 }
 
@@ -565,6 +575,7 @@ model MarketingSettings {
   default_currency        String   @default("CAD")
   contract_prefix         String   @default("MKT")
   next_contract_seq       Int      @default(1)
+  next_counterparty_seq   Int      @default(1)
   loc_available           Float?
   fiscal_year_start_month Int      @default(11)
   created_at              DateTime @default(now())
@@ -618,8 +629,8 @@ model DeliveryTicket {
   counterparty          Counterparty?      @relation(fields: [counterparty_id], references: [id])
   commodity             Commodity?         @relation(fields: [commodity_id], references: [id])
   bin                   InventoryBin?      @relation(fields: [bin_id], references: [id])
-  location              InventoryLocation? @relation(fields: [location_id], references: [id])
-  settlement_lines      SettlementLine[]
+  location                  InventoryLocation? @relation(fields: [location_id], references: [id])
+  settlement_lines          SettlementLine[]
 
   @@unique([farm_id, ticket_number])
   @@unique([farm_id, client_id])
@@ -642,6 +653,8 @@ model Settlement {
   currency              String             @default("CAD")
   status                String             @default("pending") // pending, reconciled, disputed, approved
   buyer_format          String?            // cargill, bunge, jgl, unknown
+  source                String             @default("pdf_upload")
+  terminal_settlement_id String?
   source_pdf_url        String?
   extraction_json       Json?              // raw Claude extraction output for audit
   usage_json            Json?              // AI token usage and cost tracking
@@ -709,8 +722,6 @@ model SettlementLine {
   @@index([settlement_id])
   @@map("settlement_lines")
 }
-
-// ─── Agronomy Module ─────────────────────────────────────────────────
 
 model AgroPlan {
   id          String           @id @default(uuid())
@@ -944,6 +955,7 @@ model TerminalTicket {
 
   is_c2_farms     Boolean   @default(false)
   balance_after_kg Float?
+  contract_id     String?           // assigned sale contract
 
   status          String    @default("complete") // complete | voided
   scale_source    String    @default("manual")   // manual | scale_api
@@ -951,10 +963,12 @@ model TerminalTicket {
   created_at      DateTime  @default(now())
   updated_at      DateTime  @updatedAt
 
-  farm    Farm          @relation(fields: [farm_id], references: [id])
-  bin     TerminalBin?  @relation(fields: [bin_id], references: [id])
-  grower  Counterparty? @relation(fields: [grower_id], references: [id])
+  farm     Farm              @relation(fields: [farm_id], references: [id])
+  bin      TerminalBin?      @relation(fields: [bin_id], references: [id])
+  grower   Counterparty?     @relation(fields: [grower_id], references: [id])
+  contract TerminalContract? @relation(fields: [contract_id], references: [id])
   samples TerminalSample[]
+  terminal_settlement_lines TerminalSettlementLine[]
 
   @@unique([farm_id, ticket_number])
   @@index([farm_id, direction])
@@ -1025,13 +1039,17 @@ model TerminalContract {
   end_date        DateTime?
   status          String    @default("executed") // executed | in_delivery | fulfilled | settled | cancelled
   notes           String?
+  grade_prices_json    Json?
+  blend_requirement_json Json?
   created_at      DateTime  @default(now())
   updated_at      DateTime  @updatedAt
 
-  farm         Farm                @relation(fields: [farm_id], references: [id])
-  counterparty Counterparty        @relation(fields: [counterparty_id], references: [id])
-  commodity    Commodity           @relation(fields: [commodity_id], references: [id])
-  settlements  TerminalSettlement[]
+  farm               Farm                @relation(fields: [farm_id], references: [id])
+  counterparty       Counterparty        @relation(fields: [counterparty_id], references: [id])
+  commodity          Commodity           @relation(fields: [commodity_id], references: [id])
+  settlements        TerminalSettlement[]
+  transfer_agreements MarketingContract[]
+  assigned_tickets   TerminalTicket[]
 
   @@unique([farm_id, contract_number])
   @@index([farm_id, direction])
@@ -1039,29 +1057,53 @@ model TerminalContract {
 }
 
 model TerminalSettlement {
-  id                String    @id @default(uuid())
-  farm_id           String
-  settlement_number String
-  direction         String    // payable | receivable
-  counterparty_id   String
-  contract_id       String?
-  settlement_date   DateTime
-  gross_amount      Float
-  deductions        Json?
-  net_amount        Float
-  payment_status    String    @default("pending") // pending | paid | received
-  payment_date      DateTime?
-  payment_reference String?
-  notes             String?
-  created_at        DateTime  @default(now())
-  updated_at        DateTime  @updatedAt
+  id                    String    @id @default(uuid())
+  farm_id               String
+  settlement_number     String
+  type                  String    @default("transfer") // transfer | transloading
+  counterparty_id       String
+  contract_id           String?
+  marketing_contract_id String?
+  settlement_date       DateTime
+  gross_amount          Float     @default(0)
+  deductions            Json?
+  net_amount            Float     @default(0)
+  status                String    @default("draft") // draft | finalized | pushed
+  pushed_settlement_id  String?
+  notes                 String?
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @updatedAt
 
   farm         Farm              @relation(fields: [farm_id], references: [id])
   counterparty Counterparty      @relation(fields: [counterparty_id], references: [id])
   contract     TerminalContract? @relation(fields: [contract_id], references: [id])
+  lines        TerminalSettlementLine[]
 
   @@unique([farm_id, settlement_number])
   @@map("terminal_settlements")
+}
+
+model TerminalSettlementLine {
+  id                      String   @id @default(uuid())
+  terminal_settlement_id  String
+  line_number             Int
+  ticket_id               String?
+  source_farm_name        String?
+  commodity_id            String?
+  grade                   String?
+  gross_weight_mt         Float?
+  tare_weight_mt          Float?
+  net_weight_mt           Float?
+  price_per_mt            Float?
+  line_amount             Float?
+  created_at              DateTime @default(now())
+
+  terminal_settlement  TerminalSettlement @relation(fields: [terminal_settlement_id], references: [id], onDelete: Cascade)
+  ticket               TerminalTicket?    @relation(fields: [ticket_id], references: [id])
+  commodity            Commodity?         @relation(fields: [commodity_id], references: [id])
+
+  @@index([terminal_settlement_id])
+  @@map("terminal_settlement_lines")
 }
 
 model DailyPosition {

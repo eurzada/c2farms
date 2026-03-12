@@ -34,6 +34,7 @@ export async function getBinLedger(farmId, binId, { page = 1, limit = 50 } = {})
         orderBy: { ticket_date: 'asc' },
         skip,
         take: limit,
+        include: { contract: { select: { id: true, contract_number: true, counterparty: { select: { name: true } } } } },
       }),
       prisma.terminalTicket.count({
         where: { bin_id: binId, farm_id: farmId, status: 'complete' },

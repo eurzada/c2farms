@@ -160,10 +160,10 @@ export default function TerminalDashboard() {
           {settlementSummary && (
             <>
               <Grid item xs={12} sm={6} md={3}>
-                <StatCard icon={<AccountBalanceIcon />} label="Payable (Pending)" value={formatCurrency(settlementSummary.payable.pending)} subtitle={`${settlementSummary.payable.count} total`} color="error.main" />
+                <StatCard icon={<AccountBalanceIcon />} label="Transfer Settlements" value={formatCurrency(settlementSummary.by_type?.transfer?.total_amount || 0)} subtitle={`${settlementSummary.by_type?.transfer?.count || 0} total`} color="primary.main" />
               </Grid>
               <Grid item xs={12} sm={6} md={3}>
-                <StatCard icon={<AccountBalanceIcon />} label="Receivable (Pending)" value={formatCurrency(settlementSummary.receivable.pending)} subtitle={`${settlementSummary.receivable.count} total`} color="success.main" />
+                <StatCard icon={<AccountBalanceIcon />} label="Transloading Invoices" value={formatCurrency(settlementSummary.by_type?.transloading?.total_amount || 0)} subtitle={`${settlementSummary.by_type?.transloading?.count || 0} total`} color="success.main" />
               </Grid>
             </>
           )}

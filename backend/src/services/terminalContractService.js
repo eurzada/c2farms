@@ -86,7 +86,7 @@ export async function createContract(farmId, data) {
   }
 }
 
-export async function updateContract(farmId, contractId, data) {
+export async function updateContract(farmId, contractId, data, io) {
   try {
     const existing = await prisma.terminalContract.findFirst({
       where: { id: contractId, farm_id: farmId },
@@ -98,6 +98,7 @@ export async function updateContract(farmId, contractId, data) {
       'contract_number', 'direction', 'counterparty_id', 'commodity_id',
       'contracted_mt', 'delivered_mt', 'price_per_mt', 'ship_mode',
       'delivery_point', 'start_date', 'end_date', 'status', 'notes',
+      'grade_prices_json', 'blend_requirement_json',
     ];
     for (const key of allowed) {
       if (data[key] !== undefined) {
@@ -117,7 +118,7 @@ export async function updateContract(farmId, contractId, data) {
       updateData.status = 'fulfilled';
     }
 
-    return prisma.terminalContract.update({
+    const updated = await prisma.terminalContract.update({
       where: { id: contractId },
       data: updateData,
       include: {
@@ -125,6 +126,16 @@ export async function updateContract(farmId, contractId, data) {
         commodity: { select: { id: true, name: true, code: true } },
       },
     });
+
+    // Sync blend fields to linked marketing contract if changed
+    if (data.grade_prices_json !== undefined || data.blend_requirement_json !== undefined) {
+      const syncFields = {};
+      if (data.grade_prices_json !== undefined) syncFields.grade_prices_json = data.grade_prices_json;
+      if (data.blend_requirement_json !== undefined) syncFields.blend_requirement_json = data.blend_requirement_json;
+      await syncToMarketingMirror(contractId, syncFields, io);
+    }
+
+    return updated;
   } catch (err) {
     logger.error('Failed to update contract', { contractId, error: err.message });
     throw err;
@@ -151,6 +162,53 @@ export async function addDelivery(farmId, contractId, mt) {
       },
     });
   });
+}
+
+/**
+ * Sync grade_prices_json and/or blend_requirement_json from a TerminalContract
+ * to the linked MarketingContract (transfer agreement).
+ */
+export async function syncToMarketingMirror(contractId, updatedFields, io) {
+  try {
+    const marketingContract = await prisma.marketingContract.findFirst({
+      where: { linked_terminal_contract_id: contractId },
+    });
+    if (!marketingContract) return null;
+
+    const updateData = { blend_mix_updated_at: new Date() };
+    if (updatedFields.grade_prices_json !== undefined) {
+      updateData.grade_prices_json = updatedFields.grade_prices_json;
+    }
+    if (updatedFields.blend_requirement_json !== undefined) {
+      updateData.blend_requirement_json = updatedFields.blend_requirement_json;
+    }
+
+    const updated = await prisma.marketingContract.update({
+      where: { id: marketingContract.id },
+      data: updateData,
+    });
+
+    if (io) {
+      const enterpriseFarm = await prisma.farm.findFirst({
+        where: { is_enterprise: true },
+        select: { id: true },
+      });
+      if (enterpriseFarm) {
+        io.to(enterpriseFarm.id).emit('marketing:blend_mix_updated', {
+          contract_id: marketingContract.id,
+        });
+      }
+    }
+
+    logger.info('Synced blend fields to marketing contract', {
+      terminalContractId: contractId,
+      marketingContractId: marketingContract.id,
+    });
+    return updated;
+  } catch (err) {
+    logger.error('Failed to sync to marketing mirror', { contractId, error: err.message });
+    // Don't throw — sync failure shouldn't break the contract update
+  }
 }
 
 export async function getContractSummary(farmId) {

@@ -1,6 +1,6 @@
 import prisma from '../config/database.js';
 import { MODELS, computeUsage, classifyApiError, getAnthropicClient, parseJsonResponse } from './aiClient.js';
-import { buToMtFactor } from './marketingService.js';
+import { buToMtFactor, getNextCounterpartyCode } from './marketingService.js';
 
 /**
  * Contract PDF extraction service.
@@ -157,17 +157,18 @@ export async function saveExtractedContract(farmId, extraction, _usage = null) {
       farm_id: farmId,
       OR: [
         { name: { contains: buyerName, mode: 'insensitive' } },
-        { short_code: { equals: buyerName.toUpperCase().replace(/\s+/g, '').substring(0, 10) } },
+        { name: { equals: buyerName, mode: 'insensitive' } },
       ],
     },
   });
 
   if (!counterparty) {
+    const shortCode = await getNextCounterpartyCode(farmId);
     counterparty = await prisma.counterparty.create({
       data: {
         farm_id: farmId,
         name: buyerName,
-        short_code: buyerName.toUpperCase().replace(/\s+/g, '').substring(0, 10),
+        short_code: shortCode,
         type: 'buyer',
       },
     });
@@ -289,3 +290,4 @@ export async function saveExtractedContract(farmId, extraction, _usage = null) {
     include: { counterparty: true, commodity: true },
   });
 }
+
