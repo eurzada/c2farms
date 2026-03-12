@@ -282,6 +282,99 @@ export async function voidTicket(farmId, ticketId) {
   }
 }
 
+export async function getUnallocatedTickets(farmId) {
+  try {
+    return await prisma.terminalTicket.findMany({
+      where: {
+        farm_id: farmId,
+        direction: 'inbound',
+        status: 'complete',
+        bin_id: null,
+      },
+      orderBy: { ticket_date: 'desc' },
+    });
+  } catch (err) {
+    logger.error('Failed to fetch unallocated tickets', { farmId, error: err.message });
+    throw err;
+  }
+}
+
+export async function allocateTicketsToBin(farmId, binId, ticketIds) {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const bin = await tx.terminalBin.findFirst({
+        where: { id: binId, farm_id: farmId },
+      });
+      if (!bin) throw Object.assign(new Error('Bin not found'), { status: 404 });
+
+      const tickets = await tx.terminalTicket.findMany({
+        where: {
+          id: { in: ticketIds },
+          farm_id: farmId,
+          direction: 'inbound',
+          bin_id: null,
+          status: 'complete',
+        },
+      });
+
+      if (tickets.length === 0) {
+        throw Object.assign(new Error('No eligible tickets found'), { status: 400 });
+      }
+
+      let totalDelta = 0;
+      let c2Total = 0;
+      let nonC2Total = 0;
+
+      for (const t of tickets) {
+        totalDelta += t.weight_kg;
+        if (t.is_c2_farms) {
+          c2Total += t.weight_kg;
+        } else {
+          nonC2Total += t.weight_kg;
+        }
+      }
+
+      // Update bin balances in a single operation
+      await tx.terminalBin.update({
+        where: { id: binId },
+        data: {
+          balance_kg: bin.balance_kg + totalDelta,
+          c2_balance_kg: bin.c2_balance_kg + c2Total,
+          non_c2_balance_kg: bin.non_c2_balance_kg + nonC2Total,
+        },
+      });
+
+      // Update each ticket with bin_id and balance_after_kg
+      let runningBalance = bin.balance_kg;
+      for (const t of tickets) {
+        runningBalance += t.weight_kg;
+        await tx.terminalTicket.update({
+          where: { id: t.id },
+          data: {
+            bin_id: binId,
+            balance_after_kg: runningBalance,
+          },
+        });
+      }
+
+      logger.info('Tickets allocated to bin', {
+        farmId,
+        binId,
+        count: tickets.length,
+        totalDelta,
+        c2Total,
+        nonC2Total,
+      });
+
+      return { allocated: tickets.length };
+    });
+  } catch (err) {
+    if (err.status) throw err;
+    logger.error('Failed to allocate tickets to bin', { farmId, binId, error: err.message });
+    throw err;
+  }
+}
+
 export async function getTicketStats(farmId) {
   try {
     const tickets = await prisma.terminalTicket.findMany({

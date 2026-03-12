@@ -4,6 +4,8 @@ import { AgGridReact } from 'ag-grid-react';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import AddIcon from '@mui/icons-material/Add';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
+import TerminalTicketImportDialog from '../../components/terminal/TerminalTicketImportDialog';
 import { useFarm } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import api from '../../services/api';
@@ -19,6 +21,7 @@ export default function TerminalIncoming() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [bins, setBins] = useState([]);
   const [form, setForm] = useState({
     ticket_date: new Date().toISOString().slice(0, 10),
@@ -117,7 +120,10 @@ export default function TerminalIncoming() {
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="h5" fontWeight={700}>Incoming Loads</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setDialogOpen(true)}>New Ticket</Button>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button variant="outlined" startIcon={<UploadFileIcon />} onClick={() => setImportDialogOpen(true)}>Import CSV</Button>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setDialogOpen(true)}>New Ticket</Button>
+        </Box>
       </Box>
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
       <Box className={mode === 'dark' ? 'ag-theme-alpine-dark' : 'ag-theme-alpine'} sx={{ height: 'calc(100vh - 260px)', width: '100%' }}>
@@ -131,6 +137,13 @@ export default function TerminalIncoming() {
           loading={loading}
         />
       </Box>
+
+      <TerminalTicketImportDialog
+        open={importDialogOpen}
+        onClose={() => setImportDialogOpen(false)}
+        farmId={farmId}
+        onImported={load}
+      />
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>New Incoming Ticket</DialogTitle>

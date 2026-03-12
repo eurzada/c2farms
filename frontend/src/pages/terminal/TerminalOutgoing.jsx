@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Box, Typography, Button, Alert, Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem } from '@mui/material';
+import { Box, Typography, Button, Alert, Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Paper } from '@mui/material';
 import { AgGridReact } from 'ag-grid-react';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
@@ -140,10 +140,38 @@ export default function TerminalOutgoing() {
           <TextField label="Truck/Loader Ticket #" value={form.vehicle_id} onChange={e => setForm(f => ({ ...f, vehicle_id: e.target.value }))} fullWidth />
           <TextField label="FMO#" value={form.fmo_number} onChange={e => setForm(f => ({ ...f, fmo_number: e.target.value }))} fullWidth />
           <TextField label="KG" type="number" value={form.outbound_kg} onChange={e => setForm(f => ({ ...f, outbound_kg: e.target.value }))} fullWidth required />
-          <TextField select label="Source Bin" value={form.bin_id} onChange={e => setForm(f => ({ ...f, bin_id: e.target.value }))} fullWidth>
+          <TextField select label="Source Bin" value={form.bin_id} onChange={e => {
+            const selectedBin = bins.find(b => b.id === e.target.value);
+            setForm(f => ({
+              ...f,
+              bin_id: e.target.value,
+              product: selectedBin?.current_product_label || f.product,
+            }));
+          }} fullWidth>
             <MenuItem value="">None</MenuItem>
             {bins.map(b => <MenuItem key={b.id} value={b.id}>{b.name} — {b.current_product_label || 'Empty'} ({b.balance_kg?.toLocaleString()} kg)</MenuItem>)}
           </TextField>
+          {form.bin_id && (() => {
+            const selectedBin = bins.find(b => b.id === form.bin_id);
+            if (!selectedBin) return null;
+            const outKg = parseFloat(form.outbound_kg) || 0;
+            const exceeds = outKg > 0 && outKg > selectedBin.balance_kg;
+            return (
+              <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'action.hover' }}>
+                <Typography variant="caption" color="text.secondary">Bin Balance</Typography>
+                <Box sx={{ display: 'flex', gap: 3, mt: 0.5 }}>
+                  <Typography variant="body2"><strong>Total:</strong> {selectedBin.balance_kg?.toLocaleString()} kg</Typography>
+                  {selectedBin.c2_balance_kg > 0 && <Typography variant="body2"><strong>C2:</strong> {selectedBin.c2_balance_kg?.toLocaleString()} kg</Typography>}
+                  {selectedBin.non_c2_balance_kg > 0 && <Typography variant="body2"><strong>Non-C2:</strong> {selectedBin.non_c2_balance_kg?.toLocaleString()} kg</Typography>}
+                </Box>
+                {exceeds && (
+                  <Alert severity="warning" sx={{ mt: 1, py: 0 }}>
+                    Outbound ({outKg.toLocaleString()} kg) exceeds bin balance ({selectedBin.balance_kg?.toLocaleString()} kg)
+                  </Alert>
+                )}
+              </Paper>
+            );
+          })()}
           <TextField label="Sold to" value={form.sold_to} onChange={e => setForm(f => ({ ...f, sold_to: e.target.value }))} fullWidth />
           <TextField label="Seal #s" value={form.seal_numbers} onChange={e => setForm(f => ({ ...f, seal_numbers: e.target.value }))} fullWidth placeholder="e.g. 1803097;98;99;00" />
           <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1 }}>Sample Info</Typography>
