@@ -797,6 +797,35 @@ export async function updateContractDelivery(contractId, deliveryData) {
 }
 
 /**
+ * Get settlement totals for a contract from linked logistics settlements.
+ */
+export async function getContractSettlementSummary(contractId) {
+  const settlements = await prisma.settlement.findMany({
+    where: { marketing_contract_id: contractId, status: 'approved' },
+    select: { id: true, settlement_number: true, total_amount: true, settlement_date: true },
+  });
+
+  const totalAmount = settlements.reduce((s, st) => s + (st.total_amount || 0), 0);
+  const latestDate = settlements.length > 0
+    ? settlements.reduce((latest, st) => {
+        const d = st.settlement_date ? new Date(st.settlement_date) : null;
+        return d && (!latest || d > latest) ? d : latest;
+      }, null)
+    : null;
+
+  return {
+    settlement_count: settlements.length,
+    total_amount: Math.round(totalAmount * 100) / 100,
+    latest_date: latestDate ? latestDate.toISOString().slice(0, 10) : null,
+    settlements: settlements.map(s => ({
+      settlement_number: s.settlement_number,
+      amount: s.total_amount,
+      date: s.settlement_date,
+    })),
+  };
+}
+
+/**
  * Settle a delivered contract.
  */
 export async function settleContract(contractId, data) {
@@ -804,12 +833,19 @@ export async function settleContract(contractId, data) {
   if (!contract) throw new Error('Contract not found');
   if (contract.status !== 'delivered') throw new Error('Contract must be in delivered status to settle');
 
+  // Auto-calculate from linked settlements if not explicitly provided
+  let settlementAmount = data.settlement_amount;
+  if (settlementAmount == null || settlementAmount === '') {
+    const summary = await getContractSettlementSummary(contractId);
+    settlementAmount = summary.total_amount || 0;
+  }
+
   return prisma.marketingContract.update({
     where: { id: contractId },
     data: {
       status: 'settled',
       settlement_date: data.settlement_date ? new Date(data.settlement_date) : new Date(),
-      settlement_amount: data.settlement_amount,
+      settlement_amount: parseFloat(settlementAmount),
     },
     include: { counterparty: true, commodity: true },
   });

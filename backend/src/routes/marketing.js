@@ -13,6 +13,7 @@ import {
   createContract,
   updateContractDelivery,
   settleContract,
+  getContractSettlementSummary,
   computeSellAnalysis,
   buToMtFactor,
   getTerminalContractsForTransfer,
@@ -327,6 +328,16 @@ router.post('/:farmId/marketing/contracts/:id/deliveries', authenticate, require
     if (io) broadcastMarketingEvent(io, req.params.farmId, 'marketing:delivery:created', { contract_id: req.params.id });
 
     res.status(201).json(result);
+  } catch (err) { next(err); }
+});
+
+// GET settlement summary for a contract (aggregate from linked logistics settlements)
+router.get('/:farmId/marketing/contracts/:id/settlement-summary', authenticate, async (req, res, next) => {
+  try {
+    const existing = await prisma.marketingContract.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
+    if (!existing) return res.status(404).json({ error: 'Contract not found' });
+    const summary = await getContractSettlementSummary(req.params.id);
+    res.json(summary);
   } catch (err) { next(err); }
 });
 
