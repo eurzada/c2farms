@@ -3,7 +3,7 @@ import {
   Box, Typography, Button, Stack, Chip, Alert, Paper, Divider,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField, LinearProgress,
-  IconButton, Tooltip, MenuItem, Grid,
+  IconButton, Tooltip, MenuItem, Grid, FormControlLabel, Switch,
 } from '@mui/material';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -109,6 +109,7 @@ export default function SettlementReconciliation() {
   const [approveConfirmOpen, setApproveConfirmOpen] = useState(false);
   const [approving, setApproving] = useState(false);
   const [dismissing, setDismissing] = useState(null);
+  const [weightDateMode, setWeightDateMode] = useState(false);
 
   const fetchSettlement = useCallback(() => {
     if (!currentFarm || !settlementId) return;
@@ -131,7 +132,9 @@ export default function SettlementReconciliation() {
     setReconciling(true);
     setError(null);
     try {
-      const res = await api.post(`/api/farms/${currentFarm.id}/settlements/${settlementId}/reconcile`);
+      const res = await api.post(`/api/farms/${currentFarm.id}/settlements/${settlementId}/reconcile`, {
+        match_mode: weightDateMode ? 'weight_date' : 'auto',
+      });
       setReconcileResult(res.data);
       fetchSettlement();
     } catch (err) {
@@ -277,19 +280,43 @@ export default function SettlementReconciliation() {
             PDF
           </Button>
           {canEdit && !isApproved && (
-            <Button
-              variant="contained"
-              startIcon={<AutoFixHighIcon />}
-              onClick={handleReconcile}
-              disabled={reconciling}
-            >
-              {reconciling ? 'Reconciling...' : 'Run AI Reconciliation'}
-            </Button>
+            <>
+              <Tooltip title="Skip ticket-number matching. Match on weight + date only. Use for three-party deliveries (e.g. GSL buys, JK Milling receives).">
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={weightDateMode}
+                      onChange={(e) => setWeightDateMode(e.target.checked)}
+                      size="small"
+                      color="warning"
+                    />
+                  }
+                  label={<Typography variant="caption">Weight/Date Mode</Typography>}
+                  sx={{ mr: 0 }}
+                />
+              </Tooltip>
+              <Button
+                variant="contained"
+                color={weightDateMode ? 'warning' : 'primary'}
+                startIcon={<AutoFixHighIcon />}
+                onClick={handleReconcile}
+                disabled={reconciling}
+              >
+                {reconciling ? 'Reconciling...' : weightDateMode ? 'Match by Weight/Date' : 'Run AI Reconciliation'}
+              </Button>
+            </>
           )}
         </Stack>
       </Stack>
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
+
+      {weightDateMode && !isApproved && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          <strong>Weight/Date Mode</strong> — Ticket numbers will be ignored. Lines are matched to delivery tickets by weight (55%) and date (45%) only.
+          Use this for three-party deliveries where the buyer&apos;s settlement references different ticket numbers than the delivery site.
+        </Alert>
+      )}
 
       {reconcileResult && !isApproved && (
         <Alert severity="info" sx={{ mb: 2 }}>
@@ -625,44 +652,80 @@ export default function SettlementReconciliation() {
       <Dialog
         open={manualMatchDialog.open}
         onClose={() => setManualMatchDialog({ open: false, line: null })}
-        maxWidth="sm"
+        maxWidth="md"
         fullWidth
       >
         <DialogTitle>Manual Match — Line {manualMatchDialog.line?.line_number}</DialogTitle>
         <DialogContent>
-          {manualMatchDialog.line && (
-            <Box sx={{ mb: 2 }}>
-              <Typography variant="body2">
-                Buyer Ticket #: {manualMatchDialog.line.ticket_number_on_settlement || 'N/A'}
-              </Typography>
-              <Typography variant="body2">
-                Weight: {manualMatchDialog.line.net_weight_mt?.toFixed(3)} MT
-              </Typography>
-            </Box>
-          )}
-          <Divider sx={{ mb: 2 }} />
-          <TextField
-            select
-            fullWidth
-            label="Select Delivery Ticket"
-            value={manualTicketId}
-            onChange={(e) => setManualTicketId(e.target.value)}
-            sx={{ mb: 2 }}
-          >
-            {tickets.map(t => (
-              <MenuItem key={t.id} value={t.id}>
-                #{t.ticket_number} — {t.net_weight_mt?.toFixed(2)} MT — {t.commodity?.name} — {new Date(t.delivery_date).toLocaleDateString()}
-              </MenuItem>
-            ))}
-          </TextField>
-          <TextField
-            fullWidth
-            label="Notes (optional)"
-            value={manualNotes}
-            onChange={(e) => setManualNotes(e.target.value)}
-            multiline
-            rows={2}
-          />
+          {manualMatchDialog.line && (() => {
+            const line = manualMatchDialog.line;
+            const lineDate = line.delivery_date ? new Date(line.delivery_date) : null;
+            const lineWeight = line.net_weight_mt || line.gross_weight_mt;
+            const lineCommodity = (line.commodity || '').toLowerCase();
+            const buyerName = (settlement?.counterparty?.name || '').toLowerCase();
+
+            // Score and filter tickets — show best matches first
+            const scored = tickets.map(t => {
+              let relevance = 0;
+              const tDate = t.delivery_date ? new Date(t.delivery_date) : null;
+              const daysDiff = lineDate && tDate ? Math.abs((lineDate - tDate) / (1000 * 60 * 60 * 24)) : 999;
+              const weightDiff = lineWeight && t.net_weight_mt ? Math.abs(lineWeight - t.net_weight_mt) / Math.max(lineWeight, t.net_weight_mt) : 1;
+              const tCommodity = (t.commodity?.name || '').toLowerCase();
+              const tBuyer = (t.buyer_name || t.counterparty?.name || '').toLowerCase();
+
+              if (daysDiff <= 3) relevance += 30;
+              else if (daysDiff <= 7) relevance += 15;
+              if (weightDiff <= 0.03) relevance += 30;
+              else if (weightDiff <= 0.08) relevance += 15;
+              if (lineCommodity && tCommodity && (tCommodity.includes(lineCommodity) || lineCommodity.includes(tCommodity))) relevance += 20;
+              if (buyerName && tBuyer && (tBuyer.includes(buyerName) || buyerName.includes(tBuyer))) relevance += 20;
+              if (settlement?.marketing_contract?.contract_number && t.marketing_contract_id) relevance += 10;
+
+              return { ...t, relevance, daysDiff, weightDiff };
+            })
+            .filter(t => t.relevance >= 15) // at least one dimension matches
+            .sort((a, b) => b.relevance - a.relevance)
+            .slice(0, 50);
+
+            return (
+              <>
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="body2">Buyer Ticket #: {line.ticket_number_on_settlement || 'N/A'}</Typography>
+                  <Typography variant="body2">Weight: {line.net_weight_mt?.toFixed(3)} MT | Date: {lineDate ? lineDate.toLocaleDateString() : 'N/A'} | Commodity: {line.commodity || 'N/A'}</Typography>
+                </Box>
+                <Divider sx={{ mb: 2 }} />
+                <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                  Showing {scored.length} best matches (filtered by date, weight, commodity, buyer)
+                </Typography>
+                <TextField
+                  select
+                  fullWidth
+                  label="Select Delivery Ticket"
+                  value={manualTicketId}
+                  onChange={(e) => setManualTicketId(e.target.value)}
+                  sx={{ mb: 2 }}
+                >
+                  {scored.map(t => (
+                    <MenuItem key={t.id} value={t.id}>
+                      #{t.ticket_number} — {t.net_weight_mt?.toFixed(2)} MT — {t.commodity?.name} — {new Date(t.delivery_date).toLocaleDateString()}
+                      {t.daysDiff <= 1 ? ' ✓date' : ''}{t.weightDiff <= 0.03 ? ' ✓weight' : ''}
+                    </MenuItem>
+                  ))}
+                  {scored.length === 0 && (
+                    <MenuItem disabled>No close matches found — try broadening search</MenuItem>
+                  )}
+                </TextField>
+                <TextField
+                  fullWidth
+                  label="Notes (optional)"
+                  value={manualNotes}
+                  onChange={(e) => setManualNotes(e.target.value)}
+                  multiline
+                  rows={2}
+                />
+              </>
+            );
+          })()}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setManualMatchDialog({ open: false, line: null })}>Cancel</Button>

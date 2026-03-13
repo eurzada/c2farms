@@ -86,6 +86,8 @@ export default function Settlements() {
   const [reconData, setReconData] = useState(null);
   const [reconLoading, setReconLoading] = useState(false);
   const [selectedCount, setSelectedCount] = useState(0);
+  const [contractsList, setContractsList] = useState([]);
+  const [counterpartiesList, setCounterpartiesList] = useState([]);
   const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
   const fetchData = useCallback(() => {
@@ -298,10 +300,20 @@ export default function Settlements() {
     setEditing(true);
     setEditForm({
       contract_number: detail?.marketing_contract?.contract_number || '',
+      counterparty_id: detail?.counterparty_id || '',
       status: detail?.status || 'pending',
       notes: detail?.notes || '',
       total_amount: detail?.total_amount ?? '',
     });
+    // Fetch contracts and counterparties for dropdowns
+    if (currentFarm) {
+      api.get(`/api/farms/${currentFarm.id}/marketing/contracts?limit=200`)
+        .then(res => setContractsList(res.data.contracts || []))
+        .catch(() => {});
+      api.get(`/api/farms/${currentFarm.id}/marketing/counterparties`)
+        .then(res => setCounterpartiesList(res.data.counterparties || res.data || []))
+        .catch(() => {});
+    }
   };
 
   const handleSave = async () => {
@@ -312,6 +324,9 @@ export default function Settlements() {
       // Only send changed fields
       if (editForm.contract_number !== (detail.marketing_contract?.contract_number || '')) {
         body.contract_number = editForm.contract_number;
+      }
+      if (editForm.counterparty_id !== (detail.counterparty_id || '')) {
+        body.counterparty_id = editForm.counterparty_id || null;
       }
       if (editForm.status !== detail.status) {
         body.status = editForm.status;
@@ -558,11 +573,33 @@ export default function Settlements() {
                 <Stack spacing={2} sx={{ mb: 2 }}>
                   <Stack direction="row" spacing={2} flexWrap="wrap">
                     <TextField
-                      label="Contract #" size="small" value={editForm.contract_number}
+                      select label="Counterparty / Buyer" size="small"
+                      value={editForm.counterparty_id}
+                      onChange={e => setEditForm(f => ({ ...f, counterparty_id: e.target.value }))}
+                      sx={{ minWidth: 220 }}
+                      helperText="Who issued this settlement"
+                    >
+                      <MenuItem value="">— None —</MenuItem>
+                      {counterpartiesList.map(cp => (
+                        <MenuItem key={cp.id} value={cp.id}>
+                          {cp.short_code ? `${cp.short_code} — ` : ''}{cp.name}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                    <TextField
+                      select label="Contract #" size="small"
+                      value={editForm.contract_number}
                       onChange={e => setEditForm(f => ({ ...f, contract_number: e.target.value }))}
                       helperText="Links to a Marketing Contract (auto-fills commodity)"
-                      sx={{ minWidth: 200 }}
-                    />
+                      sx={{ minWidth: 250 }}
+                    >
+                      <MenuItem value="">— None —</MenuItem>
+                      {contractsList.map(c => (
+                        <MenuItem key={c.id} value={c.contract_number}>
+                          {c.contract_number} — {c.counterparty?.name || ''} — {c.commodity?.name || ''} ({c.contracted_mt} MT)
+                        </MenuItem>
+                      ))}
+                    </TextField>
                     <TextField
                       select label="Status" size="small" value={editForm.status}
                       onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))}

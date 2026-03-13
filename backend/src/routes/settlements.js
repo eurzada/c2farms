@@ -378,15 +378,19 @@ router.post('/:farmId/settlements/reconcile-all', authenticate, requireRole('adm
 });
 
 // POST run AI reconciliation on a settlement
+// Body: { match_mode?: 'auto' | 'weight_date' }
+// weight_date mode: skips ticket-number matching, scores on weight+date only.
+// Used for three-party deliveries (buyer ≠ delivery site).
 router.post('/:farmId/settlements/:id/reconcile', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
-    console.log(`[ROUTE] POST reconcile: settlement=${req.params.id} farm=${req.params.farmId} user=${req.userId}`);
+    const matchMode = req.body?.match_mode || 'auto';
+    console.log(`[ROUTE] POST reconcile: settlement=${req.params.id} farm=${req.params.farmId} user=${req.userId} mode=${matchMode}`);
     const settlement = await prisma.settlement.findFirst({
       where: { id: req.params.id, farm_id: req.params.farmId },
     });
     if (!settlement) return res.status(404).json({ error: 'Settlement not found' });
 
-    const result = await reconcileSettlement(req.params.id);
+    const result = await reconcileSettlement(req.params.id, { matchMode });
 
     logAudit({
       farmId: req.params.farmId,
@@ -394,7 +398,7 @@ router.post('/:farmId/settlements/:id/reconcile', authenticate, requireRole('adm
       entityType: 'Settlement',
       entityId: req.params.id,
       action: 'reconcile',
-      changes: result.summary,
+      changes: { ...result.summary, match_mode: matchMode },
     });
 
     res.json(result);

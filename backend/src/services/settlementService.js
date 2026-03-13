@@ -118,6 +118,55 @@ Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.
 
 JGL documents show: ID, Contract#, Commodity, Settlement No, per-ticket rows with Ticket No, Vehicle Id, Date, Origin/CGC, MT Applied, Grade, DO. Also look for deduction summaries (Checkoff Levy, Drying, Quality discounts, Freight). IMPORTANT: If the document shows multiple ticket/reference numbers per line, use the weigh scale number (the one matching the trucker's scale ticket) as the ticket_number. Return ONLY valid JSON, no extra text.`,
 
+  gsl: `You are extracting data from a GSL (Grain St-Laurent Inc.) grain settlement PDF. This is a bilingual English/French document. Extract ALL of the following into structured JSON:
+
+{
+  "settlement_number": "string (the 'Outgoing Payment # / # de paiement' from the summary page header)",
+  "settlement_date": "YYYY-MM-DD (the 'Payment Date / Date de paiement' in m/d/y format — convert to YYYY-MM-DD)",
+  "buyer": "GSL (Grain St-Laurent Inc.)",
+  "contract_number": null,
+  "commodity": "string (from individual ticket 'Product / Produit' field, e.g. 'Wheat (Milling)' or 'Spring Wheat')",
+  "total_gross_amount": number or null,
+  "total_net_amount": number (the 'Total Amount Due / Montant total dû'),
+  "currency": "CAD",
+  "lines": [
+    {
+      "line_number": 1,
+      "ticket_number": "string — MUST be the 'GSL Reference Number / Numéro de référence GSL' (e.g. '391242'). This is the delivery ticket number that matches the trucker's weigh scale ticket.",
+      "supplier_reference": "string or null — the 'Supplier Reference Number / Numéro de référence fournisseur'",
+      "ap_invoice_number": "string or null — the 'A/P Invoice #' (GSL's internal doc number, e.g. '580022')",
+      "delivery_date": "YYYY-MM-DD (from 'Product Pickup Date / Date de ramassage du produit' — CAREFUL: format is m/d/y, convert to YYYY-MM-DD)",
+      "commodity": "string or null (from 'Product / Produit' on each ticket page)",
+      "gross_weight_mt": number (from Scale Record 'Gross Weight / Poids brut')",
+      "net_weight_mt": number (from Scale Record 'Net Weight / Poids net' — this is AFTER dockage/shrink deductions)",
+      "unloaded_weight_mt": number or null (from 'Weight of unloaded grain / Poids du grain déchargé')",
+      "grade": "string or null",
+      "moisture_pct": number or null (from 'Moisture / Humidité')",
+      "dockage_pct": number or null (from 'Dockage / Déchets')",
+      "shrink_pct": number or null (from 'Shrink / Freinte')",
+      "price_per_mt": number or null (from 'Contracted Price per Unit / Prix contracté par unité' — this is $/MT)",
+      "line_gross": number or null (from 'Gross Amount Payable / Montant brut payable')",
+      "line_net": number or null (from 'Net Amount Payable / Montant net payable')",
+      "deductions": [{"name": "string", "amount": number}]
+    }
+  ]
+}
+
+GSL SETTLEMENT LAYOUT — READ CAREFULLY:
+- Page 1 is a "Settlement Summary / Sommaire du règlement" with an Items table listing ALL tickets. The table columns are:
+  Document | Doc. No. | Date | GSL Reference Number / Numéro de référence GSL | Currency | Discount | Net Amount Due
+- Subsequent pages are individual ticket detail pages (one per ticket).
+
+CRITICAL FIELD MAPPING:
+- **GSL Reference Number** = the delivery ticket number (e.g. 391242). This is what goes in ticket_number. It matches the trucker's weigh scale ticket.
+- **Doc. No.** = GSL's internal A/P Invoice number (e.g. 580022). This is NOT the ticket number.
+- **Supplier Reference Number** = usually same as GSL Reference Number. Store separately.
+- **Product Pickup Date** format is m/d/y (e.g. 01/23/2026 = January 23, 2026). Convert carefully to YYYY-MM-DD.
+- Weights are in MT (metric tonnes) — look for "mt" suffix on the scale record values.
+- Deductions include: Provincial/State Grain Levy/Checkoff, Discount/Escompte. Extract these from each ticket page.
+
+You can extract line data from EITHER the summary table (quick but less detail) or the individual ticket pages (full detail). Prefer the individual ticket pages for complete data. Extract ALL tickets across ALL pages. Return ONLY valid JSON, no extra text.`,
+
   richardson: `You are extracting data from a Richardson Pioneer grain settlement PDF (titled "Cash Purchase Ticket" or "Settlement Details"). Extract ALL of the following into structured JSON:
 
 {
@@ -221,7 +270,7 @@ async function detectBuyerFormat(pdfBase64) {
           },
           {
             type: 'text',
-            text: 'What grain company issued this settlement document? Reply with ONLY one word: "cargill", "bunge", "jgl", "richardson", or "unknown".',
+            text: 'What grain company issued this settlement document? Reply with ONLY one word: "cargill", "bunge", "jgl", "richardson", "gsl", or "unknown".',
           },
         ],
       }],
@@ -229,7 +278,7 @@ async function detectBuyerFormat(pdfBase64) {
 
     const usage = computeUsage(model, response);
     const answer = response.content[0]?.text?.trim().toLowerCase();
-    const format = ['cargill', 'bunge', 'jgl', 'richardson'].includes(answer) ? answer : 'unknown';
+    const format = ['cargill', 'bunge', 'jgl', 'richardson', 'gsl'].includes(answer) ? answer : 'unknown';
     return { format, usage };
   } catch (err) {
     const classified = classifyApiError(err);
@@ -378,6 +427,22 @@ function postProcessTicketNumbers(lines, buyerFormat) {
           ...line,
           ticket_number: best,
           buyer_receipt_number: tn,
+        };
+      }
+    }
+
+    // GSL: The GSL Reference Number is the delivery ticket number.
+    // The Doc. No. / A/P Invoice # is GSL's internal number — do NOT use as ticket_number.
+    // If the AI accidentally put the A/P Invoice # in ticket_number, swap it.
+    if (buyerFormat === 'gsl') {
+      const gslRef = String(line.supplier_reference || line.gsl_reference_number || '');
+      const apInv = String(line.ap_invoice_number || '');
+      // If ticket_number matches the A/P invoice (wrong), swap with GSL reference
+      if (apInv && tn === apInv && gslRef && gslRef !== apInv) {
+        return {
+          ...line,
+          ticket_number: gslRef,
+          buyer_receipt_number: apInv,
         };
       }
     }

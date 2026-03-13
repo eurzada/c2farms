@@ -14,6 +14,12 @@ import prisma from '../config/database.js';
 const WEIGHT_TOLERANCE_PCT = 0.03; // 3% tolerance (settlement net includes dockage deductions)
 const DATE_TOLERANCE_DAYS = 3;     // ±3 days for date proximity
 
+// Weight/date mode — tighter tolerances, no ticket-number matching
+// Used for three-party deliveries (e.g. GSL buys, delivers to JK Milling)
+// where the buyer's settlement references their own ticket numbers, not the delivery site's.
+const WD_WEIGHT_TOLERANCE_PCT = 0.015; // 1.5% — tighter when matching solely on weight
+const WD_DATE_TOLERANCE_DAYS = 2;      // ±2 days
+
 // Map common western Canadian grain grade designations to commodity names
 const GRADE_TO_COMMODITY = {
   '1 canada': 'canola', '2 canada': 'canola', '1 ce': 'canola',
@@ -45,28 +51,35 @@ function normalizeCommodity(value) {
  * Ticket number matching is handled deterministically before this runs —
  * this function is only called for lines that didn't match by ticket number.
  *
- * Dimensions: weight (40%), date (30%), commodity (15%), contract (15%).
+ * Default mode — Dimensions: weight (40%), date (30%), commodity (15%), contract (15%).
+ * Weight/date mode — Dimensions: weight (55%), date (45%). Used for three-party
+ * deliveries where buyer's ticket numbers don't match delivery site tickets.
  */
-function computeMatchScore(line, ticket, contractNumber) {
+function computeMatchScore(line, ticket, contractNumber, { weightDateMode = false } = {}) {
   const dimensions = {};
   const issues = [];
   let totalWeight = 0;
   let matchedWeight = 0;
 
-  // 1. Weight match (40%) — strongest operational signal
-  const weightDimWeight = 0.4;
+  const weightTolerance = weightDateMode ? WD_WEIGHT_TOLERANCE_PCT : WEIGHT_TOLERANCE_PCT;
+  const dateTolerance = weightDateMode ? WD_DATE_TOLERANCE_DAYS : DATE_TOLERANCE_DAYS;
+
+  // 1. Weight match — strongest operational signal
+  const weightDimWeight = weightDateMode ? 0.55 : 0.4;
   totalWeight += weightDimWeight;
-  // Compare settlement gross_weight_mt (pre-dockage) against ticket net_weight_mt
-  const lineWeight = line.gross_weight_mt || line.net_weight_mt;
+  // Compare settlement net_weight_mt against ticket net_weight_mt.
+  // Prefer net: GSL gross includes vehicle weight (63 MT truck vs 43 MT grain).
+  // For other buyers, gross is pre-dockage and close to net — still a reasonable fallback.
+  const lineWeight = line.net_weight_mt || line.gross_weight_mt;
   const ticketWeight = ticket.net_weight_mt;
   if (lineWeight && ticketWeight) {
     const diff = Math.abs(lineWeight - ticketWeight);
     const pctDiff = diff / Math.max(lineWeight, ticketWeight);
-    if (pctDiff <= WEIGHT_TOLERANCE_PCT) {
+    if (pctDiff <= weightTolerance) {
       dimensions.weight = { matched: true, score: 1, diff_pct: pctDiff * 100 };
       matchedWeight += weightDimWeight;
     } else if (pctDiff <= 0.08) {
-      const partialScore = 1 - ((pctDiff - WEIGHT_TOLERANCE_PCT) / 0.05);
+      const partialScore = 1 - ((pctDiff - weightTolerance) / (0.08 - weightTolerance));
       dimensions.weight = { matched: false, score: Math.max(0, partialScore), diff_pct: pctDiff * 100 };
       matchedWeight += weightDimWeight * Math.max(0, partialScore);
       issues.push(`weight_diff_${(pctDiff * 100).toFixed(1)}%`);
@@ -79,8 +92,8 @@ function computeMatchScore(line, ticket, contractNumber) {
     issues.push('weight_missing');
   }
 
-  // 2. Date proximity (30%)
-  const dateDimWeight = 0.3;
+  // 2. Date proximity
+  const dateDimWeight = weightDateMode ? 0.45 : 0.3;
   totalWeight += dateDimWeight;
   if (line.delivery_date && ticket.delivery_date) {
     const lineDate = new Date(line.delivery_date);
@@ -89,8 +102,8 @@ function computeMatchScore(line, ticket, contractNumber) {
     if (daysDiff <= 1) {
       dimensions.date = { matched: true, score: 1, days_diff: daysDiff };
       matchedWeight += dateDimWeight;
-    } else if (daysDiff <= DATE_TOLERANCE_DAYS) {
-      const score = 1 - ((daysDiff - 1) / (DATE_TOLERANCE_DAYS - 1)) * 0.5;
+    } else if (daysDiff <= dateTolerance) {
+      const score = 1 - ((daysDiff - 1) / (dateTolerance - 1)) * 0.5;
       dimensions.date = { matched: true, score, days_diff: daysDiff };
       matchedWeight += dateDimWeight * score;
     } else {
@@ -102,36 +115,38 @@ function computeMatchScore(line, ticket, contractNumber) {
     issues.push('date_missing');
   }
 
-  // 3. Commodity match (15%)
-  const commodityDimWeight = 0.15;
-  totalWeight += commodityDimWeight;
-  if (line.commodity && ticket.commodity) {
-    const lineComm = normalizeCommodity(line.commodity);
-    const ticketComm = normalizeCommodity(ticket.commodity.name);
-    if (lineComm && ticketComm && (lineComm === ticketComm || lineComm.includes(ticketComm) || ticketComm.includes(lineComm))) {
-      dimensions.commodity = { matched: true, score: 1 };
-      matchedWeight += commodityDimWeight;
+  // 3. Commodity match — skip in weight/date mode (buyer settlement commodity naming is unreliable)
+  if (!weightDateMode) {
+    const commodityDimWeight = 0.15;
+    totalWeight += commodityDimWeight;
+    if (line.commodity && ticket.commodity) {
+      const lineComm = normalizeCommodity(line.commodity);
+      const ticketComm = normalizeCommodity(ticket.commodity.name);
+      if (lineComm && ticketComm && (lineComm === ticketComm || lineComm.includes(ticketComm) || ticketComm.includes(lineComm))) {
+        dimensions.commodity = { matched: true, score: 1 };
+        matchedWeight += commodityDimWeight;
+      } else {
+        dimensions.commodity = { matched: false, score: 0 };
+        issues.push('commodity_mismatch');
+      }
     } else {
-      dimensions.commodity = { matched: false, score: 0 };
-      issues.push('commodity_mismatch');
+      dimensions.commodity = { matched: false, score: 0.3 };
+      matchedWeight += commodityDimWeight * 0.3;
     }
-  } else {
-    dimensions.commodity = { matched: false, score: 0.3 };
-    matchedWeight += commodityDimWeight * 0.3;
-  }
 
-  // 4. Contract match (15%)
-  const contractDimWeight = 0.15;
-  totalWeight += contractDimWeight;
-  if (contractNumber && ticket.marketing_contract?.contract_number === contractNumber) {
-    dimensions.contract = { matched: true, score: 1 };
-    matchedWeight += contractDimWeight;
-  } else if (ticket.marketing_contract_id) {
-    dimensions.contract = { matched: false, score: 0 };
-    issues.push('contract_mismatch');
-  } else {
-    dimensions.contract = { matched: false, score: 0.2 };
-    matchedWeight += contractDimWeight * 0.2;
+    // 4. Contract match — skip in weight/date mode
+    const contractDimWeight = 0.15;
+    totalWeight += contractDimWeight;
+    if (contractNumber && ticket.marketing_contract?.contract_number === contractNumber) {
+      dimensions.contract = { matched: true, score: 1 };
+      matchedWeight += contractDimWeight;
+    } else if (ticket.marketing_contract_id) {
+      dimensions.contract = { matched: false, score: 0 };
+      issues.push('contract_mismatch');
+    } else {
+      dimensions.contract = { matched: false, score: 0.2 };
+      matchedWeight += contractDimWeight * 0.2;
+    }
   }
 
   const score = totalWeight > 0 ? matchedWeight / totalWeight : 0;
@@ -149,9 +164,10 @@ function computeMatchScore(line, ticket, contractNumber) {
  * 4. Assign best match (greedy, highest score first) avoiding double-matching
  * 5. Return match results with confidence scores and exceptions
  */
-export async function reconcileSettlement(settlementId) {
+export async function reconcileSettlement(settlementId, { matchMode = 'auto' } = {}) {
+  const weightDateMode = matchMode === 'weight_date';
   console.log(`\n${'═'.repeat(70)}`);
-  console.log(`[RECON] Starting reconciliation for settlement ${settlementId}`);
+  console.log(`[RECON] Starting reconciliation for settlement ${settlementId} [mode=${matchMode}]`);
   console.log(`${'═'.repeat(70)}`);
 
   const settlement = await prisma.settlement.findUnique({
@@ -193,60 +209,63 @@ export async function reconcileSettlement(settlementId) {
     ticketWhere.counterparty_id = settlement.counterparty_id;
   }
 
-  // Phase 1: Numeric ticket-number matching (deterministic)
-  // Parse both sides to numbers and subtract — if result is 0, it's a match.
-  // This handles formatting differences (leading zeros, spaces, dashes) between
-  // the CSV-imported ticket numbers and the settlement PDF-extracted values.
-  const linesWithTicketNums = settlement.lines
-    .filter(l => l.ticket_number_on_settlement)
-    .map(l => ({
-      line: l,
-      raw: l.ticket_number_on_settlement.trim(),
-      numeric: parseTicketNumber(l.ticket_number_on_settlement),
-    }))
-    .filter(l => !isNaN(l.numeric));
-
-  // Fetch all farm tickets in the date window for numeric comparison
+  // ═══ PHASE 1–3: Ticket-number matching (skipped in weight_date mode) ═══
+  const matchedLineIds = new Set();
+  const matchedTicketIds = new Set();
+  const matches = [];
   let directMatchTickets = [];
-  const ticketByNumber = new Map(); // numeric value → ticket
-  if (linesWithTicketNums.length > 0) {
-    const allFarmTickets = await prisma.deliveryTicket.findMany({
-      where: {
-        farm_id: farmId,
-        delivery_date: { gte: minDate, lte: maxDate },
-      },
-      include: {
-        marketing_contract: true,
-        commodity: true,
-        location: true,
-      },
-    });
+  const ticketByNumber = new Map();
 
-    // Build numeric ticket number → ticket map
-    for (const t of allFarmTickets) {
-      const num = parseTicketNumber(t.ticket_number);
-      if (!isNaN(num)) {
-        ticketByNumber.set(num, t);
+  if (!weightDateMode) {
+    // Phase 1: Numeric ticket-number matching (deterministic)
+    const linesWithTicketNums = settlement.lines
+      .filter(l => l.ticket_number_on_settlement)
+      .map(l => ({
+        line: l,
+        raw: l.ticket_number_on_settlement.trim(),
+        numeric: parseTicketNumber(l.ticket_number_on_settlement),
+      }))
+      .filter(l => !isNaN(l.numeric));
+
+    if (linesWithTicketNums.length > 0) {
+      const allFarmTickets = await prisma.deliveryTicket.findMany({
+        where: {
+          farm_id: farmId,
+          delivery_date: { gte: minDate, lte: maxDate },
+        },
+        include: {
+          marketing_contract: true,
+          commodity: true,
+          location: true,
+        },
+      });
+
+      for (const t of allFarmTickets) {
+        const num = parseTicketNumber(t.ticket_number);
+        if (!isNaN(num)) {
+          ticketByNumber.set(num, t);
+        }
+      }
+
+      for (const { numeric } of linesWithTicketNums) {
+        const ticket = ticketByNumber.get(numeric);
+        if (ticket && !directMatchTickets.some(t => t.id === ticket.id)) {
+          directMatchTickets.push(ticket);
+        }
       }
     }
 
-    // Match: parse both to numbers, subtract, if 0 → match
-    for (const { numeric } of linesWithTicketNums) {
-      const ticket = ticketByNumber.get(numeric);
-      if (ticket && !directMatchTickets.some(t => t.id === ticket.id)) {
-        directMatchTickets.push(ticket);
-      }
+    console.log(`[RECON] Phase 1: ${linesWithTicketNums.length} lines have ticket numbers → found ${directMatchTickets.length} matching tickets in DB (numeric comparison)`);
+    if (directMatchTickets.length < linesWithTicketNums.length) {
+      const foundNums = new Set(directMatchTickets.map(t => parseTicketNumber(t.ticket_number)));
+      const missing = linesWithTicketNums.filter(l => !foundNums.has(l.numeric));
+      console.log(`[RECON]   Missing ticket numbers: ${missing.map(l => l.raw).join(', ')}`);
     }
+  } else {
+    console.log(`[RECON] Phase 1: SKIPPED (weight/date mode — three-party delivery)`);
   }
 
-  console.log(`[RECON] Phase 1: ${linesWithTicketNums.length} lines have ticket numbers → found ${directMatchTickets.length} matching tickets in DB (numeric comparison)`);
-  if (directMatchTickets.length < linesWithTicketNums.length) {
-    const foundNums = new Set(directMatchTickets.map(t => parseTicketNumber(t.ticket_number)));
-    const missing = linesWithTicketNums.filter(l => !foundNums.has(l.numeric));
-    console.log(`[RECON]   Missing ticket numbers: ${missing.map(l => l.raw).join(', ')}`);
-  }
-
-  // Phase 2: Fetch additional candidate tickets for lines without ticket-number matches
+  // Phase 2: Fetch candidate tickets
   const candidateTickets = await prisma.deliveryTicket.findMany({
     where: {
       ...ticketWhere,
@@ -259,15 +278,10 @@ export async function reconcileSettlement(settlementId) {
     },
   });
 
-  // Also fetch tickets without contract/counterparty filter as fallback
   const alreadyFetched = new Set([...directMatchTickets.map(t => t.id), ...candidateTickets.map(t => t.id)]);
   let fallbackTickets = [];
-  const unmatchableLines = settlement.lines.filter(l => {
-    if (!l.ticket_number_on_settlement) return true;
-    const num = parseTicketNumber(l.ticket_number_on_settlement);
-    return isNaN(num) || !ticketByNumber.has(num);
-  });
-  if (unmatchableLines.length > candidateTickets.length) {
+  if (weightDateMode) {
+    // In weight/date mode, always fetch the full ticket pool — no ticket-number filtering
     fallbackTickets = await prisma.deliveryTicket.findMany({
       where: {
         farm_id: farmId,
@@ -280,88 +294,102 @@ export async function reconcileSettlement(settlementId) {
         location: true,
       },
     });
+  } else {
+    const unmatchableLines = settlement.lines.filter(l => {
+      if (!l.ticket_number_on_settlement) return true;
+      const num = parseTicketNumber(l.ticket_number_on_settlement);
+      return isNaN(num) || !ticketByNumber.has(num);
+    });
+    if (unmatchableLines.length > candidateTickets.length) {
+      fallbackTickets = await prisma.deliveryTicket.findMany({
+        where: {
+          farm_id: farmId,
+          delivery_date: { gte: minDate, lte: maxDate },
+          id: { notIn: [...alreadyFetched] },
+        },
+        include: {
+          marketing_contract: true,
+          commodity: true,
+          location: true,
+        },
+      });
+    }
   }
 
   const allTickets = [...directMatchTickets, ...candidateTickets, ...fallbackTickets];
   console.log(`[RECON] Phase 2: ${candidateTickets.length} contract-filtered candidates + ${fallbackTickets.length} fallback = ${allTickets.length} total tickets`);
 
-  // Phase 3: Deterministic matches first — lock in ticket-number matches before greedy
-  // This prevents the greedy algorithm from stealing tickets that have exact # matches.
-  const matchedLineIds = new Set();
-  const matchedTicketIds = new Set();
-  const matches = [];
+  // Phase 3: Deterministic matches (skipped in weight_date mode)
+  if (!weightDateMode) {
+    for (const line of settlement.lines) {
+      const lineNum = line.ticket_number_on_settlement?.trim();
+      if (!lineNum) continue;
+      const numericValue = parseTicketNumber(lineNum);
+      if (isNaN(numericValue)) continue;
+      const ticket = ticketByNumber.get(numericValue);
+      if (!ticket) continue;
 
-  for (const line of settlement.lines) {
-    const lineNum = line.ticket_number_on_settlement?.trim();
-    if (!lineNum) continue;
-    const numericValue = parseTicketNumber(lineNum);
-    if (isNaN(numericValue)) continue;
-    const ticket = ticketByNumber.get(numericValue);
-    if (!ticket) continue;
+      if (matchedTicketIds.has(ticket.id)) {
+        const priorMatch = matches.find(m => m.ticket_id === ticket.id);
+        const priorLine = priorMatch && settlement.lines.find(l => l.id === priorMatch.line_id);
+        const priorNum = priorLine?.ticket_number_on_settlement?.trim();
+        if (priorNum !== lineNum) continue;
+      }
 
-    // Allow split-load: multiple settlement lines can match the same ticket
-    // when they share the same ticket number (e.g. one truck load split across
-    // two contracts). Only block re-use when ticket numbers differ.
-    if (matchedTicketIds.has(ticket.id)) {
-      // Check if the ticket was already matched to a line with the SAME ticket number
-      const priorMatch = matches.find(m => m.ticket_id === ticket.id);
-      const priorLine = priorMatch && settlement.lines.find(l => l.id === priorMatch.line_id);
-      const priorNum = priorLine?.ticket_number_on_settlement?.trim();
-      if (priorNum !== lineNum) continue; // different ticket # tried to reuse — block it
-      // Same ticket number = split-load, allow through
+      const result = computeMatchScore(line, ticket, contractNumber);
+
+      matchedLineIds.add(line.id);
+      matchedTicketIds.add(ticket.id);
+      matches.push({
+        line_id: line.id,
+        ticket_id: ticket.id,
+        score: result.score,
+        match_status: 'matched',
+        exception_reason: null,
+        dimensions: result.dimensions,
+        issues: result.issues,
+      });
+      const splitTag = matches.filter(m => m.ticket_id === ticket.id).length > 1 ? ' [split-load]' : '';
+      console.log(`[RECON]   ✓ Line ${line.line_number} (tkt# ${lineNum}) → Ticket ${ticket.ticket_number} [deterministic]${splitTag} score=${result.score.toFixed(3)}`);
     }
 
-    const result = computeMatchScore(line, ticket, contractNumber);
+    console.log(`[RECON] Phase 3: ${matches.length} deterministic ticket-number matches`);
 
-    matchedLineIds.add(line.id);
-    matchedTicketIds.add(ticket.id);
-    matches.push({
-      line_id: line.id,
-      ticket_id: ticket.id,
-      score: result.score,
-      match_status: 'matched',
-      exception_reason: null,
-      dimensions: result.dimensions,
-      issues: result.issues,
-    });
-    const splitTag = matches.filter(m => m.ticket_id === ticket.id).length > 1 ? ' [split-load]' : '';
-    console.log(`[RECON]   ✓ Line ${line.line_number} (tkt# ${lineNum}) → Ticket ${ticket.ticket_number} [deterministic]${splitTag} score=${result.score.toFixed(3)}`);
+    // Phase 3b: Lines with ticket numbers that didn't match → exception (not in weight_date mode)
+    for (const line of settlement.lines) {
+      if (matchedLineIds.has(line.id)) continue;
+      const lineNum = line.ticket_number_on_settlement?.trim();
+      if (!lineNum) continue;
+      const numericValue = parseTicketNumber(lineNum);
+      if (isNaN(numericValue)) continue;
+      matchedLineIds.add(line.id);
+      matches.push({
+        line_id: line.id,
+        ticket_id: null,
+        score: 0,
+        match_status: 'exception',
+        exception_reason: `ticket_not_found: ${lineNum}`,
+        dimensions: {},
+        issues: [`ticket_number_${lineNum}_not_in_system`],
+      });
+      console.log(`[RECON]   ✗ Line ${line.line_number} (tkt# ${lineNum}) → EXCEPTION — ticket number not found in delivery tickets`);
+    }
+  } else {
+    console.log(`[RECON] Phase 3: SKIPPED (weight/date mode)`);
   }
 
-  console.log(`[RECON] Phase 3: ${matches.length} deterministic ticket-number matches`);
-
-  // Phase 3b: Lines that HAVE a ticket number but Phase 1/3 couldn't find a match
-  // must NOT fall through to scored matching — flag them as exceptions immediately.
-  // Scored matching would pair them with a wrong ticket based on weight/date similarity.
-  for (const line of settlement.lines) {
-    if (matchedLineIds.has(line.id)) continue;
-    const lineNum = line.ticket_number_on_settlement?.trim();
-    if (!lineNum) continue;
-    const numericValue = parseTicketNumber(lineNum);
-    if (isNaN(numericValue)) continue;
-    // This line has a valid ticket number but no delivery ticket matched it
-    matchedLineIds.add(line.id);
-    matches.push({
-      line_id: line.id,
-      ticket_id: null,
-      score: 0,
-      match_status: 'exception',
-      exception_reason: `ticket_not_found: ${lineNum}`,
-      dimensions: {},
-      issues: [`ticket_number_${lineNum}_not_in_system`],
-    });
-    console.log(`[RECON]   ✗ Line ${line.line_number} (tkt# ${lineNum}) → EXCEPTION — ticket number not found in delivery tickets`);
-  }
-
-  // Phase 4: Score remaining (non-deterministic) line-ticket combinations
-  // Only lines WITHOUT a ticket number reach this phase.
+  // Phase 4: Score ALL remaining line-ticket combinations
+  // In weight_date mode, ALL lines reach this phase (no deterministic matching).
+  // In auto mode, only lines WITHOUT ticket numbers reach this phase.
   const remainingLines = settlement.lines.filter(l => !matchedLineIds.has(l.id));
   const remainingTickets = allTickets.filter(t => !matchedTicketIds.has(t.id));
+
+  console.log(`[RECON] Phase 4: Scoring ${remainingLines.length} lines × ${remainingTickets.length} tickets [mode=${matchMode}]`);
 
   const scoredPairs = [];
   for (const line of remainingLines) {
     for (const ticket of remainingTickets) {
-      const result = computeMatchScore(line, ticket, contractNumber);
+      const result = computeMatchScore(line, ticket, contractNumber, { weightDateMode });
       scoredPairs.push({
         line_id: line.id,
         ticket_id: ticket.id,
@@ -373,10 +401,14 @@ export async function reconcileSettlement(settlementId) {
   // Sort by score descending (greedy assignment)
   scoredPairs.sort((a, b) => b.score - a.score);
 
-  // Greedy assignment for remaining lines
+  // Greedy assignment — in weight_date mode use a higher minimum threshold (0.5)
+  // because we're relying entirely on weight+date with no ticket number confirmation
+  const minThreshold = weightDateMode ? 0.5 : 0.3;
+  const exceptionThreshold = weightDateMode ? 0.7 : 0.6;
+
   for (const pair of scoredPairs) {
     if (matchedLineIds.has(pair.line_id) || matchedTicketIds.has(pair.ticket_id)) continue;
-    if (pair.score < 0.3) continue; // minimum threshold
+    if (pair.score < minThreshold) continue;
 
     matchedLineIds.add(pair.line_id);
     matchedTicketIds.add(pair.ticket_id);
@@ -384,7 +416,7 @@ export async function reconcileSettlement(settlementId) {
     let matchStatus = 'matched';
     let exceptionReason = null;
 
-    if (pair.score < 0.6) {
+    if (pair.score < exceptionThreshold) {
       matchStatus = 'exception';
       exceptionReason = pair.issues.join(', ') || 'low_confidence';
     }
