@@ -249,6 +249,64 @@ export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
   };
 }
 
+// Canadian standard bushel weights (lbs/bu) — authoritative reference from AFSC, CGC, Rayglen
+const STANDARD_LBS_PER_BU = {
+  CNLA: { lbs: 50, name: 'Canola' },
+  L358: { lbs: 50, name: 'Canola - L358' },
+  NXRA: { lbs: 50, name: 'Canola - Nexera' },
+  CWAD: { lbs: 60, name: 'Durum' },
+  CWRS: { lbs: 60, name: 'Spring Wheat' },
+  BRLY: { lbs: 48, name: 'Barley' },
+  BARLEY: { lbs: 48, name: 'Barley' },
+  CHKP: { lbs: 60, name: 'Chickpeas' },
+  LNSG: { lbs: 60, name: 'Lentils SG' },
+  LNSR: { lbs: 60, name: 'Lentils SR' },
+  LENTIL: { lbs: 60, name: 'Lentils' },
+  YPEA: { lbs: 60, name: 'Yellow Peas' },
+  CNRY: { lbs: 50, name: 'Canary Seed' },
+  CANARY: { lbs: 50, name: 'Canary Seed' },
+  FLAX: { lbs: 56, name: 'Flax' },
+  SOAT: { lbs: 34, name: 'Oats' },
+  BMUS: { lbs: 50, name: 'Brown Mustard' },
+  GAR: { lbs: 60, name: 'Garbanzo Beans' },
+  // FERT has no official standard — tracked but not flagged
+};
+
+/**
+ * Conversion factor health check — compares DB lbs_per_bu against Canadian standards
+ */
+export async function getConversionFactorHealth(farmId) {
+  const commodities = await prisma.commodity.findMany({
+    where: { farm_id: farmId },
+    select: { id: true, name: true, code: true, lbs_per_bu: true },
+    orderBy: { name: 'asc' },
+  });
+
+  let okCount = 0;
+  let warningCount = 0;
+
+  const items = commodities.map(c => {
+    const standard = STANDARD_LBS_PER_BU[c.code];
+    if (!standard) {
+      // No standard exists (e.g. FERT) — informational only
+      return { ...c, standard_lbs: null, status: 'no_standard', note: 'No official standard' };
+    }
+    if (c.lbs_per_bu === standard.lbs) {
+      okCount++;
+      return { ...c, standard_lbs: standard.lbs, status: 'ok', note: null };
+    }
+    warningCount++;
+    return {
+      ...c,
+      standard_lbs: standard.lbs,
+      status: 'mismatch',
+      note: `System: ${c.lbs_per_bu}, Standard: ${standard.lbs}`,
+    };
+  });
+
+  return { items, ok_count: okCount, warning_count: warningCount, total: commodities.length };
+}
+
 /**
  * Get all dashboard data in one call
  */
@@ -338,6 +396,16 @@ export async function getDashboardData(farmId) {
   // Location × Commodity matrix
   const locationCommodityMatrix = await getLocationCommodityMatrix(farmId);
 
+  // Conversion factor health
+  const conversionHealth = await getConversionFactorHealth(farmId);
+  if (conversionHealth.warning_count > 0) {
+    const mismatched = conversionHealth.items.filter(i => i.status === 'mismatch').map(i => i.name);
+    alerts.push({
+      severity: 'error',
+      message: `Conversion factor mismatch: ${mismatched.join(', ')} — incorrect lbs/bu will affect all inventory calculations`,
+    });
+  }
+
   return {
     kpi: {
       total_mt: totalMt,
@@ -351,6 +419,7 @@ export async function getDashboardData(farmId) {
     drawdown,
     latest_period: latestPeriod,
     locationCommodityMatrix,
+    conversionHealth,
   };
 }
 
