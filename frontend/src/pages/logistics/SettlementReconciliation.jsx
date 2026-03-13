@@ -629,13 +629,13 @@ export default function SettlementReconciliation() {
                   </TableCell>
                   {!isApproved && (
                     <TableCell>
-                      {canEdit && (line.match_status === 'unmatched' || line.match_status === 'exception') && (
-                        <Tooltip title="Manual match">
+                      {canEdit && (
+                        <Tooltip title={line.match_status === 'matched' || line.match_status === 'manual' ? 'Re-match to different ticket' : 'Manual match'}>
                           <IconButton
                             size="small"
                             onClick={() => setManualMatchDialog({ open: true, line })}
                           >
-                            <LinkIcon fontSize="small" />
+                            <LinkIcon fontSize="small" color={line.match_status === 'matched' ? 'action' : 'primary'} />
                           </IconButton>
                         </Tooltip>
                       )}
@@ -661,41 +661,89 @@ export default function SettlementReconciliation() {
             const line = manualMatchDialog.line;
             const lineDate = line.delivery_date ? new Date(line.delivery_date) : null;
             const lineWeight = line.net_weight_mt || line.gross_weight_mt;
-            const lineCommodity = (line.commodity || '').toLowerCase();
-            const buyerName = (settlement?.counterparty?.name || '').toLowerCase();
+            // Commodity: from line, or from settlement contract, or from settlement lines
+            const lineCommodity = (
+              line.commodity ||
+              settlement?.marketing_contract?.commodity?.name ||
+              ''
+            ).toLowerCase();
 
-            // Score and filter tickets — show best matches first
-            const scored = tickets.map(t => {
-              let relevance = 0;
+            // Extract base grain for matching (e.g. "wheat (milling)" → "wheat", "spring wheat" → "wheat")
+            const getBaseGrain = (name) => {
+              if (!name) return null;
+              const l = name.toLowerCase();
+              if (l.includes('wheat') || l.includes('cwrs') || l.includes('milling')) return 'wheat';
+              if (l.includes('canola') || l.includes('rapeseed')) return 'canola';
+              if (l.includes('durum') || l.includes('cwad')) return 'durum';
+              if (l.includes('lentil')) return 'lentils';
+              if (l.includes('chickpea')) return 'chickpeas';
+              if (l.includes('pea') && !l.includes('chickpea')) return 'peas';
+              if (l.includes('barley')) return 'barley';
+              if (l.includes('oat')) return 'oats';
+              if (l.includes('flax')) return 'flax';
+              return l;
+            };
+            const lineGrain = getBaseGrain(lineCommodity);
+
+            // Exclude tickets already matched to other lines in this settlement
+            const matchedTicketIds = new Set(
+              settlement.lines
+                .filter(l => l.id !== line.id && l.delivery_ticket_id)
+                .map(l => l.delivery_ticket_id)
+            );
+            const availableTickets = tickets.filter(t => !matchedTicketIds.has(t.id));
+
+            // HARD filter by commodity — same crop type only
+            const commodityFiltered = lineGrain
+              ? availableTickets.filter(t => getBaseGrain(t.commodity?.name) === lineGrain)
+              : availableTickets;
+
+            // Score remaining by weight proximity (primary), date (secondary)
+            const scored = commodityFiltered.map(t => {
               const tDate = t.delivery_date ? new Date(t.delivery_date) : null;
               const daysDiff = lineDate && tDate ? Math.abs((lineDate - tDate) / (1000 * 60 * 60 * 24)) : 999;
-              const weightDiff = lineWeight && t.net_weight_mt ? Math.abs(lineWeight - t.net_weight_mt) / Math.max(lineWeight, t.net_weight_mt) : 1;
-              const tCommodity = (t.commodity?.name || '').toLowerCase();
-              const tBuyer = (t.buyer_name || t.counterparty?.name || '').toLowerCase();
+              const weightDiff = lineWeight && t.net_weight_mt
+                ? Math.abs(lineWeight - t.net_weight_mt) / Math.max(lineWeight, t.net_weight_mt)
+                : 1;
+              // Settlement date is typically on or after ticket date
+              const dateDirection = lineDate && tDate ? (lineDate - tDate) / (1000 * 60 * 60 * 24) : 0;
 
-              if (daysDiff <= 3) relevance += 30;
-              else if (daysDiff <= 7) relevance += 15;
-              if (weightDiff <= 0.03) relevance += 30;
-              else if (weightDiff <= 0.08) relevance += 15;
-              if (lineCommodity && tCommodity && (tCommodity.includes(lineCommodity) || lineCommodity.includes(tCommodity))) relevance += 20;
-              if (buyerName && tBuyer && (tBuyer.includes(buyerName) || buyerName.includes(tBuyer))) relevance += 20;
-              if (settlement?.marketing_contract?.contract_number && t.marketing_contract_id) relevance += 10;
+              // Primary sort: weight proximity. Secondary: date proximity.
+              // Tickets with date BEFORE settlement date score slightly better (expected flow).
+              let score = 0;
+              if (weightDiff <= 0.01) score += 50;
+              else if (weightDiff <= 0.03) score += 40;
+              else if (weightDiff <= 0.08) score += 25;
+              else if (weightDiff <= 0.15) score += 10;
 
-              return { ...t, relevance, daysDiff, weightDiff };
+              if (daysDiff <= 1) score += 30;
+              else if (daysDiff <= 3) score += 25;
+              else if (daysDiff <= 7) score += 15;
+              else if (daysDiff <= 14) score += 5;
+
+              // Bonus: ticket date is on or before settlement date (normal flow)
+              if (dateDirection >= 0 && dateDirection <= 30) score += 5;
+
+              return { ...t, score, daysDiff, weightDiff, dateDirection };
             })
-            .filter(t => t.relevance >= 15) // at least one dimension matches
-            .sort((a, b) => b.relevance - a.relevance)
-            .slice(0, 50);
+            .filter(t => t.score > 0)
+            .sort((a, b) => b.score - a.score || a.weightDiff - b.weightDiff)
+            .slice(0, 40);
 
             return (
               <>
                 <Box sx={{ mb: 2 }}>
-                  <Typography variant="body2">Buyer Ticket #: {line.ticket_number_on_settlement || 'N/A'}</Typography>
-                  <Typography variant="body2">Weight: {line.net_weight_mt?.toFixed(3)} MT | Date: {lineDate ? lineDate.toLocaleDateString() : 'N/A'} | Commodity: {line.commodity || 'N/A'}</Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>Settlement Line</Typography>
+                  <Typography variant="body2">
+                    Ticket #: {line.ticket_number_on_settlement || 'N/A'} |
+                    Commodity: {line.commodity || settlement?.marketing_contract?.commodity?.name || 'N/A'} |
+                    Weight: {lineWeight?.toFixed(2)} MT |
+                    Date: {lineDate ? lineDate.toLocaleDateString() : 'N/A'}
+                  </Typography>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                  Showing {scored.length} best matches (filtered by date, weight, commodity, buyer)
+                  {scored.length} tickets — {lineGrain ? `${lineGrain} only` : 'all crops'}, ranked by weight then date
                 </Typography>
                 <TextField
                   select
@@ -704,15 +752,18 @@ export default function SettlementReconciliation() {
                   value={manualTicketId}
                   onChange={(e) => setManualTicketId(e.target.value)}
                   sx={{ mb: 2 }}
+                  SelectProps={{ MenuProps: { PaperProps: { sx: { maxHeight: 400 } } } }}
                 >
-                  {scored.map(t => (
-                    <MenuItem key={t.id} value={t.id}>
-                      #{t.ticket_number} — {t.net_weight_mt?.toFixed(2)} MT — {t.commodity?.name} — {new Date(t.delivery_date).toLocaleDateString()}
-                      {t.daysDiff <= 1 ? ' ✓date' : ''}{t.weightDiff <= 0.03 ? ' ✓weight' : ''}
-                    </MenuItem>
-                  ))}
+                  {scored.map(t => {
+                    const wtLabel = t.weightDiff <= 0.01 ? '~exact' : t.weightDiff <= 0.03 ? '~close' : `${(t.weightDiff * 100).toFixed(1)}% off`;
+                    return (
+                      <MenuItem key={t.id} value={t.id} sx={{ fontSize: '0.85rem' }}>
+                        #{t.ticket_number} | {t.commodity?.name} | {t.location?.name || '—'} | {new Date(t.delivery_date).toLocaleDateString()} | {t.net_weight_mt?.toFixed(2)} MT ({wtLabel})
+                      </MenuItem>
+                    );
+                  })}
                   {scored.length === 0 && (
-                    <MenuItem disabled>No close matches found — try broadening search</MenuItem>
+                    <MenuItem disabled>No {lineGrain || ''} tickets found near this weight/date</MenuItem>
                   )}
                 </TextField>
                 <TextField

@@ -47,6 +47,45 @@ function normalizeCommodity(value) {
 }
 
 /**
+ * Extract the base grain type from a commodity name for comparison.
+ * "Wheat (Milling) / Blé (Meunier)" → "wheat"
+ * "Spring Wheat" → "wheat"
+ * "1 CWRS" → "wheat" (via GRADE_TO_COMMODITY)
+ * "Canola" → "canola"
+ */
+const BASE_GRAIN_MAP = {
+  wheat: 'wheat', 'spring wheat': 'wheat', 'winter wheat': 'wheat', 'durum wheat': 'wheat',
+  'hard red spring': 'wheat', 'cwrs': 'wheat', 'wheat (milling)': 'wheat',
+  canola: 'canola', rapeseed: 'canola',
+  durum: 'durum', cwad: 'durum',
+  lentils: 'lentils', 'red lentils': 'lentils', 'green lentils': 'lentils',
+  chickpeas: 'chickpeas', 'kabuli chickpeas': 'chickpeas', 'desi chickpeas': 'chickpeas',
+  peas: 'peas', 'yellow peas': 'peas', 'green peas': 'peas',
+  barley: 'barley', 'feed barley': 'barley', 'malt barley': 'barley',
+  oats: 'oats', flax: 'flax', mustard: 'mustard',
+};
+
+function getBaseGrain(value) {
+  if (!value) return null;
+  const normalized = normalizeCommodity(value);
+  if (!normalized) return null;
+  // Direct lookup
+  if (BASE_GRAIN_MAP[normalized]) return BASE_GRAIN_MAP[normalized];
+  // Check if any key is contained in the normalized value
+  for (const [key, base] of Object.entries(BASE_GRAIN_MAP)) {
+    if (normalized.includes(key)) return base;
+  }
+  return normalized;
+}
+
+function commoditiesMatch(a, b) {
+  const baseA = getBaseGrain(a);
+  const baseB = getBaseGrain(b);
+  if (!baseA || !baseB) return false;
+  return baseA === baseB;
+}
+
+/**
  * Score a settlement line against a delivery ticket on OPERATIONAL data only.
  * Ticket number matching is handled deterministically before this runs —
  * this function is only called for lines that didn't match by ticket number.
@@ -382,7 +421,41 @@ export async function reconcileSettlement(settlementId, { matchMode = 'auto' } =
   // In weight_date mode, ALL lines reach this phase (no deterministic matching).
   // In auto mode, only lines WITHOUT ticket numbers reach this phase.
   const remainingLines = settlement.lines.filter(l => !matchedLineIds.has(l.id));
-  const remainingTickets = allTickets.filter(t => !matchedTicketIds.has(t.id));
+  let remainingTickets = allTickets.filter(t => !matchedTicketIds.has(t.id));
+
+  // In weight/date mode, pre-filter tickets by counterparty and commodity to avoid
+  // grabbing random tickets with similar weight from unrelated buyers/crops.
+  if (weightDateMode && remainingTickets.length > 0) {
+    const settlementCommodity = normalizeCommodity(
+      settlement.lines[0]?.commodity || settlement.marketing_contract?.commodity?.name
+    );
+    const counterpartyId = settlement.counterparty_id;
+    const contractId = settlement.marketing_contract_id;
+
+    let filtered = remainingTickets;
+
+    // Filter by contract first (tightest), then counterparty, then commodity
+    if (contractId) {
+      const byContract = filtered.filter(t => t.marketing_contract_id === contractId);
+      if (byContract.length > 0) filtered = byContract;
+    } else if (counterpartyId) {
+      const byCounterparty = filtered.filter(t => t.counterparty_id === counterpartyId);
+      if (byCounterparty.length > 0) filtered = byCounterparty;
+    }
+
+    // Hard filter by commodity — never match across grain types (e.g. Canola ≠ Wheat)
+    if (settlementCommodity) {
+      const byCommodity = filtered.filter(t => commoditiesMatch(t.commodity?.name, settlementCommodity));
+      if (byCommodity.length > 0) {
+        filtered = byCommodity;
+      } else {
+        console.log(`[RECON]   WARNING: No tickets match commodity "${settlementCommodity}" — weight/date matching may fail`);
+      }
+    }
+
+    console.log(`[RECON] Phase 4: Weight/date pre-filter: ${remainingTickets.length} → ${filtered.length} tickets (contract=${!!contractId}, counterparty=${!!counterpartyId}, commodity=${settlementCommodity || 'unknown'})`);
+    remainingTickets = filtered;
+  }
 
   console.log(`[RECON] Phase 4: Scoring ${remainingLines.length} lines × ${remainingTickets.length} tickets [mode=${matchMode}]`);
 
@@ -413,6 +486,9 @@ export async function reconcileSettlement(settlementId, { matchMode = 'auto' } =
     matchedLineIds.add(pair.line_id);
     matchedTicketIds.add(pair.ticket_id);
 
+    const lineInfo = settlement.lines.find(l => l.id === pair.line_id);
+    const ticketInfo = allTickets.find(t => t.id === pair.ticket_id);
+
     let matchStatus = 'matched';
     let exceptionReason = null;
 
@@ -421,8 +497,15 @@ export async function reconcileSettlement(settlementId, { matchMode = 'auto' } =
       exceptionReason = pair.issues.join(', ') || 'low_confidence';
     }
 
-    const lineInfo = settlement.lines.find(l => l.id === pair.line_id);
-    const ticketInfo = allTickets.find(t => t.id === pair.ticket_id);
+    // In weight/date mode: force exception if commodity doesn't match — admin must manually verify
+    if (weightDateMode && lineInfo && ticketInfo) {
+      const lineCommodity = lineInfo.commodity || settlement.marketing_contract?.commodity?.name;
+      const ticketCommodity = ticketInfo.commodity?.name;
+      if (lineCommodity && ticketCommodity && !commoditiesMatch(lineCommodity, ticketCommodity)) {
+        matchStatus = 'exception';
+        exceptionReason = `commodity_mismatch: settlement="${lineCommodity}" ticket="${ticketCommodity}"`;
+      }
+    }
     matches.push({
       line_id: pair.line_id,
       ticket_id: pair.ticket_id,
