@@ -250,13 +250,22 @@ export async function previewTicketImport(farmId, csvText) {
     const dockagePct = parseFloat(row[colMap.fromDockage]) || null;
     const proteinPct = parseFloat(row[colMap.fromProtein]) || null;
 
-    // Parse date
+    // Parse date — extract date portion only (no timezone shifting)
+    // Traction Ag timestamps: "03/13/2026 13:39:20" or "3/13/26 1:39 PM"
     let deliveryDate = null;
     const tsValue = row[colMap.timestamp];
     if (tsValue) {
-      // Handle MM/DD/YYYY HH:mm:ss or YYYY-MM-DD formats
-      const d = new Date(tsValue);
-      if (!isNaN(d.getTime())) deliveryDate = d;
+      // Try to extract MM/DD/YYYY or MM/DD/YY from the beginning
+      const dateMatch = tsValue.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+      if (dateMatch) {
+        let [, month, day, year] = dateMatch;
+        if (year.length === 2) year = (parseInt(year) > 50 ? '19' : '20') + year;
+        // Create date as noon UTC to avoid any timezone day-shift
+        deliveryDate = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T12:00:00Z`);
+      } else {
+        const d = new Date(tsValue);
+        if (!isNaN(d.getTime())) deliveryDate = d;
+      }
     }
 
     // Match commodity — check saved aliases first, then fuzzy name match
