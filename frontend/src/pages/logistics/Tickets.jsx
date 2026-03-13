@@ -8,6 +8,7 @@ import {
 } from '@mui/material';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
 import DeleteIcon from '@mui/icons-material/Delete';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import CloseIcon from '@mui/icons-material/Close';
 import SearchIcon from '@mui/icons-material/Search';
 import SummarizeIcon from '@mui/icons-material/Summarize';
@@ -107,6 +108,36 @@ export default function Tickets() {
       fetchData();
     } catch (err) {
       setSnack({ open: true, message: extractErrorMessage(err, 'Failed to delete tickets'), severity: 'error' });
+    }
+  };
+
+  const handleBulkSettle = async () => {
+    const selectedRows = gridRef.current?.api?.getSelectedRows() || [];
+    if (selectedRows.length === 0) return;
+    const unsettled = selectedRows.filter(r => !r.settled);
+    if (unsettled.length === 0) {
+      setSnack({ open: true, message: 'All selected tickets are already settled', severity: 'info' });
+      return;
+    }
+    const ok = await confirm({
+      title: 'Mark Tickets as Settled',
+      message: `Mark ${unsettled.length} unsettled ticket${unsettled.length !== 1 ? 's' : ''} as settled? This is for prior-year cutoff — tickets will be flagged as settled without a matching settlement.`,
+      confirmText: 'Mark Settled',
+      confirmColor: 'success',
+    });
+    if (!ok) return;
+
+    try {
+      const ids = unsettled.map(r => r.id);
+      await api.patch(`/api/farms/${currentFarm.id}/tickets/bulk-settle`, {
+        ids,
+        notes: 'Marked settled — prior year cutoff',
+      });
+      setSnack({ open: true, message: `${unsettled.length} ticket(s) marked as settled`, severity: 'success' });
+      setSelectedCount(0);
+      fetchData();
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to mark tickets as settled'), severity: 'error' });
     }
   };
 
@@ -283,15 +314,26 @@ export default function Tickets() {
         </Box>
         <Stack direction="row" spacing={1} alignItems="center">
           {selectedCount > 0 && isAdmin && (
-            <Button
-              variant="outlined"
-              color="error"
-              size="small"
-              startIcon={<DeleteIcon />}
-              onClick={handleDeleteSelected}
-            >
-              Delete {selectedCount} ticket{selectedCount !== 1 ? 's' : ''}
-            </Button>
+            <>
+              <Button
+                variant="outlined"
+                color="success"
+                size="small"
+                startIcon={<CheckCircleOutlineIcon />}
+                onClick={handleBulkSettle}
+              >
+                Mark Settled ({selectedCount})
+              </Button>
+              <Button
+                variant="outlined"
+                color="error"
+                size="small"
+                startIcon={<DeleteIcon />}
+                onClick={handleDeleteSelected}
+              >
+                Delete ({selectedCount})
+              </Button>
+            </>
           )}
           <TextField
             select
@@ -302,6 +344,9 @@ export default function Tickets() {
             sx={{ minWidth: 120 }}
           >
             <MenuItem value="">All Years</MenuItem>
+            <MenuItem value="2022">FY2022 (Nov 20 – Oct 21)</MenuItem>
+            <MenuItem value="2023">FY2023 (Nov 21 – Oct 22)</MenuItem>
+            <MenuItem value="2024">FY2024 (Nov 22 – Oct 23)</MenuItem>
             <MenuItem value="2025">FY2025 (Nov 23 – Oct 24)</MenuItem>
             <MenuItem value="2026">FY2026 (Nov 24 – Oct 25)</MenuItem>
             <MenuItem value="2027">FY2027 (Nov 25 – Oct 26)</MenuItem>

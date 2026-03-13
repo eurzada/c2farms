@@ -146,10 +146,41 @@ export async function finalizeSettlement(farmId, settlementId) {
     );
   }
 
-  return prisma.terminalSettlement.update({
-    where: { id: settlementId },
-    data: { status: 'finalized' },
-    include: standardIncludes,
+  // Update contract delivered_mt and remaining_mt
+  const totalSettledMt = settlement.lines.reduce((s, l) => s + (l.net_weight_mt || 0), 0);
+
+  return prisma.$transaction(async (tx) => {
+    if (settlement.contract_id && totalSettledMt > 0) {
+      const contract = await tx.terminalContract.findUnique({
+        where: { id: settlement.contract_id },
+      });
+      if (contract) {
+        const newDelivered = (contract.delivered_mt || 0) + totalSettledMt;
+        const rawRemaining = contract.contracted_mt - newDelivered;
+        const newRemaining = rawRemaining < 0.5 ? 0 : rawRemaining; // tolerance for floating-point dust
+        const newStatus = newRemaining <= 0 ? 'fulfilled' : 'in_delivery';
+        await tx.terminalContract.update({
+          where: { id: contract.id },
+          data: {
+            delivered_mt: newDelivered,
+            remaining_mt: newRemaining,
+            status: newStatus,
+          },
+        });
+        logger.info('Updated contract delivery totals', {
+          contractId: contract.id,
+          delivered: newDelivered,
+          remaining: newRemaining,
+          status: newStatus,
+        });
+      }
+    }
+
+    return tx.terminalSettlement.update({
+      where: { id: settlementId },
+      data: { status: 'finalized' },
+      include: standardIncludes,
+    });
   });
 }
 
@@ -162,6 +193,12 @@ export async function pushToLogistics(farmId, settlementId, io) {
   const terminalSettlement = await prisma.terminalSettlement.findFirst({
     where: { id: settlementId, farm_id: farmId },
     include: {
+      contract: {
+        select: {
+          contract_number: true,
+          commodity: { select: { id: true, name: true, code: true } },
+        },
+      },
       lines: {
         include: {
           ticket: { select: { id: true, ticket_number: true, ticket_date: true } },
@@ -187,11 +224,29 @@ export async function pushToLogistics(farmId, settlementId, io) {
 
   // 4. Transaction: create Settlement + SettlementLines, update TerminalSettlement
   const result = await prisma.$transaction(async (tx) => {
-    // 4a. Create logistics Settlement
+    // 4a. Build settlement number: LGXS-{seq}-{contract#}
+    const contractNum = terminalSettlement.contract?.contract_number;
+    let settlementNum;
+    if (contractNum) {
+      // Count existing LGXS settlements for this contract to determine sequence
+      const existingCount = await tx.settlement.count({
+        where: {
+          farm_id: enterpriseFarmId,
+          settlement_number: { startsWith: `LGXS-` },
+          extraction_json: { path: ['contract_number'], equals: contractNum },
+        },
+      });
+      const seq = String(existingCount + 1).padStart(3, '0');
+      settlementNum = `LGXS-${seq}-${contractNum}`;
+    } else {
+      settlementNum = `LGXS-${terminalSettlement.settlement_number}`;
+    }
+
+    // 4b. Create logistics Settlement
     const settlement = await tx.settlement.create({
       data: {
         farm_id: enterpriseFarmId,
-        settlement_number: `LGX-${terminalSettlement.settlement_number}`,
+        settlement_number: settlementNum,
         source: 'lgx_transfer',
         terminal_settlement_id: terminalSettlement.id,
         marketing_contract_id: terminalSettlement.marketing_contract_id || null,
@@ -201,6 +256,10 @@ export async function pushToLogistics(farmId, settlementId, io) {
         status: 'pending',
         buyer_format: 'lgx',
         extraction_status: 'completed',
+        extraction_json: {
+          contract_number: contractNum || null,
+          commodity: terminalSettlement.contract?.commodity?.name || null,
+        },
       },
     });
 
@@ -227,7 +286,7 @@ export async function pushToLogistics(farmId, settlementId, io) {
         ticket_number_on_settlement: ticketNum,
         delivery_ticket_id: deliveryTicketId,
         delivery_date: line.ticket?.ticket_date || null,
-        commodity: line.commodity?.name || null,
+        commodity: line.commodity?.name || terminalSettlement.contract?.commodity?.name || null,
         grade: line.grade || null,
         gross_weight_mt: line.gross_weight_mt || null,
         net_weight_mt: line.net_weight_mt || null,
@@ -246,12 +305,45 @@ export async function pushToLogistics(farmId, settlementId, io) {
     const matchedCount = lineData.filter(l => l.delivery_ticket_id).length;
     logger.info('Auto-reconciled settlement lines', { matchedCount, totalLines: lineData.length });
 
-    // 4c. Mark terminal settlement as pushed
+    // 4c. Update linked MarketingContract (delivered_mt, status)
+    let marketingContractId = terminalSettlement.marketing_contract_id || null;
+    if (terminalSettlement.contract_id) {
+      const linkedMc = await tx.marketingContract.findFirst({
+        where: { linked_terminal_contract_id: terminalSettlement.contract_id },
+      });
+      if (linkedMc) {
+        marketingContractId = linkedMc.id;
+        const totalMt = lineData.reduce((s, l) => s + (l.net_weight_mt || 0), 0);
+        const newDelivered = (linkedMc.delivered_mt || 0) + totalMt;
+        const rawRemaining = linkedMc.contracted_mt - newDelivered;
+        const newRemaining = rawRemaining < 0.5 ? 0 : rawRemaining; // tolerance for floating-point dust
+        const newStatus = newRemaining <= 0 ? 'delivered' : 'in_delivery';
+        await tx.marketingContract.update({
+          where: { id: linkedMc.id },
+          data: { delivered_mt: newDelivered, remaining_mt: newRemaining, status: newStatus },
+        });
+        logger.info('Updated linked MarketingContract', {
+          id: linkedMc.id, contractNumber: linkedMc.contract_number,
+          delivered: newDelivered, remaining: newRemaining, status: newStatus,
+        });
+      }
+    }
+
+    // 4d. Link settlement to MarketingContract if found
+    if (marketingContractId) {
+      await tx.settlement.update({
+        where: { id: settlement.id },
+        data: { marketing_contract_id: marketingContractId },
+      });
+    }
+
+    // 4e. Mark terminal settlement as pushed
     await tx.terminalSettlement.update({
       where: { id: settlementId },
       data: {
         status: 'pushed',
         pushed_settlement_id: settlement.id,
+        marketing_contract_id: marketingContractId,
       },
     });
 

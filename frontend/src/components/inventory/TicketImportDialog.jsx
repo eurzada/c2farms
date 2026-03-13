@@ -161,9 +161,30 @@ export default function TicketImportDialog({ open, onClose, farmId, onImported }
         return ticket;
       });
 
-      // Step 3: Commit
+      // Build resolutions for alias persistence
+      const aliasResolutions = {
+        commodityMap: {},
+        counterpartyMap: {},
+      };
+      for (const [cropName, resolution] of Object.entries(commodityMap)) {
+        if (resolution.action === 'map') {
+          aliasResolutions.commodityMap[cropName] = { action: 'map', targetId: resolution.targetId };
+        } else if (resolution.action === 'create') {
+          aliasResolutions.commodityMap[cropName] = { action: 'create', createdId: newCommodityIds[cropName] };
+        }
+      }
+      for (const [buyerName, resolution] of Object.entries(counterpartyMap)) {
+        if (resolution.action === 'map') {
+          aliasResolutions.counterpartyMap[buyerName] = { action: 'map', targetId: resolution.targetId };
+        } else if (resolution.action === 'create') {
+          aliasResolutions.counterpartyMap[buyerName] = { action: 'create', createdId: newCounterpartyIds[buyerName] };
+        }
+      }
+
+      // Step 3: Commit (with resolutions for alias persistence)
       const res = await api.post(`/api/farms/${farmId}/tickets/import/commit`, {
         tickets: resolvedTickets,
+        resolutions: aliasResolutions,
       });
       setImportResult(res.data);
       setActiveStep(2);

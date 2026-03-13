@@ -15,6 +15,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import EditIcon from '@mui/icons-material/Edit';
 import SummarizeIcon from '@mui/icons-material/Summarize';
+import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DownloadIcon from '@mui/icons-material/Download';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -32,6 +33,8 @@ import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { extractErrorMessage } from '../../utils/errorHelpers';
 import { fmt, fmtDollar } from '../../utils/formatting';
+
+const FLAG_COLORS = { ok: 'success', warning: 'warning', error: 'error' };
 
 const STATUS_COLORS = {
   pending: 'warning',
@@ -79,6 +82,9 @@ export default function Settlements() {
   const [gapLoading, setGapLoading] = useState(false);
   const [gapMonth, setGapMonth] = useState('');
   const [expandedSections, setExpandedSections] = useState({});
+  const [reconOpen, setReconOpen] = useState(false);
+  const [reconData, setReconData] = useState(null);
+  const [reconLoading, setReconLoading] = useState(false);
   const [selectedCount, setSelectedCount] = useState(0);
   const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
@@ -201,6 +207,21 @@ export default function Settlements() {
       setGapOpen(false);
     } finally {
       setGapLoading(false);
+    }
+  };
+
+  const handleMonthlyRecon = async () => {
+    setReconOpen(true);
+    setReconLoading(true);
+    try {
+      const fy = fiscalYearFilter || new Date().getFullYear();
+      const res = await api.get(`/api/farms/${currentFarm.id}/settlements/reports/monthly-recon?fiscal_year=${fy}`);
+      setReconData(res.data);
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to load reconciliation'), severity: 'error' });
+      setReconOpen(false);
+    } finally {
+      setReconLoading(false);
     }
   };
 
@@ -350,8 +371,14 @@ export default function Settlements() {
     },
     { field: 'counterparty.name', headerName: 'Buyer', width: 150 },
     { field: 'buyer_format', headerName: 'Format', width: 100, valueFormatter: p => p.value?.toUpperCase() || '' },
-    { field: 'marketing_contract.contract_number', headerName: 'Contract #', width: 130 },
-    { field: 'marketing_contract.commodity.name', headerName: 'Commodity', width: 120 },
+    {
+      headerName: 'Contract #', width: 130,
+      valueGetter: p => p.data.marketing_contract?.contract_number || p.data.extraction_json?.contract_number || '',
+    },
+    {
+      headerName: 'Commodity', width: 120,
+      valueGetter: p => p.data.marketing_contract?.commodity?.name || p.data.extraction_json?.commodity || '',
+    },
     {
       field: 'total_amount', headerName: 'Amount', width: 120,
       valueFormatter: p => p.value ? fmtDollar(p.value) : '',
@@ -436,6 +463,9 @@ export default function Settlements() {
           )}
           <Button variant="outlined" color="warning" startIcon={<SummarizeIcon />} onClick={handleReconGapReport}>
             Recon Gap Report
+          </Button>
+          <Button variant="outlined" color="info" startIcon={<CompareArrowsIcon />} onClick={handleMonthlyRecon}>
+            Monthly Recon
           </Button>
           {canEdit && pendingCount > 0 && (
             <Button
@@ -994,6 +1024,160 @@ export default function Settlements() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setGapOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Monthly Three-Way Reconciliation Dialog */}
+      <Dialog open={reconOpen} onClose={() => { setReconOpen(false); setReconData(null); }} maxWidth="xl" fullWidth>
+        <DialogTitle>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Monthly Reconciliation — Shipped vs Settled vs Inventory</span>
+            <Typography variant="body2" color="text.secondary">
+              {reconData?.period || ''}
+            </Typography>
+          </Box>
+        </DialogTitle>
+        <DialogContent dividers>
+          {reconLoading && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+              <CircularProgress />
+            </Box>
+          )}
+          {reconData && !reconLoading && (
+            <>
+              {/* Summary cards */}
+              <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
+                <Card variant="outlined" sx={{ flex: 1, minWidth: 150 }}>
+                  <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                    <Typography variant="caption" color="text.secondary">Total Shipped</Typography>
+                    <Typography variant="h6" fontWeight={700}>{fmt(reconData.totals.total_shipped_mt)} MT</Typography>
+                    <Typography variant="caption">{reconData.totals.total_tickets} tickets</Typography>
+                  </CardContent>
+                </Card>
+                <Card variant="outlined" sx={{ flex: 1, minWidth: 150 }}>
+                  <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                    <Typography variant="caption" color="text.secondary">Total Settled</Typography>
+                    <Typography variant="h6" fontWeight={700}>{fmt(reconData.totals.total_settled_mt)} MT</Typography>
+                    <Typography variant="caption">{reconData.totals.total_settlement_lines} lines</Typography>
+                  </CardContent>
+                </Card>
+                <Card variant="outlined" sx={{ flex: 1, minWidth: 150 }}>
+                  <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                    <Typography variant="caption" color="text.secondary">Variance</Typography>
+                    <Typography variant="h6" fontWeight={700} color={reconData.totals.total_variance_mt > 0 ? 'warning.main' : 'success.main'}>
+                      {reconData.totals.total_variance_mt > 0 ? '+' : ''}{fmt(reconData.totals.total_variance_mt)} MT
+                    </Typography>
+                  </CardContent>
+                </Card>
+                <Card variant="outlined" sx={{ flex: 1, minWidth: 150 }}>
+                  <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                    <Typography variant="caption" color="text.secondary">Issues</Typography>
+                    <Typography variant="h6" fontWeight={700}>
+                      {reconData.totals.error_count > 0 && <Chip label={`${reconData.totals.error_count} errors`} size="small" color="error" sx={{ mr: 0.5 }} />}
+                      {reconData.totals.warning_count > 0 && <Chip label={`${reconData.totals.warning_count} warnings`} size="small" color="warning" />}
+                      {reconData.totals.error_count === 0 && reconData.totals.warning_count === 0 && <Chip label="All OK" size="small" color="success" />}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Box>
+
+              {/* Detail: Shipped vs Settled by Commodity + Buyer + Month */}
+              <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
+                Shipped vs Settled — by Commodity + Buyer
+              </Typography>
+              {reconData.detail.length === 0 ? (
+                <Alert severity="info" sx={{ mb: 2 }}>No delivery data found for this fiscal year.</Alert>
+              ) : (
+                <TableContainer component={Paper} variant="outlined" sx={{ mb: 3, maxHeight: 400 }}>
+                  <Table size="small" stickyHeader>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Commodity</TableCell>
+                        <TableCell>Buyer</TableCell>
+                        <TableCell>Month</TableCell>
+                        <TableCell align="right">Shipped MT</TableCell>
+                        <TableCell align="right">Tickets</TableCell>
+                        <TableCell align="right">Settled MT</TableCell>
+                        <TableCell align="right">Lines</TableCell>
+                        <TableCell align="right">Variance MT</TableCell>
+                        <TableCell align="right">Variance %</TableCell>
+                        <TableCell align="center">Flag</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {reconData.detail.map((r, i) => (
+                        <TableRow key={i} hover sx={r.flag === 'error' ? { bgcolor: 'error.50' } : r.flag === 'warning' ? { bgcolor: 'warning.50' } : undefined}>
+                          <TableCell sx={{ fontWeight: 600 }}>{r.commodity}</TableCell>
+                          <TableCell>{r.buyer}</TableCell>
+                          <TableCell>{r.month_label}</TableCell>
+                          <TableCell align="right">{fmt(r.shipped_mt)}</TableCell>
+                          <TableCell align="right">{r.ticket_count}</TableCell>
+                          <TableCell align="right">{fmt(r.settled_mt)}</TableCell>
+                          <TableCell align="right">{r.line_count}</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 600 }}>{r.variance_mt > 0 ? '+' : ''}{fmt(r.variance_mt)}</TableCell>
+                          <TableCell align="right">{r.variance_pct > 0 ? '+' : ''}{r.variance_pct}%</TableCell>
+                          <TableCell align="center">
+                            <Chip label={r.flag.toUpperCase()} size="small" color={FLAG_COLORS[r.flag] || 'default'} />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              )}
+
+              {/* Inventory Summary: Bin Count Change vs Shipments */}
+              {reconData.inventory_summary.length > 0 && (
+                <>
+                  <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
+                    Inventory Change vs Shipments — by Commodity
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                    Compares bin count decrease (opening - closing) against total shipped MT. Large variances indicate missing counts or unrecorded movements.
+                  </Typography>
+                  <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 300 }}>
+                    <Table size="small" stickyHeader>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Commodity</TableCell>
+                          <TableCell>Month</TableCell>
+                          <TableCell align="right">Opening MT</TableCell>
+                          <TableCell align="right">Closing MT</TableCell>
+                          <TableCell align="right">Inv Change</TableCell>
+                          <TableCell align="right">Shipped MT</TableCell>
+                          <TableCell align="right">Settled MT</TableCell>
+                          <TableCell align="right">Inv vs Shipped</TableCell>
+                          <TableCell align="center">Flag</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {reconData.inventory_summary.map((r, i) => (
+                          <TableRow key={i} hover sx={r.flag === 'warning' ? { bgcolor: 'warning.50' } : undefined}>
+                            <TableCell sx={{ fontWeight: 600 }}>{r.commodity}</TableCell>
+                            <TableCell>{r.month_label}</TableCell>
+                            <TableCell align="right">{fmt(r.opening_mt)}</TableCell>
+                            <TableCell align="right">{fmt(r.closing_mt)}</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 600 }}>{fmt(r.inventory_change_mt)}</TableCell>
+                            <TableCell align="right">{fmt(r.total_shipped_mt)}</TableCell>
+                            <TableCell align="right">{fmt(r.total_settled_mt)}</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 600, color: r.flag === 'warning' ? 'warning.main' : undefined }}>
+                              {r.inv_vs_shipped_variance > 0 ? '+' : ''}{fmt(r.inv_vs_shipped_variance)}
+                            </TableCell>
+                            <TableCell align="center">
+                              <Chip label={r.flag.toUpperCase()} size="small" color={FLAG_COLORS[r.flag] || 'default'} />
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </>
+              )}
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { setReconOpen(false); setReconData(null); }}>Close</Button>
         </DialogActions>
       </Dialog>
 

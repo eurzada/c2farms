@@ -291,9 +291,23 @@ model Commodity {
   terminal_bins           TerminalBin[]
   terminal_contracts      TerminalContract[]
   terminal_settlement_lines TerminalSettlementLine[]
+  aliases CommodityAlias[]
 
   @@unique([farm_id, code])
   @@map("commodities")
+}
+
+model CommodityAlias {
+  id           String    @id @default(uuid())
+  farm_id      String
+  commodity_id String
+  alias        String    // e.g. "Yellow Peas" from CSV
+  source       String    @default("import") // import, manual
+  created_at   DateTime  @default(now())
+  commodity    Commodity @relation(fields: [commodity_id], references: [id], onDelete: Cascade)
+
+  @@unique([farm_id, alias])
+  @@map("commodity_aliases")
 }
 
 model InventoryLocation {
@@ -444,9 +458,23 @@ model Counterparty {
   terminal_tickets      TerminalTicket[]
   terminal_contracts    TerminalContract[]
   terminal_settlements  TerminalSettlement[]
+  aliases CounterpartyAlias[]
 
   @@unique([farm_id, name])
   @@map("counterparties")
+}
+
+model CounterpartyAlias {
+  id              String       @id @default(uuid())
+  farm_id         String
+  counterparty_id String
+  alias           String       // e.g. "G3 Canada" from CSV
+  source          String       @default("import") // import, manual
+  created_at      DateTime     @default(now())
+  counterparty    Counterparty @relation(fields: [counterparty_id], references: [id], onDelete: Cascade)
+
+  @@unique([farm_id, alias])
+  @@map("counterparty_aliases")
 }
 
 model MarketingContract {

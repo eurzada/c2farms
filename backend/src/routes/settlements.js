@@ -7,6 +7,7 @@ import { extractSettlementFromPdf, saveSettlement, queueBatchExtraction, checkBa
 import { reconcileSettlement, manualMatch, approveSettlement } from '../services/reconciliationAiService.js';
 import { generateExceptionExcel, generateExceptionPdf } from '../services/settlementExportService.js';
 import { generateReconGapData, generateReconGapExcel, generateReconGapPdf, generateReconGapCsv } from '../services/reconGapReportService.js';
+import { getMonthlyReconciliation } from '../services/monthlyReconService.js';
 import { logAudit } from '../services/auditService.js';
 import { broadcastMarketingEvent } from '../socket/handler.js';
 import { getFontPaths } from '../utils/fontPaths.js';
@@ -182,6 +183,15 @@ router.get('/:farmId/settlements/reports/recon-gaps/csv', authenticate, async (r
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(csv);
+  } catch (err) { next(err); }
+});
+
+// GET monthly three-way reconciliation report
+router.get('/:farmId/settlements/reports/monthly-recon', authenticate, async (req, res, next) => {
+  try {
+    const fiscalYear = req.query.fiscal_year || new Date().getFullYear();
+    const data = await getMonthlyReconciliation(req.params.farmId, fiscalYear);
+    res.json(data);
   } catch (err) { next(err); }
 });
 

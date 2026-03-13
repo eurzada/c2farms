@@ -150,14 +150,15 @@ export async function addDelivery(farmId, contractId, mt) {
     if (!contract) throw Object.assign(new Error('Contract not found'), { status: 404 });
 
     const newDelivered = contract.delivered_mt + mt;
-    const newRemaining = contract.contracted_mt - newDelivered;
+    const rawRemaining = contract.contracted_mt - newDelivered;
+    const newRemaining = rawRemaining < 0.5 ? 0 : rawRemaining; // tolerance for floating-point dust
     const newStatus = newRemaining <= 0 ? 'fulfilled' : 'in_delivery';
 
     return tx.terminalContract.update({
       where: { id: contractId },
       data: {
         delivered_mt: newDelivered,
-        remaining_mt: Math.max(0, newRemaining),
+        remaining_mt: newRemaining,
         status: newStatus,
       },
     });

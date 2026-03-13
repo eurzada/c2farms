@@ -582,7 +582,8 @@ export async function approveSettlement(settlementId, userId = null) {
       });
       if (!contract) continue;
 
-      const remaining = Math.max(0, contract.contracted_mt - totalDelivered);
+      const rawRemaining = contract.contracted_mt - totalDelivered;
+      const remaining = rawRemaining < 0.5 ? 0 : rawRemaining; // tolerance for floating-point dust
 
       // Auto-transition status
       let newStatus = contract.status;

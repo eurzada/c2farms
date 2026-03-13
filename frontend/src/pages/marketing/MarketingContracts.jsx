@@ -262,6 +262,34 @@ export default function MarketingContracts() {
     }
   };
 
+  const handleBulkClose = async () => {
+    const selectedRows = gridRef.current?.api?.getSelectedRows() || [];
+    const closable = selectedRows.filter(r => r.status !== 'settled' && r.status !== 'cancelled');
+    if (closable.length === 0) {
+      setSnack({ open: true, message: 'All selected contracts are already settled or cancelled', severity: 'info' });
+      return;
+    }
+    const ok = await confirm({
+      title: 'Close Contracts (Prior Year Cutoff)',
+      message: `Mark ${closable.length} contract${closable.length !== 1 ? 's' : ''} as "Settled"? This is for prior-year cutoff — contracts will be flagged as settled regardless of delivery status.`,
+      confirmText: 'Close All',
+      confirmColor: 'success',
+    });
+    if (!ok) return;
+    try {
+      const ids = closable.map(r => r.id);
+      const res = await api.post(`/api/farms/${currentFarm.id}/marketing/contracts/bulk-close`, {
+        ids,
+        notes: 'Closed — prior year cutoff',
+      });
+      setSnack({ open: true, message: `${res.data.closed} contract(s) closed`, severity: 'success' });
+      setSelectedCount(0);
+      fetchData();
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to close contracts'), severity: 'error' });
+    }
+  };
+
   const onSelectionChanged = useCallback(() => {
     const count = gridRef.current?.api?.getSelectedRows()?.length || 0;
     setSelectedCount(count);
@@ -381,12 +409,21 @@ export default function MarketingContracts() {
             <>
               <Button
                 variant="outlined"
+                color="success"
+                size="small"
+                startIcon={<CheckCircleIcon />}
+                onClick={handleBulkClose}
+              >
+                Close ({selectedCount})
+              </Button>
+              <Button
+                variant="outlined"
                 color="error"
                 size="small"
                 startIcon={<CancelIcon />}
                 onClick={handleDeleteSelected}
               >
-                Cancel {selectedCount}
+                Cancel ({selectedCount})
               </Button>
               <Button
                 variant="contained"
@@ -395,7 +432,7 @@ export default function MarketingContracts() {
                 startIcon={<DeleteIcon />}
                 onClick={handlePermanentDeleteSelected}
               >
-                Delete {selectedCount}
+                Delete ({selectedCount})
               </Button>
             </>
           )}

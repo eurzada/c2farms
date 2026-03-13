@@ -16,6 +16,10 @@ monthly_ops_extraction.txt
 csv for testing*/
 Inventory testing/
 
+# Business data & backups
+2. Marketing-Inventory/
+backups/
+
 # Obsidian vault
 obsidian C2 Farms/
 .cursor/

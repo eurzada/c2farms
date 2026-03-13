@@ -237,6 +237,42 @@ router.post('/:farmId/marketing/contracts/import-batch/:batchId/confirm', authen
   } catch (err) { next(err); }
 });
 
+// POST bulk close contracts (admin cutoff tool)
+router.post('/:farmId/marketing/contracts/bulk-close', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const { ids, notes } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids array is required' });
+    }
+
+    const result = await prisma.marketingContract.updateMany({
+      where: {
+        id: { in: ids },
+        farm_id: req.params.farmId,
+        status: { not: 'cancelled' },
+      },
+      data: {
+        status: 'settled',
+        notes: notes || 'Closed — prior year cutoff',
+      },
+    });
+
+    logAudit({
+      farmId: req.params.farmId,
+      userId: req.userId,
+      entityType: 'MarketingContract',
+      entityId: 'bulk_close',
+      action: 'bulk_close',
+      changes: { closed: result.count, requested: ids.length, notes },
+    });
+
+    const io = req.app.get('io');
+    if (io) broadcastMarketingEvent(io, req.params.farmId, 'marketing:contracts:bulk_closed', { count: result.count });
+
+    res.json({ closed: result.count });
+  } catch (err) { next(err); }
+});
+
 // ─── Contract CRUD (parameterized :id routes) ────────────────────────
 
 router.put('/:farmId/marketing/contracts/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {

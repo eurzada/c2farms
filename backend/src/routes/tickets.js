@@ -153,11 +153,11 @@ router.post('/:farmId/tickets/import/preview', authenticate, requireRole('admin'
 // POST commit CSV import
 router.post('/:farmId/tickets/import/commit', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
-    const { tickets } = req.body;
+    const { tickets, resolutions } = req.body;
     if (!Array.isArray(tickets) || tickets.length === 0) {
       return res.status(400).json({ error: 'tickets array is required' });
     }
-    const result = await commitTicketImport(req.params.farmId, tickets);
+    const result = await commitTicketImport(req.params.farmId, tickets, resolutions);
     logAudit({
       farmId: req.params.farmId,
       userId: req.userId,
@@ -167,6 +167,32 @@ router.post('/:farmId/tickets/import/commit', authenticate, requireRole('admin',
       changes: { created: result.created, updated: result.updated },
     });
     res.json(result);
+  } catch (err) { next(err); }
+});
+
+// PATCH bulk mark tickets as settled (admin cutoff tool)
+router.patch('/:farmId/tickets/bulk-settle', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const { ids, notes } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids array is required' });
+    }
+
+    const result = await prisma.deliveryTicket.updateMany({
+      where: { id: { in: ids }, farm_id: req.params.farmId },
+      data: { settled: true, notes: notes || 'Marked settled — prior year cutoff' },
+    });
+
+    logAudit({
+      farmId: req.params.farmId,
+      userId: req.userId,
+      entityType: 'DeliveryTicket',
+      entityId: 'bulk_settle',
+      action: 'bulk_settle',
+      changes: { settled: result.count, requested: ids.length, notes },
+    });
+
+    res.json({ settled: result.count });
   } catch (err) { next(err); }
 });
 

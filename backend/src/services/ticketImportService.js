@@ -200,15 +200,27 @@ export async function previewTicketImport(farmId, csvText) {
     fromDockage: findHeader(headers, 'From Dockage', 'Dockage'),
   };
 
-  // Load lookup data for matching
-  const [commodities, locations, bins, contracts, counterparties, existingTickets] = await Promise.all([
+  // Load lookup data for matching (including saved aliases)
+  const [commodities, locations, bins, contracts, counterparties, existingTickets, commodityAliases, counterpartyAliases] = await Promise.all([
     prisma.commodity.findMany({ where: { farm_id: farmId } }),
     prisma.inventoryLocation.findMany({ where: { farm_id: farmId } }),
     prisma.inventoryBin.findMany({ where: { farm_id: farmId }, include: { location: true } }),
     prisma.marketingContract.findMany({ where: { farm_id: farmId }, include: { counterparty: true } }),
     prisma.counterparty.findMany({ where: { farm_id: farmId } }),
     prisma.deliveryTicket.findMany({ where: { farm_id: farmId }, select: { ticket_number: true } }),
+    prisma.commodityAlias.findMany({ where: { farm_id: farmId } }),
+    prisma.counterpartyAlias.findMany({ where: { farm_id: farmId } }),
   ]);
+
+  // Build alias lookup maps (csv name → target id)
+  const commodityAliasMap = {};
+  for (const a of commodityAliases) {
+    commodityAliasMap[a.alias.toLowerCase()] = a.commodity_id;
+  }
+  const counterpartyAliasMap = {};
+  for (const a of counterpartyAliases) {
+    counterpartyAliasMap[a.alias.toLowerCase()] = a.counterparty_id;
+  }
 
   const existingTicketSet = new Set(existingTickets.map(t => t.ticket_number));
 
@@ -247,13 +259,23 @@ export async function previewTicketImport(farmId, csvText) {
       if (!isNaN(d.getTime())) deliveryDate = d;
     }
 
-    // Match commodity
-    const matchedCommodity = cropName
-      ? commodities.find(c =>
+    // Match commodity — check saved aliases first, then fuzzy name match
+    let matchedCommodity = null;
+    if (cropName) {
+      const aliasTarget = commodityAliasMap[cropName.toLowerCase()];
+      if (aliasTarget) {
+        matchedCommodity = commodities.find(c => c.id === aliasTarget);
+      }
+      if (!matchedCommodity) {
+        matchedCommodity = commodities.find(c =>
+          c.name.toLowerCase() === cropName.toLowerCase() ||
+          c.code.toLowerCase() === cropName.toLowerCase()
+        ) || commodities.find(c =>
           c.name.toLowerCase().includes(cropName.toLowerCase()) ||
           cropName.toLowerCase().includes(c.name.toLowerCase())
-        )
-      : null;
+        );
+      }
+    }
 
     // Match location
     const matchedLocation = locationName
@@ -271,15 +293,24 @@ export async function previewTicketImport(farmId, csvText) {
         )
       : null;
 
-    // Match counterparty
+    // Match counterparty — check saved aliases first, then fuzzy name match
     const buyerNameToMatch = contractBuyer || toBuyer;
-    const matchedCounterparty = buyerNameToMatch
-      ? counterparties.find(cp =>
-          cp.name.toLowerCase().includes(buyerNameToMatch.toLowerCase()) ||
-          buyerNameToMatch.toLowerCase().includes(cp.name.toLowerCase()) ||
+    let matchedCounterparty = null;
+    if (buyerNameToMatch) {
+      const aliasTarget = counterpartyAliasMap[buyerNameToMatch.toLowerCase()];
+      if (aliasTarget) {
+        matchedCounterparty = counterparties.find(cp => cp.id === aliasTarget);
+      }
+      if (!matchedCounterparty) {
+        matchedCounterparty = counterparties.find(cp =>
+          cp.name.toLowerCase() === buyerNameToMatch.toLowerCase() ||
           cp.short_code.toLowerCase() === buyerNameToMatch.toLowerCase()
-        )
-      : null;
+        ) || counterparties.find(cp =>
+          cp.name.toLowerCase().includes(buyerNameToMatch.toLowerCase()) ||
+          buyerNameToMatch.toLowerCase().includes(cp.name.toLowerCase())
+        );
+      }
+    }
 
     // Match marketing contract
     const matchedContract = contractNumber
@@ -344,8 +375,36 @@ export async function previewTicketImport(farmId, csvText) {
 /**
  * Commit parsed tickets to the database. Upserts on farm_id + ticket_number.
  */
-export async function commitTicketImport(farmId, tickets) {
+export async function commitTicketImport(farmId, tickets, resolutions) {
   const results = { created: 0, updated: 0, errors: [] };
+
+  // Save commodity & counterparty alias mappings for future imports
+  if (resolutions) {
+    for (const [alias, res] of Object.entries(resolutions.commodityMap || {})) {
+      const targetId = res.action === 'map' ? res.targetId : res.createdId;
+      if (targetId && alias) {
+        try {
+          await prisma.commodityAlias.upsert({
+            where: { farm_id_alias: { farm_id: farmId, alias } },
+            update: { commodity_id: targetId },
+            create: { farm_id: farmId, alias, commodity_id: targetId, source: 'import' },
+          });
+        } catch { /* duplicate or missing — skip */ }
+      }
+    }
+    for (const [alias, res] of Object.entries(resolutions.counterpartyMap || {})) {
+      const targetId = res.action === 'map' ? res.targetId : res.createdId;
+      if (targetId && alias) {
+        try {
+          await prisma.counterpartyAlias.upsert({
+            where: { farm_id_alias: { farm_id: farmId, alias } },
+            update: { counterparty_id: targetId },
+            create: { farm_id: farmId, alias, counterparty_id: targetId, source: 'import' },
+          });
+        } catch { /* duplicate or missing — skip */ }
+      }
+    }
+  }
 
   for (const t of tickets) {
     try {
