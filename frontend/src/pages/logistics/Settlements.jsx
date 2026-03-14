@@ -22,6 +22,8 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import LocationOnIcon from '@mui/icons-material/LocationOn';
+import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import { useNavigate } from 'react-router-dom';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
@@ -85,9 +87,19 @@ export default function Settlements() {
   const [reconOpen, setReconOpen] = useState(false);
   const [reconData, setReconData] = useState(null);
   const [reconLoading, setReconLoading] = useState(false);
+  const [reconFrom, setReconFrom] = useState('');
+  const [reconTo, setReconTo] = useState('');
   const [selectedCount, setSelectedCount] = useState(0);
   const [contractsList, setContractsList] = useState([]);
   const [counterpartiesList, setCounterpartiesList] = useState([]);
+  const [farmUnitOpen, setFarmUnitOpen] = useState(false);
+  const [farmUnitData, setFarmUnitData] = useState(null);
+  const [farmUnitLoading, setFarmUnitLoading] = useState(false);
+  const [farmUnitFrom, setFarmUnitFrom] = useState('');
+  const [farmUnitTo, setFarmUnitTo] = useState('');
+  const [journalOpen, setJournalOpen] = useState(false);
+  const [journalData, setJournalData] = useState(null);
+  const [journalLoading, setJournalLoading] = useState(false);
   const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
   const fetchData = useCallback(() => {
@@ -212,18 +224,117 @@ export default function Settlements() {
     }
   };
 
-  const handleMonthlyRecon = async () => {
-    setReconOpen(true);
+  const fetchReconData = async (from, to) => {
     setReconLoading(true);
     try {
       const fy = fiscalYearFilter || new Date().getFullYear();
-      const res = await api.get(`/api/farms/${currentFarm.id}/settlements/reports/monthly-recon?fiscal_year=${fy}`);
+      const params = new URLSearchParams({ fiscal_year: fy });
+      if (from) params.append('start_date', from);
+      if (to) params.append('end_date', to);
+      const res = await api.get(`/api/farms/${currentFarm.id}/settlements/reports/monthly-recon?${params}`);
       setReconData(res.data);
     } catch (err) {
       setSnack({ open: true, message: extractErrorMessage(err, 'Failed to load reconciliation'), severity: 'error' });
-      setReconOpen(false);
     } finally {
       setReconLoading(false);
+    }
+  };
+
+  const handleMonthlyRecon = async () => {
+    setReconOpen(true);
+    setReconFrom('');
+    setReconTo('');
+    await fetchReconData('', '');
+  };
+
+  const buildFarmUnitParams = (from, to) => {
+    const fy = fiscalYearFilter || new Date().getFullYear();
+    const params = new URLSearchParams({ fiscal_year: fy });
+    if (from) params.append('start_date', from);
+    if (to) params.append('end_date', to);
+    return params;
+  };
+
+  const fetchFarmUnitData = async (from, to) => {
+    setFarmUnitLoading(true);
+    try {
+      const params = buildFarmUnitParams(from, to);
+      const res = await api.get(`/api/farms/${currentFarm.id}/settlements/reports/by-farm-unit?${params}`);
+      setFarmUnitData(res.data);
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to load farm unit report'), severity: 'error' });
+    } finally {
+      setFarmUnitLoading(false);
+    }
+  };
+
+  const handleFarmUnitReport = async () => {
+    setFarmUnitOpen(true);
+    setFarmUnitFrom('');
+    setFarmUnitTo('');
+    await fetchFarmUnitData('', '');
+  };
+
+  const downloadFarmUnitExcel = async () => {
+    try {
+      const params = buildFarmUnitParams(farmUnitFrom, farmUnitTo);
+      const res = await api.get(
+        `/api/farms/${currentFarm.id}/settlements/reports/by-farm-unit/excel?${params}`,
+        { responseType: 'blob' }
+      );
+      const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const fy = fiscalYearFilter || new Date().getFullYear();
+      a.download = `settlement-by-farm-unit-FY${fy}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to download Excel'), severity: 'error' });
+    }
+  };
+
+  const handleEnterpriseJournal = async () => {
+    setJournalOpen(true);
+    setJournalLoading(true);
+    try {
+      const fy = fiscalYearFilter || new Date().getFullYear();
+      const res = await api.get(`/api/farms/${currentFarm.id}/settlements/reports/enterprise-journal?fiscal_year=${fy}`);
+      setJournalData(res.data);
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to load enterprise journal'), severity: 'error' });
+      setJournalOpen(false);
+    } finally {
+      setJournalLoading(false);
+    }
+  };
+
+  const downloadJournal = async (format) => {
+    try {
+      const fy = fiscalYearFilter || new Date().getFullYear();
+      const ext = format === 'csv' ? 'csv' : format === 'excel' ? 'xlsx' : 'pdf';
+      const mime = format === 'csv' ? 'text/csv'
+        : format === 'excel' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'application/pdf';
+      const endpoint = format === 'csv' ? 'csv' : format === 'excel' ? 'excel' : 'pdf';
+      const res = await api.get(
+        `/api/farms/${currentFarm.id}/settlements/reports/enterprise-journal/${endpoint}?fiscal_year=${fy}`,
+        { responseType: 'blob' }
+      );
+      const blob = new Blob([res.data], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `enterprise-journal-FY${fy}-${new Date().toISOString().slice(0, 10)}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, `Failed to download ${format}`), severity: 'error' });
     }
   };
 
@@ -476,11 +587,23 @@ export default function Settlements() {
               Approve ({selectedCount})
             </Button>
           )}
-          <Button variant="outlined" color="warning" startIcon={<SummarizeIcon />} onClick={handleReconGapReport}>
-            Recon Gap Report
-          </Button>
-          <Button variant="outlined" color="info" startIcon={<CompareArrowsIcon />} onClick={handleMonthlyRecon}>
-            Monthly Recon
+          <Tooltip title="Missing tickets, settlements, or contracts — what needs attention">
+            <Button variant="outlined" color="warning" startIcon={<SummarizeIcon />} onClick={handleReconGapReport}>
+              Missing Items
+            </Button>
+          </Tooltip>
+          <Tooltip title="Compare shipped tonnage (tickets) vs settled tonnage (settlements) by commodity, buyer, and month">
+            <Button variant="outlined" color="info" startIcon={<CompareArrowsIcon />} onClick={handleMonthlyRecon}>
+              Shipped vs Settled
+            </Button>
+          </Tooltip>
+          <Tooltip title="Settlement breakdown by farm location — who shipped what from where">
+            <Button variant="outlined" color="secondary" startIcon={<LocationOnIcon />} onClick={handleFarmUnitReport}>
+              By Farm Unit
+            </Button>
+          </Tooltip>
+          <Button variant="outlined" sx={{ color: '#6d4c41', borderColor: '#6d4c41', '&:hover': { borderColor: '#4e342e', bgcolor: 'rgba(109,76,65,0.08)' } }} startIcon={<AccountBalanceIcon />} onClick={handleEnterpriseJournal}>
+            Enterprise Journal
           </Button>
           {canEdit && pendingCount > 0 && (
             <Button
@@ -788,12 +911,12 @@ export default function Settlements() {
         </DialogActions>
       </Dialog>
 
-      {/* Recon Gap Report Dialog */}
+      {/* Missing Items Report Dialog */}
       <Dialog open={gapOpen} onClose={() => setGapOpen(false)} maxWidth="lg" fullWidth>
         <DialogTitle>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
             <Stack direction="row" spacing={2} alignItems="center">
-              <span>Reconciliation Gap Report</span>
+              <span>Missing Items</span>
               <Typography variant="body2" color="text.secondary">
                 {fiscalYearFilter ? `FY${fiscalYearFilter}` : 'All Years'}{gapMonth ? ` — ${gapMonth}` : ''}
               </Typography>
@@ -1067,11 +1190,44 @@ export default function Settlements() {
       {/* Monthly Three-Way Reconciliation Dialog */}
       <Dialog open={reconOpen} onClose={() => { setReconOpen(false); setReconData(null); }} maxWidth="xl" fullWidth>
         <DialogTitle>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span>Monthly Reconciliation — Shipped vs Settled vs Inventory</span>
-            <Typography variant="body2" color="text.secondary">
-              {reconData?.period || ''}
-            </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+            <span>Shipped vs Settled — Tonnage Reconciliation</span>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <TextField
+                type="date"
+                size="small"
+                label="From"
+                value={reconFrom}
+                onChange={(e) => setReconFrom(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                sx={{ width: 160 }}
+              />
+              <TextField
+                type="date"
+                size="small"
+                label="To"
+                value={reconTo}
+                onChange={(e) => setReconTo(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                sx={{ width: 160 }}
+              />
+              <Button
+                size="small"
+                variant="contained"
+                onClick={() => fetchReconData(reconFrom, reconTo)}
+                disabled={reconLoading}
+              >
+                Apply
+              </Button>
+              {(reconFrom || reconTo) && (
+                <Button size="small" variant="text" onClick={() => { setReconFrom(''); setReconTo(''); fetchReconData('', ''); }}>
+                  Reset
+                </Button>
+              )}
+              <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+                {reconData?.period || ''}
+              </Typography>
+            </Stack>
           </Box>
         </DialogTitle>
         <DialogContent dividers>
@@ -1123,7 +1279,7 @@ export default function Settlements() {
                 Shipped vs Settled — by Commodity + Buyer
               </Typography>
               {reconData.detail.length === 0 ? (
-                <Alert severity="info" sx={{ mb: 2 }}>No delivery data found for this fiscal year.</Alert>
+                <Alert severity="info" sx={{ mb: 2 }}>No delivery data found for this period.</Alert>
               ) : (
                 <TableContainer component={Paper} variant="outlined" sx={{ mb: 3, maxHeight: 400 }}>
                   <Table size="small" stickyHeader>
@@ -1215,6 +1371,379 @@ export default function Settlements() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => { setReconOpen(false); setReconData(null); }}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Settlement by Farm Unit Report Dialog */}
+      <Dialog open={farmUnitOpen} onClose={() => { setFarmUnitOpen(false); setFarmUnitData(null); }} maxWidth="lg" fullWidth>
+        <DialogTitle>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+            <span>Settlement by Farm Unit</span>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <TextField
+                type="date"
+                size="small"
+                label="From"
+                value={farmUnitFrom}
+                onChange={(e) => setFarmUnitFrom(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                sx={{ width: 160 }}
+              />
+              <TextField
+                type="date"
+                size="small"
+                label="To"
+                value={farmUnitTo}
+                onChange={(e) => setFarmUnitTo(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                sx={{ width: 160 }}
+              />
+              <Button
+                size="small"
+                variant="contained"
+                onClick={() => fetchFarmUnitData(farmUnitFrom, farmUnitTo)}
+                disabled={farmUnitLoading}
+              >
+                Apply
+              </Button>
+              {(farmUnitFrom || farmUnitTo) && (
+                <Button size="small" variant="text" onClick={() => { setFarmUnitFrom(''); setFarmUnitTo(''); fetchFarmUnitData('', ''); }}>
+                  Reset
+                </Button>
+              )}
+              <Typography variant="body2" color="text.secondary">{farmUnitData?.period || ''}</Typography>
+              {farmUnitData && (
+                <Button size="small" variant="outlined" startIcon={<DownloadIcon />} onClick={downloadFarmUnitExcel}>
+                  Excel
+                </Button>
+              )}
+            </Stack>
+          </Box>
+        </DialogTitle>
+        <DialogContent dividers>
+          {farmUnitLoading && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+              <CircularProgress />
+            </Box>
+          )}
+          {farmUnitData && !farmUnitLoading && (
+            <>
+              {/* Summary cards */}
+              <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
+                <Card variant="outlined" sx={{ flex: 1, minWidth: 150 }}>
+                  <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                    <Typography variant="caption" color="text.secondary">Total Settled</Typography>
+                    <Typography variant="h6" fontWeight={700}>{fmt(farmUnitData.summary.total_settled_mt)} MT</Typography>
+                    <Typography variant="caption">{farmUnitData.summary.total_lines} lines</Typography>
+                  </CardContent>
+                </Card>
+                <Card variant="outlined" sx={{ flex: 1, minWidth: 150 }}>
+                  <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                    <Typography variant="caption" color="text.secondary">Total Revenue</Typography>
+                    <Typography variant="h6" fontWeight={700} color="success.main">{fmtDollar(farmUnitData.summary.total_settled_amount)}</Typography>
+                  </CardContent>
+                </Card>
+                <Card variant="outlined" sx={{ flex: 1, minWidth: 150 }}>
+                  <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                    <Typography variant="caption" color="text.secondary">Locations</Typography>
+                    <Typography variant="h6" fontWeight={700}>{farmUnitData.summary.locations}</Typography>
+                    <Typography variant="caption">{farmUnitData.summary.commodities.join(', ')}</Typography>
+                  </CardContent>
+                </Card>
+                {farmUnitData.summary.total_unsettled_mt > 0 && (
+                  <Card variant="outlined" sx={{ flex: 1, minWidth: 150 }}>
+                    <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                      <Typography variant="caption" color="text.secondary">Shipped, Not Settled</Typography>
+                      <Typography variant="h6" fontWeight={700} color="warning.main">{fmt(farmUnitData.summary.total_unsettled_mt)} MT</Typography>
+                      <Typography variant="caption">{farmUnitData.summary.total_unsettled_tickets} tickets</Typography>
+                    </CardContent>
+                  </Card>
+                )}
+              </Box>
+
+              {/* By Location summary */}
+              <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
+                Summary by Location
+              </Typography>
+              {farmUnitData.by_location.length === 0 ? (
+                <Alert severity="info" sx={{ mb: 2 }}>No approved settlements with matched tickets found for this fiscal year.</Alert>
+              ) : (
+                <TableContainer component={Paper} variant="outlined" sx={{ mb: 3 }}>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Location</TableCell>
+                        <TableCell align="right">Settled MT</TableCell>
+                        <TableCell align="right">Settled $</TableCell>
+                        <TableCell align="right">Lines</TableCell>
+                        <TableCell>Commodities</TableCell>
+                        <TableCell>Buyers</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {farmUnitData.by_location.map((r, i) => (
+                        <TableRow key={i} hover>
+                          <TableCell sx={{ fontWeight: 600 }}>{r.location}</TableCell>
+                          <TableCell align="right">{fmt(r.settled_mt)}</TableCell>
+                          <TableCell align="right">{fmtDollar(r.settled_amount)}</TableCell>
+                          <TableCell align="right">{r.line_count}</TableCell>
+                          <TableCell>{r.commodities.join(', ')}</TableCell>
+                          <TableCell>{r.buyers.join(', ')}</TableCell>
+                        </TableRow>
+                      ))}
+                      <TableRow sx={{ bgcolor: 'action.hover' }}>
+                        <TableCell sx={{ fontWeight: 700 }}>TOTAL</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{fmt(farmUnitData.summary.total_settled_mt)}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{fmtDollar(farmUnitData.summary.total_settled_amount)}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 700 }}>{farmUnitData.summary.total_lines}</TableCell>
+                        <TableCell />
+                        <TableCell />
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              )}
+
+              {/* Detail: Location + Commodity + Buyer */}
+              {farmUnitData.detail.length > 0 && (
+                <>
+                  <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
+                    Detail — Location + Commodity + Buyer
+                  </Typography>
+                  <TableContainer component={Paper} variant="outlined" sx={{ mb: 3, maxHeight: 400 }}>
+                    <Table size="small" stickyHeader>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Location</TableCell>
+                          <TableCell>Commodity</TableCell>
+                          <TableCell>Buyer</TableCell>
+                          <TableCell>Contract(s)</TableCell>
+                          <TableCell align="right">Settled MT</TableCell>
+                          <TableCell align="right">Settled $</TableCell>
+                          <TableCell align="right">Avg $/MT</TableCell>
+                          <TableCell align="right">Lines</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {farmUnitData.detail.map((r, i) => (
+                          <TableRow key={i} hover>
+                            <TableCell sx={{ fontWeight: 600 }}>{r.location}</TableCell>
+                            <TableCell>{r.commodity}</TableCell>
+                            <TableCell>{r.buyer}</TableCell>
+                            <TableCell>
+                              <Typography variant="caption">{r.contracts.join(', ') || '—'}</Typography>
+                            </TableCell>
+                            <TableCell align="right">{fmt(r.settled_mt)}</TableCell>
+                            <TableCell align="right">{fmtDollar(r.settled_amount)}</TableCell>
+                            <TableCell align="right">{r.avg_price_per_mt ? fmtDollar(r.avg_price_per_mt) : '—'}</TableCell>
+                            <TableCell align="right">{r.line_count}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </>
+              )}
+
+              {/* Unsettled tickets by location */}
+              {farmUnitData.unsettled.length > 0 && (
+                <>
+                  <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }} color="warning.main">
+                    Shipped, Not Yet Settled — by Location
+                  </Typography>
+                  <TableContainer component={Paper} variant="outlined">
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Location</TableCell>
+                          <TableCell>Commodity</TableCell>
+                          <TableCell align="right">Shipped MT</TableCell>
+                          <TableCell align="right">Tickets</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {farmUnitData.unsettled.map((r, i) => (
+                          <TableRow key={i} hover>
+                            <TableCell sx={{ fontWeight: 600 }}>{r.location}</TableCell>
+                            <TableCell>{r.commodity}</TableCell>
+                            <TableCell align="right">{fmt(r.shipped_mt)}</TableCell>
+                            <TableCell align="right">{r.ticket_count}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </>
+              )}
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { setFarmUnitOpen(false); setFarmUnitData(null); }}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Enterprise Settlement Journal Dialog */}
+      <Dialog open={journalOpen} onClose={() => { setJournalOpen(false); setJournalData(null); }} maxWidth="lg" fullWidth>
+        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Box>
+            <span>Enterprise Settlement Journal</span>
+            <Typography variant="caption" sx={{ ml: 2, color: 'text.secondary' }}>
+              {journalData?.period || ''}
+            </Typography>
+          </Box>
+          {journalData && (
+            <Stack direction="row" spacing={1}>
+              <Button size="small" variant="outlined" startIcon={<DownloadIcon />} onClick={() => downloadJournal('csv')}>
+                CSV (QBO)
+              </Button>
+              <Button size="small" variant="outlined" startIcon={<DownloadIcon />} onClick={() => downloadJournal('excel')}>
+                Excel
+              </Button>
+              <Button size="small" variant="outlined" color="error" startIcon={<PictureAsPdfIcon />} onClick={() => downloadJournal('pdf')}>
+                PDF
+              </Button>
+            </Stack>
+          )}
+        </DialogTitle>
+        <DialogContent dividers>
+          {journalLoading && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+              <CircularProgress />
+            </Box>
+          )}
+          {journalData && !journalLoading && (
+            <>
+              {/* Summary Cards */}
+              <Stack direction="row" spacing={2} sx={{ mb: 3 }} flexWrap="wrap" useFlexGap>
+                <Card variant="outlined" sx={{ minWidth: 140 }}>
+                  <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
+                    <Typography variant="caption" color="text.secondary">Gross Revenue</Typography>
+                    <Typography variant="h6" fontWeight={700}>{fmtDollar(journalData.summary.total_gross)}</Typography>
+                  </CardContent>
+                </Card>
+                <Card variant="outlined" sx={{ minWidth: 140 }}>
+                  <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
+                    <Typography variant="caption" color="text.secondary">Total Deductions</Typography>
+                    <Typography variant="h6" fontWeight={700} color="error.main">{fmtDollar(journalData.summary.total_deductions)}</Typography>
+                  </CardContent>
+                </Card>
+                <Card variant="outlined" sx={{ minWidth: 140 }}>
+                  <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
+                    <Typography variant="caption" color="text.secondary">Net Payable</Typography>
+                    <Typography variant="h6" fontWeight={700} color="success.main">{fmtDollar(journalData.summary.total_net)}</Typography>
+                  </CardContent>
+                </Card>
+                <Card variant="outlined" sx={{ minWidth: 140 }}>
+                  <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
+                    <Typography variant="caption" color="text.secondary">Settlements</Typography>
+                    <Typography variant="h6" fontWeight={700}>{journalData.summary.settlement_count}</Typography>
+                    <Typography variant="caption">{journalData.summary.buyer_count} buyers</Typography>
+                  </CardContent>
+                </Card>
+              </Stack>
+
+              {/* Deduction Categories Breakdown */}
+              {journalData.summary.deduction_categories?.length > 0 && (
+                <>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>Deduction Breakdown</Typography>
+                  <TableContainer component={Paper} variant="outlined" sx={{ mb: 3 }}>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Category</TableCell>
+                          <TableCell>QBO Account</TableCell>
+                          <TableCell align="right">Amount</TableCell>
+                          <TableCell align="right">GST</TableCell>
+                          <TableCell align="right">PST</TableCell>
+                          <TableCell align="right">Count</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {journalData.summary.deduction_categories.map((d, i) => (
+                          <TableRow key={i}>
+                            <TableCell sx={{ textTransform: 'capitalize' }}>{d.label}</TableCell>
+                            <TableCell><Typography variant="caption" color="text.secondary">{d.qbo_account}</Typography></TableCell>
+                            <TableCell align="right" sx={{ color: 'error.main' }}>{fmtDollar(d.total)}</TableCell>
+                            <TableCell align="right">{d.gst ? fmtDollar(d.gst) : '–'}</TableCell>
+                            <TableCell align="right">{d.pst ? fmtDollar(d.pst) : '–'}</TableCell>
+                            <TableCell align="right">{d.count}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </>
+              )}
+
+              {/* By Buyer */}
+              {journalData.by_buyer.map((buyer) => (
+                <Box key={buyer.buyer} sx={{ mb: 3 }}>
+                  <Box
+                    sx={{ display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer', mb: 1 }}
+                    onClick={() => toggleSection(`j_${buyer.buyer}`)}
+                  >
+                    {expandedSections[`j_${buyer.buyer}`] ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                    <Typography variant="subtitle1" fontWeight={700}>{buyer.buyer}</Typography>
+                    {buyer.short_code && <Chip label={buyer.short_code} size="small" />}
+                    <Typography variant="body2" color="text.secondary" sx={{ ml: 'auto' }}>
+                      {buyer.settlements.length} settlements · {fmtDollar(buyer.subtotal_gross)} gross · <strong>{fmtDollar(buyer.subtotal_net)}</strong> net
+                    </Typography>
+                  </Box>
+                  <Collapse in={expandedSections[`j_${buyer.buyer}`]}>
+                    <TableContainer component={Paper} variant="outlined">
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Settlement #</TableCell>
+                            <TableCell>Date</TableCell>
+                            <TableCell>Contract</TableCell>
+                            <TableCell>Commodity</TableCell>
+                            <TableCell align="right">Gross</TableCell>
+                            <TableCell align="right">Deductions</TableCell>
+                            <TableCell align="right">Net</TableCell>
+                            <TableCell>Locations</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {buyer.settlements.map((s) => (
+                            <TableRow key={s.id} hover>
+                              <TableCell>{s.settlement_number}</TableCell>
+                              <TableCell>{s.date ? new Date(s.date).toLocaleDateString() : '–'}</TableCell>
+                              <TableCell>{s.contract_number || '–'}</TableCell>
+                              <TableCell>{s.commodity || '–'}</TableCell>
+                              <TableCell align="right">{fmtDollar(s.gross)}</TableCell>
+                              <TableCell align="right" sx={{ color: 'error.main' }}>{fmtDollar(s.total_deductions)}</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 600 }}>{fmtDollar(s.net)}</TableCell>
+                              <TableCell>
+                                {s.locations.map((l, j) => (
+                                  <Chip key={j} label={`${l.name}: ${fmtDollar(l.amount)}`} size="small" sx={{ mr: 0.5, mb: 0.5 }} variant="outlined" />
+                                ))}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          <TableRow sx={{ bgcolor: 'action.hover' }}>
+                            <TableCell colSpan={4} sx={{ fontWeight: 700 }}>Subtotal — {buyer.buyer}</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 700 }}>{fmtDollar(buyer.subtotal_gross)}</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 700, color: 'error.main' }}>{fmtDollar(buyer.subtotal_gross - buyer.subtotal_net)}</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 700 }}>{fmtDollar(buyer.subtotal_net)}</TableCell>
+                            <TableCell />
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </Collapse>
+                </Box>
+              ))}
+
+              {journalData.by_buyer.length === 0 && (
+                <Alert severity="info">No approved settlements found for this fiscal year.</Alert>
+              )}
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { setJournalOpen(false); setJournalData(null); }}>Close</Button>
         </DialogActions>
       </Dialog>
 

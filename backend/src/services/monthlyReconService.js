@@ -14,10 +14,10 @@ function round2(v) { return Math.round((v || 0) * 100) / 100; }
  *
  * Grouped by commodity + buyer, month by month within a fiscal year.
  */
-export async function getMonthlyReconciliation(farmId, fiscalYear) {
+export async function getMonthlyReconciliation(farmId, fiscalYear, { startDate, endDate } = {}) {
   const fy = parseInt(fiscalYear, 10);
-  const fyStart = fiscalToCalendar(fy, 'Nov');
-  const fyEnd = new Date(fy, 10, 1); // Nov 1 of fiscal year (exclusive)
+  const fyStart = startDate ? new Date(startDate) : fiscalToCalendar(fy, 'Nov');
+  const fyEnd = endDate ? new Date(new Date(endDate).getTime() + 86400000) : new Date(fy, 10, 1); // endDate is inclusive
 
   log.info('Monthly reconciliation', { farmId, fiscalYear: fy });
 
@@ -253,9 +253,13 @@ export async function getMonthlyReconciliation(farmId, fiscalYear) {
     warning_count: rows.filter(r => r.flag === 'warning').length,
   };
 
+  const periodLabel = startDate || endDate
+    ? `${fyStart.toLocaleDateString('en-CA')} – ${new Date(fyEnd.getTime() - 86400000).toLocaleDateString('en-CA')}`
+    : `Nov ${fy - 1} – Oct ${fy}`;
+
   return {
     fiscal_year: fy,
-    period: `Nov ${fy - 1} – Oct ${fy}`,
+    period: periodLabel,
     detail: rows,
     inventory_summary: inventorySummary,
     totals,

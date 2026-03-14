@@ -678,6 +678,8 @@ model Settlement {
   settlement_number     String
   settlement_date       DateTime?          @db.Date
   total_amount          Float?
+  settlement_gross      Float?             // total gross before deductions
+  deductions_summary    Json?              // [{name, amount, gst, pst, category}]
   currency              String             @default("CAD")
   status                String             @default("pending") // pending, reconciled, disputed, approved
   buyer_format          String?            // cargill, bunge, jgl, unknown

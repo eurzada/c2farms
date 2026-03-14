@@ -15,6 +15,8 @@ const EXTRACTION_PROMPTS = {
   "commodity": "string (look for the grain/commodity name — e.g. 'Canola', 'CWRS', 'Durum Wheat', 'Barley'. Check the first page summary, contract breakdown section, or product/grain column)",
   "total_gross_amount": number,
   "total_net_amount": number,
+  "settlement_gross": number or null (same as total_gross_amount — the total gross payable BEFORE all deductions),
+  "deductions_summary": [{"name": "string", "amount": number (negative for deductions), "gst": number or null, "pst": number or null, "category": "checkoff|drying|quality|freight|storage|commission|levy|premium|other"}],
   "currency": "CAD",
   "lines": [
     {
@@ -41,7 +43,9 @@ IMPORTANT: Look carefully for the contract number and commodity:
 - Commodity/grain type appears in the settlement summary or header (e.g. "Canola", "1 CWRS", "Durum", "Barley"). Also check the "Product" or "Grain" fields.
 - If there are multiple contracts in one settlement, use the primary/most common contract number for the top-level field and include per-line contract_number.
 
-Look for Settlement Details tables with per-ticket rows. IMPORTANT: Cargill settlements may show multiple numbers per ticket line — a Unit# (Cargill's internal receipt number) and potentially a weigh scale number. The ticket_number should be the WEIGH SCALE number (the smaller number that the trucker receives at the scale), NOT Cargill's large internal Unit#. If only one number is available per line, use that. Extract ALL ticket rows even across multiple pages. Return ONLY valid JSON, no extra text.`,
+Look for Settlement Details tables with per-ticket rows. IMPORTANT: Cargill settlements may show multiple numbers per ticket line — a Unit# (Cargill's internal receipt number) and potentially a weigh scale number. The ticket_number should be the WEIGH SCALE number (the smaller number that the trucker receives at the scale), NOT Cargill's large internal Unit#. If only one number is available per line, use that. Extract ALL ticket rows even across multiple pages.
+
+DEDUCTIONS: On page 1, look for the Settlement Summary section which shows Gross Payable, then line items like "Drying discount", "Saskatchewan Wheat Development Commission", "Drying Adjustment", and "Net Payable". Extract these into deductions_summary with appropriate categories (drying, checkoff/levy, quality, etc.). settlement_gross = Gross Payable. Return ONLY valid JSON, no extra text.`,
 
   bunge: `You are extracting data from a Bunge grain settlement PDF ("Settlement Advice"). Extract ALL of the following into structured JSON:
 
@@ -53,6 +57,8 @@ Look for Settlement Details tables with per-ticket rows. IMPORTANT: Cargill sett
   "commodity": "string (e.g. 'Yellow Peas', 'Canola', from the Primary Elevator Receipt Summary)",
   "total_gross_amount": number,
   "total_net_amount": number (the Net Payable amount),
+  "settlement_gross": number or null (the Gross Payable amount BEFORE adjustments),
+  "deductions_summary": [{"name": "string", "amount": number (negative for deductions), "gst": number or null, "pst": number or null, "category": "checkoff|drying|quality|freight|storage|commission|levy|premium|other"}],
   "currency": "CAD",
   "lines": [
     {
@@ -85,6 +91,8 @@ The detail pages have TWO rows per ticket and these columns:
 - **BOL or Car #** (second column, row 2): The trucker's WEIGH SCALE ticket number (e.g. 91131). USE THIS as the ticket_number field.
 - The BOL or Car # matches the "From Ticket #" / "To Ticket #" in the trucker's Traction Ag CSV export.
 
+DEDUCTIONS: Look for "Property Pricing Details" and "Adjustment Details" sections. These show deductions like PROPERTY PRICING (category: quality), SASK. PULSE LEVY or other crop levies (category: levy), with Tax column for GST. Extract into deductions_summary. settlement_gross = Gross Payable.
+
 Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.`,
 
   jgl: `You are extracting data from a JGL Commodities grain settlement document. This may be a photographed/scanned document that could be rotated. Extract ALL of the following into structured JSON:
@@ -97,6 +105,8 @@ Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.
   "commodity": "string",
   "total_gross_amount": number,
   "total_net_amount": number,
+  "settlement_gross": number or null (Total Gross from the Deduction Summary — BEFORE charges/levies),
+  "deductions_summary": [{"name": "string", "amount": number (negative for deductions), "gst": number or null, "pst": number or null, "category": "checkoff|drying|quality|freight|storage|commission|levy|premium|other"}],
   "currency": "CAD",
   "lines": [
     {
@@ -116,7 +126,9 @@ Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.
   ]
 }
 
-JGL documents show: ID, Contract#, Commodity, Settlement No, per-ticket rows with Ticket No, Vehicle Id, Date, Origin/CGC, MT Applied, Grade, DO. Also look for deduction summaries (Checkoff Levy, Drying, Quality discounts, Freight). IMPORTANT: If the document shows multiple ticket/reference numbers per line, use the weigh scale number (the one matching the trucker's scale ticket) as the ticket_number. Return ONLY valid JSON, no extra text.`,
+JGL documents show: ID, Contract#, Commodity, Settlement No, per-ticket rows with Ticket No, Vehicle Id, Date, Origin/CGC, MT Applied, Grade, DO. Also look for deduction summaries (Checkoff Levy, Drying, Quality discounts, Freight). IMPORTANT: If the document shows multiple ticket/reference numbers per line, use the weigh scale number (the one matching the trucker's scale ticket) as the ticket_number.
+
+DEDUCTIONS: Look for "Deduction Summary" section (usually last page). It shows: Total Gross, Total Discounts (Quality, Drying, Stor./DP), Total Charges (SWDC7 = checkoff levy), Freight, Other, GST. Extract into deductions_summary. settlement_gross = Total Gross. Category mapping: SWDC7/Checkoff=checkoff, Drying=drying, Quality=quality, Freight=freight, Stor./DP=storage. Return ONLY valid JSON, no extra text.`,
 
   gsl: `You are extracting data from a GSL (Grain St-Laurent Inc.) grain settlement PDF. This is a bilingual English/French document. Extract ALL of the following into structured JSON:
 
@@ -128,6 +140,8 @@ JGL documents show: ID, Contract#, Commodity, Settlement No, per-ticket rows wit
   "commodity": "string (from individual ticket 'Product / Produit' field, e.g. 'Wheat (Milling)' or 'Spring Wheat')",
   "total_gross_amount": number or null,
   "total_net_amount": number (the 'Total Amount Due / Montant total dû'),
+  "settlement_gross": number or null (total gross before deductions/levies),
+  "deductions_summary": [{"name": "string", "amount": number (negative for deductions), "gst": number or null, "pst": number or null, "category": "checkoff|drying|quality|freight|storage|commission|levy|premium|other"}],
   "currency": "CAD",
   "lines": [
     {
@@ -179,6 +193,8 @@ You can extract line data from EITHER the summary table (quick but less detail) 
   "station": "string or null (delivery station name, e.g. 'CROOKED RIVER HT')",
   "total_gross_amount": number (the TOTALS row Gross Amount, or sum of all line Gross Amounts),
   "total_net_amount": number (the NET SETTLEMENT AMT),
+  "settlement_gross": number or null (the TOTALS row Gross Amount — gross before Adjustment deductions),
+  "deductions_summary": [{"name": "string", "amount": number (negative for deductions), "gst": number or null, "pst": number or null, "category": "checkoff|drying|quality|freight|storage|commission|levy|premium|other"}],
   "currency": "CAD",
   "lines": [
     {
@@ -217,7 +233,9 @@ CRITICAL RULE: The ticket_number MUST be the Weigh # — the SHORT number (5-6 d
 - Examples of CORRECT ticket_number values: "245389", "245328", "121907", "121926"
 - Examples of WRONG ticket_number values: "169175034" (Load #), "169305054" (Station/Receipt #)
 
-Also extract: Grade, Moist/Dock/Prot %, Unload/Clean/Net Weight (all in MT), Base Price, Gross Amount. Below each ticket row are per-ticket Adjustments (DRYING, QUALITY SPREAD ADJ, SK WHT CHK OFF, SASK CANOLA DEV COMM, etc.) — extract these as deductions with their dollar amounts. The last page has TOTALS and a summary Adjustment table with NET SETTLEMENT AMT. Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.`,
+Also extract: Grade, Moist/Dock/Prot %, Unload/Clean/Net Weight (all in MT), Base Price, Gross Amount. Below each ticket row are per-ticket Adjustments (DRYING, QUALITY SPREAD ADJ, SK WHT CHK OFF, SASK CANOLA DEV COMM, etc.) — extract these as deductions with their dollar amounts.
+
+DEDUCTIONS: The last page has a TOTALS row and an Adjustment/Remarks summary table showing deduction names (e.g. "SASK CANOLA DEV COMM", "SK WHT CHK OFF", "DRYING"), PST, GST flags (Y/N), and total Amount. Extract these into deductions_summary. Category mapping: CANOLA DEV COMM/SK WHT CHK OFF=checkoff, DRYING=drying, QUALITY SPREAD=quality. settlement_gross = TOTALS Gross Amount. Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.`,
 
   unknown: `You are extracting data from a grain settlement PDF. The buyer format is unknown. Extract ALL of the following into structured JSON:
 
@@ -229,6 +247,8 @@ Also extract: Grade, Moist/Dock/Prot %, Unload/Clean/Net Weight (all in MT), Bas
   "commodity": "string",
   "total_gross_amount": number or null,
   "total_net_amount": number or null,
+  "settlement_gross": number or null (total gross before all deductions),
+  "deductions_summary": [{"name": "string", "amount": number (negative for deductions), "gst": number or null, "pst": number or null, "category": "checkoff|drying|quality|freight|storage|commission|levy|premium|other"}],
   "currency": "CAD",
   "lines": [
     {
@@ -247,7 +267,7 @@ Also extract: Grade, Moist/Dock/Prot %, Unload/Clean/Net Weight (all in MT), Bas
   ]
 }
 
-Extract as much data as possible. Look for settlement/purchase number, dates, per-ticket or per-load detail rows, weights (convert kg to MT if needed), pricing, deductions. Return ONLY valid JSON, no extra text.`,
+Extract as much data as possible. Look for settlement/purchase number, dates, per-ticket or per-load detail rows, weights (convert kg to MT if needed), pricing. Look for a deduction/adjustment summary section (often near the bottom or last page) showing levies, checkoffs, drying charges, quality discounts, freight, GST/PST, and net settlement amount. Extract these into deductions_summary. Return ONLY valid JSON, no extra text.`,
 };
 
 /**
@@ -514,6 +534,8 @@ export async function saveSettlement(farmId, extraction, buyerFormat, { pdfUrl =
       settlement_number: extraction.settlement_number || `UNK-${Date.now()}`,
       settlement_date: extraction.settlement_date ? new Date(extraction.settlement_date) : null,
       total_amount: extraction.total_net_amount || extraction.total_gross_amount || null,
+      settlement_gross: extraction.settlement_gross || extraction.total_gross_amount || null,
+      deductions_summary: extraction.deductions_summary || null,
       currency: extraction.currency || 'CAD',
       status: 'pending',
       buyer_format: buyerFormat,
@@ -796,6 +818,8 @@ async function processBatchResults(aiBatch) {
             settlement_number: extraction.settlement_number || settlement.settlement_number,
             settlement_date: extraction.settlement_date ? new Date(extraction.settlement_date) : null,
             total_amount: extraction.total_net_amount || extraction.total_gross_amount || null,
+            settlement_gross: extraction.settlement_gross || extraction.total_gross_amount || null,
+            deductions_summary: extraction.deductions_summary || null,
             counterparty_id: counterpartyId,
             marketing_contract_id: contractId,
             extraction_json: extraction,

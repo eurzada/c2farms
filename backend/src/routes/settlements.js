@@ -8,6 +8,8 @@ import { reconcileSettlement, manualMatch, approveSettlement } from '../services
 import { generateExceptionExcel, generateExceptionPdf } from '../services/settlementExportService.js';
 import { generateReconGapData, generateReconGapExcel, generateReconGapPdf, generateReconGapCsv } from '../services/reconGapReportService.js';
 import { getMonthlyReconciliation } from '../services/monthlyReconService.js';
+import { getSettlementsByFarmUnit, generateFarmUnitExcel } from '../services/farmUnitReportService.js';
+import { getEnterpriseJournal, generateEnterpriseJournalCsv, generateEnterpriseJournalExcel, generateEnterpriseJournalPdf } from '../services/enterpriseJournalService.js';
 import { logAudit } from '../services/auditService.js';
 import { broadcastMarketingEvent } from '../socket/handler.js';
 import { getFontPaths } from '../utils/fontPaths.js';
@@ -190,8 +192,87 @@ router.get('/:farmId/settlements/reports/recon-gaps/csv', authenticate, async (r
 router.get('/:farmId/settlements/reports/monthly-recon', authenticate, async (req, res, next) => {
   try {
     const fiscalYear = req.query.fiscal_year || new Date().getFullYear();
-    const data = await getMonthlyReconciliation(req.params.farmId, fiscalYear);
+    const opts = {};
+    if (req.query.start_date) opts.startDate = req.query.start_date;
+    if (req.query.end_date) opts.endDate = req.query.end_date;
+    const data = await getMonthlyReconciliation(req.params.farmId, fiscalYear, opts);
     res.json(data);
+  } catch (err) { next(err); }
+});
+
+// GET settlement by farm unit report — JSON
+router.get('/:farmId/settlements/reports/by-farm-unit', authenticate, async (req, res, next) => {
+  try {
+    const fiscalYear = req.query.fiscal_year || new Date().getFullYear();
+    const opts = {};
+    if (req.query.start_date) opts.startDate = req.query.start_date;
+    if (req.query.end_date) opts.endDate = req.query.end_date;
+    const data = await getSettlementsByFarmUnit(req.params.farmId, fiscalYear, opts);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+// GET settlement by farm unit report — Excel download
+router.get('/:farmId/settlements/reports/by-farm-unit/excel', authenticate, async (req, res, next) => {
+  try {
+    const fiscalYear = req.query.fiscal_year || new Date().getFullYear();
+    const opts = {};
+    if (req.query.start_date) opts.startDate = req.query.start_date;
+    if (req.query.end_date) opts.endDate = req.query.end_date;
+    const wb = await generateFarmUnitExcel(req.params.farmId, fiscalYear, opts);
+    const filename = `settlement-by-farm-unit-FY${fiscalYear}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) { next(err); }
+});
+
+// GET enterprise journal report — JSON
+router.get('/:farmId/settlements/reports/enterprise-journal', authenticate, async (req, res, next) => {
+  try {
+    const fiscalYear = req.query.fiscal_year || new Date().getFullYear();
+    const data = await getEnterpriseJournal(req.params.farmId, fiscalYear);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+// GET enterprise journal report — CSV (QBO-importable)
+router.get('/:farmId/settlements/reports/enterprise-journal/csv', authenticate, async (req, res, next) => {
+  try {
+    const fiscalYear = req.query.fiscal_year || new Date().getFullYear();
+    const csv = await generateEnterpriseJournalCsv(req.params.farmId, fiscalYear);
+    const filename = `enterprise-journal-FY${fiscalYear}-${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  } catch (err) { next(err); }
+});
+
+// GET enterprise journal report — Excel
+router.get('/:farmId/settlements/reports/enterprise-journal/excel', authenticate, async (req, res, next) => {
+  try {
+    const fiscalYear = req.query.fiscal_year || new Date().getFullYear();
+    const wb = await generateEnterpriseJournalExcel(req.params.farmId, fiscalYear);
+    const filename = `enterprise-journal-FY${fiscalYear}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) { next(err); }
+});
+
+// GET enterprise journal report — PDF
+router.get('/:farmId/settlements/reports/enterprise-journal/pdf', authenticate, async (req, res, next) => {
+  try {
+    const fiscalYear = req.query.fiscal_year || new Date().getFullYear();
+    const docDefinition = await generateEnterpriseJournalPdf(req.params.farmId, fiscalYear);
+    const pdfDoc = printer.createPdfKitDocument(docDefinition);
+    const filename = `enterprise-journal-FY${fiscalYear}-${new Date().toISOString().slice(0, 10)}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    pdfDoc.pipe(res);
+    pdfDoc.end();
   } catch (err) { next(err); }
 });
 

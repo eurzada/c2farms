@@ -344,12 +344,11 @@ export default function Tickets() {
             sx={{ minWidth: 120 }}
           >
             <MenuItem value="">All Years</MenuItem>
-            <MenuItem value="2022">FY2022 (Nov 20 – Oct 21)</MenuItem>
-            <MenuItem value="2023">FY2023 (Nov 21 – Oct 22)</MenuItem>
-            <MenuItem value="2024">FY2024 (Nov 22 – Oct 23)</MenuItem>
-            <MenuItem value="2025">FY2025 (Nov 23 – Oct 24)</MenuItem>
-            <MenuItem value="2026">FY2026 (Nov 24 – Oct 25)</MenuItem>
-            <MenuItem value="2027">FY2027 (Nov 25 – Oct 26)</MenuItem>
+            {[2022, 2023, 2024, 2025, 2026, 2027].map(fy => (
+              <MenuItem key={fy} value={String(fy)}>
+                FY{fy} (Nov {String(fy - 1).slice(-2)} – Oct {String(fy).slice(-2)})
+              </MenuItem>
+            ))}
           </TextField>
           <TextField
             select
