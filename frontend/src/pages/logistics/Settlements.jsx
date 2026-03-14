@@ -1636,9 +1636,21 @@ export default function Settlements() {
                 </Card>
                 <Card variant="outlined" sx={{ minWidth: 140 }}>
                   <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
-                    <Typography variant="caption" color="text.secondary">Settlements</Typography>
-                    <Typography variant="h6" fontWeight={700}>{journalData.summary.settlement_count}</Typography>
-                    <Typography variant="caption">{journalData.summary.buyer_count} buyers</Typography>
+                    <Typography variant="caption" color="text.secondary">Total MT</Typography>
+                    <Typography variant="h6" fontWeight={700}>{fmt(journalData.summary.total_mt)}</Typography>
+                    <Typography variant="caption">{journalData.summary.settlement_count} settlements</Typography>
+                  </CardContent>
+                </Card>
+                <Card variant="outlined" sx={{ minWidth: 140 }}>
+                  <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
+                    <Typography variant="caption" color="text.secondary">Avg Gross $/MT</Typography>
+                    <Typography variant="h6" fontWeight={700}>{journalData.summary.gross_per_mt ? fmtDollar(journalData.summary.gross_per_mt) : '–'}</Typography>
+                  </CardContent>
+                </Card>
+                <Card variant="outlined" sx={{ minWidth: 140 }}>
+                  <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
+                    <Typography variant="caption" color="text.secondary">Avg Net $/MT</Typography>
+                    <Typography variant="h6" fontWeight={700} color="success.main">{journalData.summary.price_per_mt ? fmtDollar(journalData.summary.price_per_mt) : '–'}</Typography>
                   </CardContent>
                 </Card>
               </Stack>
@@ -1687,7 +1699,7 @@ export default function Settlements() {
                     <Typography variant="subtitle1" fontWeight={700}>{buyer.buyer}</Typography>
                     {buyer.short_code && <Chip label={buyer.short_code} size="small" />}
                     <Typography variant="body2" color="text.secondary" sx={{ ml: 'auto' }}>
-                      {buyer.settlements.length} settlements · {fmtDollar(buyer.subtotal_gross)} gross · <strong>{fmtDollar(buyer.subtotal_net)}</strong> net
+                      {buyer.settlements.length} settlements · {fmt(buyer.subtotal_mt)} MT · {fmtDollar(buyer.subtotal_gross)} gross · <strong>{fmtDollar(buyer.subtotal_net)}</strong> net{buyer.subtotal_price_per_mt ? ` · ${fmtDollar(buyer.subtotal_price_per_mt)}/MT` : ''}
                     </Typography>
                   </Box>
                   <Collapse in={expandedSections[`j_${buyer.buyer}`]}>
@@ -1699,35 +1711,61 @@ export default function Settlements() {
                             <TableCell>Date</TableCell>
                             <TableCell>Contract</TableCell>
                             <TableCell>Commodity</TableCell>
+                            <TableCell>Location</TableCell>
+                            <TableCell align="right">MT</TableCell>
+                            <TableCell align="right">Share</TableCell>
                             <TableCell align="right">Gross</TableCell>
                             <TableCell align="right">Deductions</TableCell>
                             <TableCell align="right">Net</TableCell>
-                            <TableCell>Locations</TableCell>
+                            <TableCell align="right">$/MT</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {buyer.settlements.map((s) => (
-                            <TableRow key={s.id} hover>
-                              <TableCell>{s.settlement_number}</TableCell>
-                              <TableCell>{s.date ? new Date(s.date).toLocaleDateString() : '–'}</TableCell>
-                              <TableCell>{s.contract_number || '–'}</TableCell>
-                              <TableCell>{s.commodity || '–'}</TableCell>
-                              <TableCell align="right">{fmtDollar(s.gross)}</TableCell>
-                              <TableCell align="right" sx={{ color: 'error.main' }}>{fmtDollar(s.total_deductions)}</TableCell>
-                              <TableCell align="right" sx={{ fontWeight: 600 }}>{fmtDollar(s.net)}</TableCell>
-                              <TableCell>
-                                {s.locations.map((l, j) => (
-                                  <Chip key={j} label={`${l.name}: ${fmtDollar(l.amount)}`} size="small" sx={{ mr: 0.5, mb: 0.5 }} variant="outlined" />
-                                ))}
-                              </TableCell>
-                            </TableRow>
-                          ))}
+                          {buyer.settlements.map((s) => {
+                            const allocs = s.location_allocation || [];
+                            if (allocs.length === 0) {
+                              return (
+                                <TableRow key={s.id} hover>
+                                  <TableCell>{s.settlement_number}{s.is_transfer ? ' [T]' : ''}</TableCell>
+                                  <TableCell>{s.date ? new Date(s.date).toLocaleDateString() : '–'}</TableCell>
+                                  <TableCell>{s.contract_number || '–'}</TableCell>
+                                  <TableCell>{s.commodity || '–'}</TableCell>
+                                  <TableCell sx={{ color: 'text.secondary', fontStyle: 'italic' }}>Unmatched</TableCell>
+                                  <TableCell align="right">{s.total_mt ? fmt(s.total_mt) : '–'}</TableCell>
+                                  <TableCell />
+                                  <TableCell align="right">{fmtDollar(s.gross)}</TableCell>
+                                  <TableCell align="right" sx={{ color: 'error.main' }}>{fmtDollar(s.total_deductions)}</TableCell>
+                                  <TableCell align="right" sx={{ fontWeight: 600 }}>{fmtDollar(s.net)}</TableCell>
+                                  <TableCell align="right" sx={{ fontWeight: 600 }}>{s.price_per_mt ? fmtDollar(s.price_per_mt) : '–'}</TableCell>
+                                </TableRow>
+                              );
+                            }
+                            return allocs.map((loc, i) => (
+                              <TableRow key={`${s.id}-${loc.location}`} hover>
+                                <TableCell>{i === 0 ? `${s.settlement_number}${s.is_transfer ? ' [T]' : ''}` : ''}</TableCell>
+                                <TableCell>{i === 0 ? (s.date ? new Date(s.date).toLocaleDateString() : '–') : ''}</TableCell>
+                                <TableCell>{i === 0 ? (s.contract_number || '–') : ''}</TableCell>
+                                <TableCell>{i === 0 ? (s.commodity || '–') : ''}</TableCell>
+                                <TableCell>
+                                  <Chip label={loc.location} size="small" variant="outlined" icon={<LocationOnIcon />} />
+                                </TableCell>
+                                <TableCell align="right">{loc.mt.toLocaleString('en-CA', { minimumFractionDigits: 2 })}</TableCell>
+                                <TableCell align="right" sx={{ color: 'text.secondary' }}>{loc.share}%</TableCell>
+                                <TableCell align="right">{fmtDollar(loc.gross)}</TableCell>
+                                <TableCell align="right" sx={{ color: 'error.main' }}>{fmtDollar(loc.total_deductions)}</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 600 }}>{fmtDollar(loc.net)}</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 600 }}>{loc.price_per_mt ? fmtDollar(loc.price_per_mt) : '–'}</TableCell>
+                              </TableRow>
+                            ));
+                          })}
                           <TableRow sx={{ bgcolor: 'action.hover' }}>
-                            <TableCell colSpan={4} sx={{ fontWeight: 700 }}>Subtotal — {buyer.buyer}</TableCell>
+                            <TableCell colSpan={5} sx={{ fontWeight: 700 }}>Subtotal — {buyer.buyer}</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 700 }}>{fmt(buyer.subtotal_mt)}</TableCell>
+                            <TableCell />
                             <TableCell align="right" sx={{ fontWeight: 700 }}>{fmtDollar(buyer.subtotal_gross)}</TableCell>
                             <TableCell align="right" sx={{ fontWeight: 700, color: 'error.main' }}>{fmtDollar(buyer.subtotal_gross - buyer.subtotal_net)}</TableCell>
                             <TableCell align="right" sx={{ fontWeight: 700 }}>{fmtDollar(buyer.subtotal_net)}</TableCell>
-                            <TableCell />
+                            <TableCell align="right" sx={{ fontWeight: 700 }}>{buyer.subtotal_price_per_mt ? fmtDollar(buyer.subtotal_price_per_mt) : '–'}</TableCell>
                           </TableRow>
                         </TableBody>
                       </Table>

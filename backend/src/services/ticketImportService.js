@@ -97,9 +97,9 @@ export function parseFromField(fromValue) {
  */
 export function parseGradeFromFromField(afterDash) {
   if (!afterDash) return null;
-  // Prefer "Commodity #N" pattern (Durum #1, Durum #3, CWRS #2, Canola #1, etc.)
-  const gradeNumMatch = afterDash.match(/([A-Za-z]+)\s*#\s*(\d+)/);
-  if (gradeNumMatch) return `${gradeNumMatch[1]} #${gradeNumMatch[2]}`.trim();
+  // Prefer "Commodity #N" pattern (Durum #1, Spring Wheat #1, CWRS #2, Canola #1, etc.)
+  const gradeNumMatch = afterDash.match(/([A-Za-z][A-Za-z ]*?)\s*#\s*(\d+)/);
+  if (gradeNumMatch) return `${gradeNumMatch[1].trim()} #${gradeNumMatch[2]}`;
   // Fallback 1: commodity name before "2025 crop" or " crop" (e.g. "Canola 2025 crop")
   const beforeCrop = afterDash.match(/^(.+?)\s+(?:\d{4}\s+)?crop/i);
   if (beforeCrop) {
@@ -286,11 +286,14 @@ export async function previewTicketImport(farmId, csvText) {
       }
     }
 
-    // Match location
+    // Match location — exact name/code, or location name contained in parsed "From" name
+    // Traction Ag "From" can be "C2 - Ridgedale: ..." where location is just "Ridgedale"
     const matchedLocation = locationName
       ? locations.find(l =>
           l.name.toLowerCase() === locationName.toLowerCase() ||
           l.code.toLowerCase() === locationName.toLowerCase()
+        ) || locations.find(l =>
+          locationName.toLowerCase().includes(l.name.toLowerCase())
         )
       : null;
 
