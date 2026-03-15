@@ -4,14 +4,21 @@ import { DEFAULT_CATEGORIES, generateCropRevenueCategories, DEFAULT_GL_ACCOUNTS 
 // Simple in-memory cache: farmId -> { categories, expiresAt }
 const cache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CACHE_MAX_SIZE = 100; // max farms cached
 
 function getCached(farmId) {
   const entry = cache.get(farmId);
   if (entry && entry.expiresAt > Date.now()) return entry.categories;
+  if (entry) cache.delete(farmId); // expired — clean up
   return null;
 }
 
 function setCache(farmId, categories) {
+  // Evict oldest entry if at capacity
+  if (!cache.has(farmId) && cache.size >= CACHE_MAX_SIZE) {
+    const oldestKey = cache.keys().next().value;
+    cache.delete(oldestKey);
+  }
   cache.set(farmId, { categories, expiresAt: Date.now() + CACHE_TTL });
 }
 

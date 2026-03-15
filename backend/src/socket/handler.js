@@ -39,17 +39,22 @@ export function setupSocketHandlers(io) {
       next();
     });
 
+    // Shared helper: verify farm access and join a room
+    async function verifyAndJoinRoom(farmId, roomPrefix) {
+      const role = await prisma.userFarmRole.findUnique({
+        where: { user_id_farm_id: { user_id: socket.userId, farm_id: farmId } },
+      });
+      if (!role) {
+        socket.emit('error', { message: 'Access denied to this farm' });
+        return false;
+      }
+      socket.join(`${roomPrefix}:${farmId}`);
+      return true;
+    }
+
     socket.on('join-farm', async (farmId) => {
-      // Verify user has access to this farm
       try {
-        const role = await prisma.userFarmRole.findUnique({
-          where: { user_id_farm_id: { user_id: socket.userId, farm_id: farmId } },
-        });
-        if (!role) {
-          socket.emit('error', { message: 'Access denied to this farm' });
-          return;
-        }
-        socket.join(`farm:${farmId}`);
+        await verifyAndJoinRoom(farmId, 'farm');
       } catch {
         socket.emit('error', { message: 'Failed to verify farm access' });
       }
@@ -59,17 +64,9 @@ export function setupSocketHandlers(io) {
       socket.leave(`farm:${farmId}`);
     });
 
-    // AI event subscription
     socket.on('join-farm-ai', async (farmId) => {
       try {
-        const role = await prisma.userFarmRole.findUnique({
-          where: { user_id_farm_id: { user_id: socket.userId, farm_id: farmId } },
-        });
-        if (!role) {
-          socket.emit('error', { message: 'Access denied to this farm' });
-          return;
-        }
-        socket.join(`farm-ai:${farmId}`);
+        await verifyAndJoinRoom(farmId, 'farm-ai');
       } catch {
         socket.emit('error', { message: 'Failed to join AI events' });
       }
@@ -79,17 +76,9 @@ export function setupSocketHandlers(io) {
       socket.leave(`farm-ai:${farmId}`);
     });
 
-    // Marketing event subscription
     socket.on('join-farm-marketing', async (farmId) => {
       try {
-        const role = await prisma.userFarmRole.findUnique({
-          where: { user_id_farm_id: { user_id: socket.userId, farm_id: farmId } },
-        });
-        if (!role) {
-          socket.emit('error', { message: 'Access denied to this farm' });
-          return;
-        }
-        socket.join(`farm-marketing:${farmId}`);
+        await verifyAndJoinRoom(farmId, 'farm-marketing');
       } catch {
         socket.emit('error', { message: 'Failed to join marketing events' });
       }

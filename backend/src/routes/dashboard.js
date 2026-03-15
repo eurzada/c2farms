@@ -16,7 +16,7 @@ router.get('/:farmId/dashboard/:year', authenticate, async (req, res, next) => {
       where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: fiscalYear } },
     });
 
-    const totalAcres = assumption?.total_acres || 1;
+    const totalAcres = assumption?.total_acres ?? 0;
     const crops = assumption?.crops_json || [];
 
     // Get accounting data aggregated
@@ -46,7 +46,7 @@ router.get('/:farmId/dashboard/:year', authenticate, async (req, res, next) => {
     const totalLbf = agg['lbf'] || agg['fixed_costs'] || 0;
     const totalInsurance = agg['insurance'] || 0;
     const totalExpense = totalInputs + totalLpm + totalLbf + totalInsurance;
-    const expensePerAcre = totalExpense / totalAcres;
+    const expensePerAcre = totalAcres > 0 ? totalExpense / totalAcres : 0;
 
     // Inputs adherence: compare actual inputs to frozen budget inputs
     const inputsAdherence = frozenInputsTotal > 0
@@ -55,7 +55,7 @@ router.get('/:farmId/dashboard/:year', authenticate, async (req, res, next) => {
 
     // Labour cost: use new lpm_personnel or fallback to old codes
     const labourCost = agg['lpm_personnel'] || ((agg['vc_variable_labour'] || 0) + (agg['fc_fixed_labour'] || 0));
-    const labourCostPerAcre = labourCost / totalAcres;
+    const labourCostPerAcre = totalAcres > 0 ? labourCost / totalAcres : 0;
 
     // Yield vs Target: use actual yield data from crops_json if available
     const targetRevenue = crops.reduce((sum, c) => sum + ((c.acres || 0) * (c.target_yield || 0) * (c.price_per_unit || 0)), 0);

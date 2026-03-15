@@ -212,6 +212,7 @@ model GlActualDetail {
   gl_account    GlAccount @relation(fields: [gl_account_id], references: [id])
 
   @@unique([farm_id, fiscal_year, month, gl_account_id])
+  @@index([farm_id, fiscal_year, month])
   @@map("gl_actual_details")
 }
 

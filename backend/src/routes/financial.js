@@ -475,10 +475,10 @@ router.post('/:farmId/financial/manual-actual', authenticate, requireRole('admin
     const assumption = await prisma.assumption.findUnique({
       where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: parseInt(fiscal_year) } },
     });
-    const totalAcres = assumption?.total_acres || 1;
+    const totalAcres = assumption?.total_acres ?? 0;
     const perUnitData = {};
     for (const [key, val] of Object.entries(withParents)) {
-      perUnitData[key] = val / totalAcres;
+      perUnitData[key] = totalAcres > 0 ? val / totalAcres : 0;
     }
 
     await prisma.monthlyData.upsert({
