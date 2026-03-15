@@ -4,12 +4,18 @@ import {
 } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
 import { useSync } from '../contexts/SyncContext';
+import { useLookup } from '../contexts/LookupContext';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import SyncStatusBar from '../components/SyncStatusBar';
+import {
+  C2_TEAL, C2_DARK, BACKGROUND, SURFACE, BORDER,
+  TEXT_SECONDARY, TEXT_MUTED, ERROR,
+} from '../theme/colors';
 
 export default function SettingsScreen() {
   const { user, farm, logout } = useAuth();
   const { pending, failed, isSyncing, triggerSync } = useSync();
+  const { refreshLookups, loading: lookupLoading } = useLookup();
   const isOnline = useNetworkStatus();
 
   const handleLogout = () => {
@@ -36,6 +42,15 @@ export default function SettingsScreen() {
       return;
     }
     triggerSync();
+  };
+
+  const handleRefreshLookups = async () => {
+    if (!isOnline) {
+      Alert.alert('Offline', 'Cannot refresh data while offline');
+      return;
+    }
+    await refreshLookups();
+    Alert.alert('Done', 'Lookup data refreshed.');
   };
 
   return (
@@ -75,17 +90,31 @@ export default function SettingsScreen() {
         {failed > 0 && (
           <View style={styles.row}>
             <Text style={styles.label}>Failed</Text>
-            <Text style={[styles.value, { color: '#f44336' }]}>{failed}</Text>
+            <Text style={[styles.value, { color: ERROR }]}>{failed}</Text>
           </View>
         )}
 
         <TouchableOpacity
-          style={[styles.syncButton, (!isOnline || isSyncing || pending === 0) && styles.buttonDisabled]}
+          style={[styles.actionButton, (!isOnline || isSyncing || pending === 0) && styles.buttonDisabled]}
           onPress={handleForceSync}
           disabled={!isOnline || isSyncing || pending === 0}
         >
-          <Text style={styles.syncButtonText}>
+          <Text style={styles.actionButtonText}>
             {isSyncing ? 'Syncing...' : 'Sync Now'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Data */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Data</Text>
+        <TouchableOpacity
+          style={[styles.actionButton, (!isOnline || lookupLoading) && styles.buttonDisabled]}
+          onPress={handleRefreshLookups}
+          disabled={!isOnline || lookupLoading}
+        >
+          <Text style={styles.actionButtonText}>
+            {lookupLoading ? 'Refreshing...' : 'Refresh Lookup Data'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -108,9 +137,9 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: BACKGROUND },
   section: {
-    backgroundColor: '#fff',
+    backgroundColor: SURFACE,
     marginHorizontal: 16,
     marginTop: 16,
     borderRadius: 8,
@@ -119,7 +148,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#999',
+    color: TEXT_MUTED,
     textTransform: 'uppercase',
     marginBottom: 12,
   },
@@ -128,28 +157,28 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#eee',
+    borderBottomColor: BORDER,
   },
-  label: { fontSize: 15, color: '#333' },
-  value: { fontSize: 15, color: '#666' },
-  syncButton: {
-    backgroundColor: '#1B5E20',
+  label: { fontSize: 15, color: C2_DARK },
+  value: { fontSize: 15, color: TEXT_SECONDARY },
+  actionButton: {
+    backgroundColor: C2_TEAL,
     borderRadius: 8,
     padding: 12,
     alignItems: 'center',
     marginTop: 12,
   },
   buttonDisabled: { opacity: 0.4 },
-  syncButtonText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  actionButtonText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   logoutButton: {
     marginHorizontal: 16,
     marginTop: 24,
-    backgroundColor: '#fff',
+    backgroundColor: SURFACE,
     borderRadius: 8,
     padding: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#f44336',
+    borderColor: ERROR,
   },
-  logoutText: { color: '#f44336', fontSize: 16, fontWeight: '600' },
+  logoutText: { color: ERROR, fontSize: 16, fontWeight: '600' },
 });

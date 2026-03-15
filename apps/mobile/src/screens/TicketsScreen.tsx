@@ -10,6 +10,7 @@ import api from '../services/api';
 import TicketCard from '../components/TicketCard';
 import SyncStatusBar from '../components/SyncStatusBar';
 import OfflineBanner from '../components/OfflineBanner';
+import { BACKGROUND, C2_TEAL, TEXT_SECONDARY, TEXT_MUTED } from '../theme/colors';
 
 interface TicketSummary {
   id: string;
@@ -26,7 +27,7 @@ interface TicketSummary {
   location: { name: string } | null;
 }
 
-export default function HistoryScreen() {
+export default function TicketsScreen() {
   const { farm } = useAuth();
   const { pending } = useSync();
   const isOnline = useNetworkStatus();
@@ -70,7 +71,7 @@ export default function HistoryScreen() {
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#1B5E20" />
+          <ActivityIndicator size="large" color={C2_TEAL} />
         </View>
       ) : (
         <FlatList
@@ -79,7 +80,7 @@ export default function HistoryScreen() {
           renderItem={({ item }) => <TicketCard ticket={item} />}
           contentContainerStyle={styles.list}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={['#1B5E20']} />
+            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[C2_TEAL]} />
           }
           ListEmptyComponent={
             <View style={styles.center}>
@@ -89,7 +90,7 @@ export default function HistoryScreen() {
                   : 'No tickets submitted yet'}
               </Text>
               <Text style={styles.emptyHint}>
-                Use the Capture tab to photograph a delivery ticket
+                Use the Add Load tab to create a new delivery ticket
               </Text>
             </View>
           }
@@ -100,9 +101,9 @@ export default function HistoryScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: BACKGROUND },
   list: { padding: 12 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
-  emptyText: { fontSize: 16, color: '#666', textAlign: 'center', marginBottom: 8 },
-  emptyHint: { fontSize: 14, color: '#999', textAlign: 'center' },
+  emptyText: { fontSize: 16, color: TEXT_SECONDARY, textAlign: 'center', marginBottom: 8 },
+  emptyHint: { fontSize: 14, color: TEXT_MUTED, textAlign: 'center' },
 });

@@ -4,6 +4,7 @@ import {
   KeyboardAvoidingView, Platform, Alert, ActivityIndicator,
 } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
+import { C2_TEAL, C2_TEAL_DARK, C2_DARK, SURFACE, BORDER, TEXT_SECONDARY } from '../theme/colors';
 
 export default function LoginScreen() {
   const { login } = useAuth();
@@ -75,12 +76,12 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1B5E20',
+    backgroundColor: C2_TEAL_DARK,
     justifyContent: 'center',
     padding: 24,
   },
   form: {
-    backgroundColor: '#fff',
+    backgroundColor: SURFACE,
     borderRadius: 12,
     padding: 24,
     shadowColor: '#000',
@@ -92,19 +93,19 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: 'bold',
-    color: '#1B5E20',
+    color: C2_TEAL,
     textAlign: 'center',
     marginBottom: 4,
   },
   subtitle: {
     fontSize: 16,
-    color: '#666',
+    color: TEXT_SECONDARY,
     textAlign: 'center',
     marginBottom: 24,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: BORDER,
     borderRadius: 8,
     padding: 14,
     fontSize: 16,
@@ -112,7 +113,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fafafa',
   },
   button: {
-    backgroundColor: '#1B5E20',
+    backgroundColor: C2_TEAL,
     borderRadius: 8,
     padding: 16,
     alignItems: 'center',

@@ -1,16 +1,11 @@
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 
-const API_BASE_URL = __DEV__
-  ? 'https://noma-unobdurate-lidia.ngrok-free.dev/api'
-  : 'https://c2farms.onrender.com/api';
+const API_BASE_URL = 'https://c2farms.onrender.com/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
-  headers: {
-    'ngrok-skip-browser-warning': 'true',
-  },
 });
 
 // Attach JWT to every request

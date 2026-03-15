@@ -1,6 +1,30 @@
 import { File, Paths } from 'expo-file-system/next';
 import api from './api';
 
+export interface TicketOverrides {
+  ticket_number?: string;
+  delivery_date?: string;
+  crop?: string;
+  crop_year?: number;
+  commodity_id?: string;
+  location_id?: string;
+  bin_id?: string;
+  contract_number?: string;
+  marketing_contract_id?: string;
+  operator_name?: string;
+  equipment?: string;
+  destination?: string;
+  buyer?: string;
+  gross_weight_kg?: number;
+  tare_weight_kg?: number;
+  net_weight_kg?: number;
+  moisture_pct?: number;
+  grade?: string;
+  dockage_pct?: number;
+  protein_pct?: number;
+  notes?: string;
+}
+
 export interface QueueItem {
   id: string;
   client_id: string;

@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, Image, StyleSheet } from 'react-native';
+import { C2_TEAL, C2_DARK, SURFACE, BORDER, TEXT_SECONDARY, TEXT_MUTED } from '../theme/colors';
 
 interface Props {
   ticket: {
@@ -46,7 +47,7 @@ export default function TicketCard({ ticket }: Props) {
 const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
+    backgroundColor: SURFACE,
     borderRadius: 8,
     padding: 12,
     marginBottom: 8,
@@ -60,7 +61,7 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 6,
-    backgroundColor: '#eee',
+    backgroundColor: BORDER,
     marginRight: 12,
   },
   noThumb: {
@@ -69,14 +70,14 @@ const styles = StyleSheet.create({
   },
   noThumbText: {
     fontSize: 9,
-    color: '#999',
+    color: TEXT_MUTED,
   },
   info: { flex: 1 },
-  ticketNumber: { fontSize: 15, fontWeight: '600', color: '#333', marginBottom: 2 },
-  detail: { fontSize: 13, color: '#666', marginBottom: 1 },
+  ticketNumber: { fontSize: 15, fontWeight: '600', color: C2_DARK, marginBottom: 2 },
+  detail: { fontSize: 13, color: TEXT_SECONDARY, marginBottom: 1 },
   grade: {
     fontSize: 12,
-    color: '#1B5E20',
+    color: C2_TEAL,
     fontWeight: '500',
     marginTop: 2,
   },

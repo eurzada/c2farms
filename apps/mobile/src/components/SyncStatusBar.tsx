@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSync } from '../contexts/SyncContext';
+import { WARNING } from '../theme/colors';
 
 export default function SyncStatusBar() {
   const { pending, isSyncing } = useSync();
@@ -21,7 +22,7 @@ export default function SyncStatusBar() {
 
 const styles = StyleSheet.create({
   bar: {
-    backgroundColor: '#FF9800',
+    backgroundColor: WARNING,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
