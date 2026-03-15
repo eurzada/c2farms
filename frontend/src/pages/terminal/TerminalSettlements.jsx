@@ -17,6 +17,9 @@ import api from '../../services/api';
 import { extractErrorMessage } from '../../utils/errorHelpers';
 import { formatCurrency, fmt, fmtDollar } from '../../utils/formatting';
 import CreateTerminalSettlementDialog from '../../components/terminal/CreateTerminalSettlementDialog';
+import BuyerSettlementUploadDialog from '../../components/terminal/BuyerSettlementUploadDialog';
+import BuyerSettlementReconciliationDialog from '../../components/terminal/BuyerSettlementReconciliationDialog';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
 
 const STATUS_COLORS = {
   draft: 'default',
@@ -27,6 +30,7 @@ const STATUS_COLORS = {
 const TYPE_COLORS = {
   transfer: 'primary',
   transloading: 'warning',
+  buyer_settlement: 'success',
 };
 
 export default function TerminalSettlements() {
@@ -39,6 +43,9 @@ export default function TerminalSettlements() {
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState('all');
   const [createOpen, setCreateOpen] = useState(false);
+  const [buyerUploadOpen, setBuyerUploadOpen] = useState(false);
+  const [buyerReconOpen, setBuyerReconOpen] = useState(false);
+  const [buyerReconId, setBuyerReconId] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -65,12 +72,15 @@ export default function TerminalSettlements() {
 
   // Summary calculations
   const summary = useMemo(() => {
-    const byType = { transfer: { count: 0, amount: 0 }, transloading: { count: 0, amount: 0 } };
+    const byType = { transfer: { count: 0, amount: 0 }, transloading: { count: 0, amount: 0 }, buyer_settlement: { count: 0, amount: 0, margin: 0 } };
     for (const r of rows) {
       const t = r.type || 'transfer';
       if (byType[t]) {
         byType[t].count += 1;
         byType[t].amount += parseFloat(r.net_amount) || 0;
+        if (t === 'buyer_settlement' && r.realization_json) {
+          byType[t].margin += r.realization_json.margin || 0;
+        }
       }
     }
     return byType;
@@ -152,7 +162,7 @@ export default function TerminalSettlements() {
       field: 'type', headerName: 'Type', width: 120,
       cellRenderer: p => (
         <Chip
-          label={p.value === 'transfer' ? 'Transfer' : 'Transloading'}
+          label={p.value === 'transfer' ? 'Transfer' : p.value === 'buyer_settlement' ? 'Buyer' : 'Transloading'}
           size="small"
           color={TYPE_COLORS[p.value] || 'default'}
           variant="outlined"
@@ -193,6 +203,34 @@ export default function TerminalSettlements() {
       headerName: 'Actions', width: 250, sortable: false, filter: false, pinned: 'right',
       cellRenderer: p => {
         const { id, status, type: sType, settlement_number, net_amount } = p.data;
+
+        // Buyer settlement actions
+        if (sType === 'buyer_settlement') {
+          if (status === 'draft') {
+            return (
+              <Button size="small" variant="outlined" color="success" onClick={() => { setBuyerReconId(id); setBuyerReconOpen(true); }}>
+                Reconcile
+              </Button>
+            );
+          }
+          if (status === 'finalized') {
+            return (
+              <Button size="small" variant="contained" color="primary" onClick={() => { setBuyerReconId(id); setBuyerReconOpen(true); }}>
+                Push to Logistics
+              </Button>
+            );
+          }
+          if (status === 'pushed') {
+            return (
+              <Button size="small" startIcon={<OpenInNewIcon />} onClick={() => navigate('/logistics/settlements')}>
+                View in Logistics
+              </Button>
+            );
+          }
+          return null;
+        }
+
+        // Transfer/transloading actions
         if (status === 'draft') {
           const needsPricing = !net_amount || net_amount === 0;
           return (
@@ -249,7 +287,11 @@ export default function TerminalSettlements() {
             <ToggleButton value="all">All</ToggleButton>
             <ToggleButton value="transfer">Transfer</ToggleButton>
             <ToggleButton value="transloading">Transloading</ToggleButton>
+            <ToggleButton value="buyer_settlement">Buyer</ToggleButton>
           </ToggleButtonGroup>
+          <Button variant="outlined" color="success" startIcon={<UploadFileIcon />} onClick={() => setBuyerUploadOpen(true)}>
+            Upload Buyer Settlement
+          </Button>
           <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateOpen(true)}>
             New Settlement
           </Button>
@@ -260,18 +302,28 @@ export default function TerminalSettlements() {
 
       {/* Summary cards */}
       <Grid container spacing={2} sx={{ mb: 2 }}>
-        <Grid item xs={12} sm={6}>
+        <Grid item xs={12} sm={4}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="subtitle2" color="primary">Transfer Settlements</Typography>
             <Typography variant="h6" fontWeight={700}>{summary.transfer.count} settlements</Typography>
             <Typography variant="body2">Total: {fmtDollar(summary.transfer.amount)}</Typography>
           </Paper>
         </Grid>
-        <Grid item xs={12} sm={6}>
+        <Grid item xs={12} sm={4}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="subtitle2" color="warning.main">Transloading Settlements</Typography>
             <Typography variant="h6" fontWeight={700}>{summary.transloading.count} settlements</Typography>
             <Typography variant="body2">Total: {fmtDollar(summary.transloading.amount)}</Typography>
+          </Paper>
+        </Grid>
+        <Grid item xs={12} sm={4}>
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="subtitle2" color="success.main">Buyer Settlements</Typography>
+            <Typography variant="h6" fontWeight={700}>{summary.buyer_settlement.count} settlements</Typography>
+            <Typography variant="body2">Total: {fmtDollar(summary.buyer_settlement.amount)}</Typography>
+            {summary.buyer_settlement.margin > 0 && (
+              <Typography variant="body2" color="success.main">Margin: {fmtDollar(summary.buyer_settlement.margin)}</Typography>
+            )}
           </Paper>
         </Grid>
       </Grid>
@@ -296,6 +348,21 @@ export default function TerminalSettlements() {
         onSaved={() => { setCreateOpen(false); load(); }}
       />
 
+      <BuyerSettlementUploadDialog
+        open={buyerUploadOpen}
+        onClose={() => setBuyerUploadOpen(false)}
+        farmId={farmId}
+        onSaved={() => { setBuyerUploadOpen(false); load(); }}
+      />
+
+      <BuyerSettlementReconciliationDialog
+        open={buyerReconOpen}
+        onClose={() => { setBuyerReconOpen(false); setBuyerReconId(null); }}
+        farmId={farmId}
+        settlementId={buyerReconId}
+        onDone={load}
+      />
+
       {/* Settlement Detail Dialog */}
       <Dialog open={detailOpen} onClose={() => { setDetailOpen(false); setDetail(null); }} maxWidth="lg" fullWidth>
         <DialogTitle>
@@ -303,7 +370,7 @@ export default function TerminalSettlements() {
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span>{detail.settlement_number}</span>
               <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                <Chip label={detail.type === 'transfer' ? 'Transfer' : 'Transloading'} size="small" color={TYPE_COLORS[detail.type] || 'default'} variant="outlined" />
+                <Chip label={detail.type === 'transfer' ? 'Transfer' : detail.type === 'buyer_settlement' ? 'Buyer' : 'Transloading'} size="small" color={TYPE_COLORS[detail.type] || 'default'} variant="outlined" />
                 <Chip label={detail.status} size="small" color={STATUS_COLORS[detail.status] || 'default'} />
               </Box>
             </Box>

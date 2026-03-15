@@ -237,6 +237,74 @@ Also extract: Grade, Moist/Dock/Prot %, Unload/Clean/Net Weight (all in MT), Bas
 
 DEDUCTIONS: The last page has a TOTALS row and an Adjustment/Remarks summary table showing deduction names (e.g. "SASK CANOLA DEV COMM", "SK WHT CHK OFF", "DRYING"), PST, GST flags (Y/N), and total Amount. Extract these into deductions_summary. Category mapping: CANOLA DEV COMM/SK WHT CHK OFF=checkoff, DRYING=drying, QUALITY SPREAD=quality. settlement_gross = TOTALS Gross Amount. Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.`,
 
+  ldc: `You are extracting data from a Louis Dreyfus Company (LDC) grain settlement PDF titled "Cash Ticket Detail". Extract ALL of the following into structured JSON:
+
+{
+  "settlement_number": "string (the large highlighted number at the very top next to 'Cash Ticket Detail' — e.g. '571040066092'. This is NOT the contract number.)",
+  "settlement_date": "YYYY-MM-DD (the date printed below the Cash Ticket Detail header)",
+  "buyer": "Louis Dreyfus Company Canada ULC",
+  "contract_number": "string (the 'Contract' number from the Assembly section — e.g. '8008913'. This is the line labeled 'Contract' under 'Assembly #'. Do NOT confuse it with the settlement number or the Assembly # itself.)",
+  "assembly_number": "string or null (the Assembly # — e.g. '571020120184')",
+  "commodity": "string (from the commodity code in the Assembly section — e.g. 'NEX' = Canola. Map common LDC codes: NEX=Canola, DUR=Durum, CWRS=Spring Wheat, CPS=CPS Wheat, YP=Yellow Peas, LP=Lentils, BLY=Barley, FLX=Flax, CHKP=Chickpeas)",
+  "total_gross_amount": number (the Gross Amt column value in the Assembly row, e.g. 644786.28),
+  "total_net_amount": number (the Net Amount column value in the Assembly row, e.g. 657711.03),
+  "settlement_gross": number or null (same as total_gross_amount — the gross BEFORE program charges),
+  "deductions_summary": [{"name": "string", "amount": number (negative for deductions/charges), "gst": number or null, "pst": number or null, "category": "checkoff|drying|quality|freight|storage|commission|levy|premium|other"}],
+  "currency": "CAD",
+  "lines": [
+    {
+      "line_number": 1,
+      "ticket_number": "string (the Ticket Number from per-ticket rows — e.g. '5717345236'. These are 10-digit weigh scale numbers in the detail section BELOW the Assembly summary. Do NOT use the Assembly # or Contract # as a ticket number.)",
+      "delivery_date": "YYYY-MM-DD",
+      "split_pct": number or null (the Split % column),
+      "gross_weight_mt": number or null (the Gross column — in MT),
+      "dockage_mt": number or null (the Dockage column — in MT, often shown as negative in parentheses)",
+      "net_weight_mt": number or null (the Net column — in MT),
+      "grade": "string or null (extract TDK/DGR/DMG/MOIST/HTD/LIN/OLE/OL grading values if present)",
+      "moisture_pct": number or null (from MOIST value in the grading row)",
+      "dockage_pct": number or null (from TDK value in the grading row)",
+      "price_per_mt": number or null (the Price column, e.g. 710.90)",
+      "line_gross": number or null,
+      "line_net": number or null (PriceQty × Price)",
+      "ticket_disc": number or null (Ticket Disc column),
+      "deductions": [{"name": "string", "amount": number}]
+    }
+  ]
+}
+
+LDC "CASH TICKET DETAIL" LAYOUT — READ VERY CAREFULLY:
+
+The document has a HEADER section and a DETAIL section. The numbers in these sections mean DIFFERENT things:
+
+HEADER (top of document):
+- "Cash Ticket Detail" + a large number (often highlighted in yellow) = the SETTLEMENT NUMBER (e.g. 571040066092)
+- This is NOT a contract number or ticket number.
+
+ASSEMBLY SECTION (below header):
+- Assembly # = an internal assembly/shipment number (e.g. 571020120184). NOT a ticket number.
+- Contract = the CONTRACT NUMBER (e.g. 8008913). This goes in contract_number.
+- The Assembly row shows: Assembly Date, Gross Qty, Dockage, Net Qty, Gross Amt, Discounts, Program Chgs, Net Amount
+
+PROGRAM CHARGES section:
+- Shows deductions like "SK DEV ASSN" (category: checkoff), "TRUCKING" (category: freight)
+- Each has a Rate and Amount. Extract these into deductions_summary with negative amounts.
+
+PER-TICKET DETAIL ROWS (lower section, after "Ticket Number | Date | Split % | Gross | Dockage | Net | Ticket Disc"):
+- Each ticket has a 10-digit Ticket Number (e.g. 5717345236, 5717348284, etc.)
+- These are the ACTUAL weigh scale ticket numbers — use these as ticket_number
+- Below each ticket row are grading details (TDK, DGR, DMG, MOIST, HTD, LIN, OLE, OL values)
+- Then Dockage and Disc Chgs rows
+- Finally PriceQty and Price columns at the right
+
+CRITICAL RULES:
+1. The settlement_number is the highlighted number at the TOP (e.g. 571040066092), NOT the Contract #
+2. The contract_number is the "Contract" field in the Assembly section (e.g. 8008913), NOT the settlement number
+3. Ticket numbers are 10-digit numbers in the per-ticket detail rows (e.g. 5717345236), NOT the Assembly # or Contract #
+4. Do NOT create a line entry for the Assembly # or Contract # — only for actual ticket rows
+5. Weights in the per-ticket rows are in MT
+
+Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.`,
+
   unknown: `You are extracting data from a grain settlement PDF. The buyer format is unknown. Extract ALL of the following into structured JSON:
 
 {
@@ -290,7 +358,7 @@ async function detectBuyerFormat(pdfBase64) {
           },
           {
             type: 'text',
-            text: 'What grain company issued this settlement document? Reply with ONLY one word: "cargill", "bunge", "jgl", "richardson", "gsl", or "unknown".',
+            text: 'What grain company issued this settlement document? Reply with ONLY one word: "cargill", "bunge", "jgl", "richardson", "gsl", "ldc", or "unknown". Note: Louis Dreyfus Company = "ldc".',
           },
         ],
       }],
@@ -298,7 +366,7 @@ async function detectBuyerFormat(pdfBase64) {
 
     const usage = computeUsage(model, response);
     const answer = response.content[0]?.text?.trim().toLowerCase();
-    const format = ['cargill', 'bunge', 'jgl', 'richardson', 'gsl'].includes(answer) ? answer : 'unknown';
+    const format = ['cargill', 'bunge', 'jgl', 'richardson', 'gsl', 'ldc'].includes(answer) ? answer : 'unknown';
     return { format, usage };
   } catch (err) {
     const classified = classifyApiError(err);
@@ -467,6 +535,19 @@ function postProcessTicketNumbers(lines, buyerFormat) {
       }
     }
 
+    // LDC: Ticket numbers should be 10-digit weigh scale numbers (5717xxxxxx pattern).
+    // If the AI accidentally put the contract # (7 digits, e.g. 8008913) or assembly #
+    // (12 digits, e.g. 571020120184) as ticket_number, filter them out.
+    if (buyerFormat === 'ldc') {
+      // Skip lines where ticket_number is clearly a contract or assembly number, not a ticket
+      const assembly = String(line.assembly_number || '');
+      const contract = String(line.contract_number || '');
+      if (tn && (tn === assembly || tn === contract)) {
+        // This line is the assembly/contract row misidentified as a ticket — skip it
+        return { ...line, ticket_number: null, _skip: true };
+      }
+    }
+
     // Bunge: The correct ticket_number is "BOL or Car #" (the weigh scale number).
     // If the AI extracted a bol_or_car field, always prefer it as ticket_number.
     // The Receipt # is Bunge's internal receipt — store it separately.
@@ -546,7 +627,7 @@ export async function saveSettlement(farmId, extraction, buyerFormat, { pdfUrl =
   });
 
   // Post-process: fix ticket numbers when AI grabs internal IDs instead of weigh scale numbers
-  const lines = postProcessTicketNumbers(extraction.lines || [], buyerFormat);
+  const lines = postProcessTicketNumbers(extraction.lines || [], buyerFormat).filter(l => !l._skip);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     await prisma.settlementLine.create({
@@ -828,7 +909,7 @@ async function processBatchResults(aiBatch) {
         });
 
         // Post-process ticket numbers and create settlement lines
-        const lines = postProcessTicketNumbers(extraction.lines || [], settlement.buyer_format);
+        const lines = postProcessTicketNumbers(extraction.lines || [], settlement.buyer_format).filter(l => !l._skip);
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i];
           await prisma.settlementLine.create({

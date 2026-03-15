@@ -618,4 +618,138 @@ router.post('/:farmId/inventory/import', authenticate, requireRole('admin', 'man
   } catch (err) { next(err); }
 });
 
+// ─── Bin Grading ─────────────────────────────────────────────────────
+
+// GET all grades (with filters)
+router.get('/:farmId/inventory/grades', authenticate, async (req, res, next) => {
+  try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    const { location, commodity, crop_year } = req.query;
+
+    const where = { farm_id: farmId };
+    if (crop_year) where.crop_year = parseInt(crop_year, 10);
+
+    const binWhere = {};
+    if (location) binWhere.location_id = location;
+    if (commodity) binWhere.commodity_id = commodity;
+
+    const grades = await prisma.binGrade.findMany({
+      where: {
+        ...where,
+        bin: Object.keys(binWhere).length > 0 ? binWhere : undefined,
+      },
+      include: {
+        bin: {
+          include: {
+            location: true,
+            commodity: true,
+          },
+        },
+      },
+      orderBy: [{ bin: { location: { name: 'asc' } } }, { bin: { bin_number: 'asc' } }],
+    });
+
+    const result = grades.map(g => ({
+      id: g.id,
+      bin_id: g.bin_id,
+      bin_number: g.bin.bin_number,
+      location_id: g.bin.location_id,
+      location_name: g.bin.location.name,
+      location_code: g.bin.location.code,
+      commodity_name: g.bin.commodity?.name || null,
+      commodity_code: g.bin.commodity?.code || null,
+      crop_year: g.crop_year,
+      grade: g.grade,
+      grade_short: g.grade_short,
+      variety: g.variety,
+      grade_reason: g.grade_reason,
+      protein_pct: g.protein_pct,
+      moisture_pct: g.moisture_pct,
+      dockage_pct: g.dockage_pct,
+      test_weight: g.test_weight,
+      hvk_pct: g.hvk_pct,
+      frost: g.frost,
+      inspector_notes: g.inspector_notes,
+      source: g.source,
+      grade_date: g.grade_date,
+      status: g.status,
+    }));
+
+    res.json({ grades: result, total: result.length });
+  } catch (err) { next(err); }
+});
+
+// GET crop years that have grades
+router.get('/:farmId/inventory/grades/crop-years', authenticate, async (req, res, next) => {
+  try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    const years = await prisma.binGrade.groupBy({
+      by: ['crop_year'],
+      where: { farm_id: farmId },
+      orderBy: { crop_year: 'desc' },
+    });
+    res.json({ crop_years: years.map(y => y.crop_year) });
+  } catch (err) { next(err); }
+});
+
+// PUT update a single grade
+router.put('/:farmId/inventory/grades/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    const { id } = req.params;
+    const {
+      grade, grade_short, variety, grade_reason, protein_pct, moisture_pct,
+      dockage_pct, test_weight, hvk_pct, frost, inspector_notes, status,
+    } = req.body;
+
+    const existing = await prisma.binGrade.findFirst({ where: { id, farm_id: farmId } });
+    if (!existing) return res.status(404).json({ error: 'Grade not found' });
+
+    const updated = await prisma.binGrade.update({
+      where: { id },
+      data: {
+        ...(grade !== undefined && { grade }),
+        ...(grade_short !== undefined && { grade_short }),
+        ...(variety !== undefined && { variety }),
+        ...(grade_reason !== undefined && { grade_reason }),
+        ...(protein_pct !== undefined && { protein_pct: protein_pct != null ? parseFloat(protein_pct) : null }),
+        ...(moisture_pct !== undefined && { moisture_pct: moisture_pct != null ? parseFloat(moisture_pct) : null }),
+        ...(dockage_pct !== undefined && { dockage_pct: dockage_pct != null ? parseFloat(dockage_pct) : null }),
+        ...(test_weight !== undefined && { test_weight: test_weight != null ? parseFloat(test_weight) : null }),
+        ...(hvk_pct !== undefined && { hvk_pct: hvk_pct != null ? parseFloat(hvk_pct) : null }),
+        ...(frost !== undefined && { frost }),
+        ...(inspector_notes !== undefined && { inspector_notes }),
+        ...(status !== undefined && { status }),
+      },
+    });
+
+    res.json(updated);
+  } catch (err) { next(err); }
+});
+
+// POST import grades from EFU spreadsheet
+router.post('/:farmId/inventory/grades/import', authenticate, requireRole('admin', 'manager'), upload.single('file'), async (req, res, next) => {
+  try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const { importGradesFromEfu } = await import('../services/gradingImportService.js');
+    const result = await importGradesFromEfu(farmId, req.file.buffer, req.file.originalname);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// POST import grades - confirm (after preview)
+router.post('/:farmId/inventory/grades/import/confirm', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    const { grades, crop_year } = req.body;
+    if (!grades?.length) return res.status(400).json({ error: 'No grades to import' });
+
+    const { confirmGradesImport } = await import('../services/gradingImportService.js');
+    const result = await confirmGradesImport(farmId, grades, crop_year);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 export default router;

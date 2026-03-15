@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  Button, CircularProgress, Snackbar, Alert, Menu, MenuItem, ListItemText,
+  Button, CircularProgress, Snackbar, Alert, Menu, MenuItem, ListItemText, Stack,
 } from '@mui/material';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import TableViewIcon from '@mui/icons-material/TableView';
@@ -75,7 +75,7 @@ export default function InventoryExportButtons({ farmId, filters = {} }) {
   };
 
   return (
-    <>
+    <Stack direction="row" spacing={1}>
       <Button
         variant="outlined"
         size="small"
@@ -122,6 +122,6 @@ export default function InventoryExportButtons({ farmId, filters = {} }) {
       >
         <Alert severity="error" onClose={() => setError('')}>{error}</Alert>
       </Snackbar>
-    </>
+    </Stack>
   );
 }

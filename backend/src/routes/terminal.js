@@ -301,6 +301,122 @@ router.post('/:farmId/terminal/contracts/import-pdf', authenticate, requireRole(
   } catch (err) { next(err); }
 });
 
+router.post('/:farmId/terminal/contracts/import-pdf/confirm', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { extraction } = req.body;
+    if (!extraction) return res.status(400).json({ error: 'extraction is required' });
+    const farmId = req.params.farmId;
+
+    // Resolve or create counterparty
+    let counterparty;
+    if (extraction.buyer) {
+      counterparty = await prisma.counterparty.findFirst({
+        where: {
+          farm_id: farmId,
+          name: { contains: extraction.buyer.split(' ')[0], mode: 'insensitive' },
+          is_active: true,
+        },
+      });
+      if (!counterparty) {
+        counterparty = await prisma.counterparty.create({
+          data: {
+            farm_id: farmId,
+            name: extraction.buyer,
+            short_code: extraction.buyer.substring(0, 4).toUpperCase(),
+            type: 'buyer',
+          },
+        });
+      }
+    }
+    if (!counterparty) return res.status(400).json({ error: 'Could not resolve buyer' });
+
+    // Resolve commodity — try multiple matching strategies
+    let commodity;
+    if (extraction.commodity) {
+      const commText = extraction.commodity.trim();
+      // 1. Try first word contains (e.g. "Spring Wheat" → "Spring")
+      commodity = await prisma.commodity.findFirst({
+        where: {
+          farm_id: farmId,
+          name: { contains: commText.split(' ')[0], mode: 'insensitive' },
+        },
+      });
+      // 2. Try matching by commodity code (e.g. "Spring Wheat" → CWRS, "Durum" → CWAD)
+      if (!commodity) {
+        const commodityCodeMap = {
+          'spring wheat': 'CWRS', 'wheat': 'CWRS', 'red spring': 'CWRS', 'cwrs': 'CWRS',
+          'durum': 'CWAD', 'cwad': 'CWAD',
+          'canola': 'CNLA', 'nexera': 'NXRA',
+          'barley': 'BRLY', 'barley feed': 'BRLY',
+          'chickpeas': 'CHKP', 'chickpea': 'CHKP', 'desi': 'CHKP',
+          'lentils': 'LNSG', 'lentil': 'LNSG',
+          'yellow peas': 'YPEA', 'peas': 'YPEA',
+          'flax': 'FLAX', 'canary seed': 'CANARY', 'canaryseed': 'CANARY',
+        };
+        const code = commodityCodeMap[commText.toLowerCase()];
+        if (code) {
+          commodity = await prisma.commodity.findFirst({
+            where: { farm_id: farmId, code: { equals: code, mode: 'insensitive' } },
+          });
+        }
+      }
+      // 3. Try full name contains
+      if (!commodity) {
+        commodity = await prisma.commodity.findFirst({
+          where: { farm_id: farmId, name: { contains: commText, mode: 'insensitive' } },
+        });
+      }
+    }
+    if (!commodity) return res.status(400).json({ error: `Commodity "${extraction.commodity}" not found` });
+
+    // Check for duplicate — update if exists
+    const existing = extraction.contract_number
+      ? await prisma.terminalContract.findFirst({
+          where: { farm_id: farmId, contract_number: extraction.contract_number },
+        })
+      : null;
+
+    let contract;
+    const contractData = {
+      contract_number: extraction.contract_number || `IMP-${Date.now()}`,
+      direction: 'sale',
+      counterparty_id: counterparty.id,
+      commodity_id: commodity.id,
+      contracted_mt: extraction.quantity_mt || 0,
+      delivered_mt: 0,
+      remaining_mt: extraction.quantity_mt || 0,
+      price_per_mt: extraction.price_per_mt || null,
+      delivery_point: extraction.elevator_site || null,
+      start_date: extraction.delivery_start ? new Date(extraction.delivery_start) : null,
+      end_date: extraction.delivery_end ? new Date(extraction.delivery_end) : null,
+      status: 'executed',
+      notes: [extraction.grade, extraction.special_terms].filter(Boolean).join(' | ') || null,
+      grade_prices_json: extraction.grade ? [{ grade: extraction.grade, price_per_mt: extraction.price_per_mt }] : null,
+    };
+
+    if (existing) {
+      contract = await prisma.terminalContract.update({
+        where: { id: existing.id },
+        data: contractData,
+        include: {
+          counterparty: { select: { id: true, name: true } },
+          commodity: { select: { id: true, name: true, code: true } },
+        },
+      });
+    } else {
+      contract = await prisma.terminalContract.create({
+        data: { farm_id: farmId, ...contractData },
+        include: {
+          counterparty: { select: { id: true, name: true } },
+          commodity: { select: { id: true, name: true, code: true } },
+        },
+      });
+    }
+
+    res.status(201).json({ contract });
+  } catch (err) { next(err); }
+});
+
 router.post('/:farmId/terminal/contracts/import-pdf/check-duplicate', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { contract_number } = req.body;
@@ -356,6 +472,38 @@ router.put('/:farmId/terminal/contracts/:contractId', authenticate, requireRole(
     const io = req.app.get('io');
     const data = await contractService.updateContract(req.params.farmId, req.params.contractId, req.body, io);
     res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.delete('/:farmId/terminal/contracts/:contractId', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { farmId, contractId } = req.params;
+    const contract = await prisma.terminalContract.findFirst({
+      where: { id: contractId, farm_id: farmId },
+      include: {
+        _count: { select: { settlements: true, transfer_agreements: true, assigned_tickets: true } },
+      },
+    });
+    if (!contract) return res.status(404).json({ error: 'Contract not found' });
+
+    // Block deletion if there are linked settlements or marketing contracts
+    if (contract._count.settlements > 0) {
+      return res.status(400).json({ error: `Cannot delete: ${contract._count.settlements} settlement(s) linked to this contract` });
+    }
+    if (contract._count.transfer_agreements > 0) {
+      return res.status(400).json({ error: `Cannot delete: ${contract._count.transfer_agreements} marketing contract(s) linked to this contract` });
+    }
+
+    // Unlink any assigned tickets before deleting
+    if (contract._count.assigned_tickets > 0) {
+      await prisma.terminalTicket.updateMany({
+        where: { contract_id: contractId },
+        data: { contract_id: null },
+      });
+    }
+
+    await prisma.terminalContract.delete({ where: { id: contractId } });
+    res.json({ success: true });
   } catch (err) { next(err); }
 });
 
@@ -448,6 +596,54 @@ router.post('/:farmId/terminal/settlements/:settlementId/push', authenticate, re
   try {
     const io = req.app.get('io');
     const data = await settlementService.pushToLogistics(req.params.farmId, req.params.settlementId, io);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+// ── Buyer Settlement Routes ─────────────────────────────────────────────────
+
+router.post('/:farmId/terminal/settlements/upload-buyer-pdf', authenticate, requireRole('admin', 'manager'), upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const data = await settlementService.uploadBuyerSettlementPdf(req.params.farmId, req.file.buffer, req.file.originalname);
+    res.status(201).json(data);
+  } catch (err) { next(err); }
+});
+
+router.post('/:farmId/terminal/settlements/:settlementId/reconcile-buyer', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const data = await settlementService.reconcileBuyerSettlement(req.params.farmId, req.params.settlementId);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/:farmId/terminal/settlements/:settlementId/realization', authenticate, async (req, res, next) => {
+  try {
+    const data = await settlementService.computeRealization(req.params.farmId, req.params.settlementId);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.post('/:farmId/terminal/settlements/:settlementId/finalize-buyer', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const data = await settlementService.finalizeBuyerSettlement(req.params.farmId, req.params.settlementId);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.post('/:farmId/terminal/settlements/:settlementId/push-buyer', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const io = req.app.get('io');
+    const data = await settlementService.pushBuyerToLogistics(req.params.farmId, req.params.settlementId, io);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.post('/:farmId/terminal/settlements/:settlementId/lines/:lineId/manual-match', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { ticket_id } = req.body;
+    if (!ticket_id) return res.status(400).json({ error: 'ticket_id is required' });
+    const data = await settlementService.manualMatchBuyerLine(req.params.farmId, req.params.settlementId, req.params.lineId, ticket_id);
     res.json(data);
   } catch (err) { next(err); }
 });

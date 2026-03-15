@@ -13,6 +13,8 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import { useFarm } from '../../contexts/FarmContext';
 import TerminalContractImportDialog from '../../components/terminal/TerminalContractImportDialog';
 import { useThemeMode } from '../../contexts/ThemeContext';
+import { useConfirmDialog } from '../../hooks/useConfirmDialog';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import api from '../../services/api';
 import { extractErrorMessage } from '../../utils/errorHelpers';
 import { formatCurrency } from '../../utils/formatting';
@@ -28,6 +30,7 @@ const STATUS_COLORS = {
 export default function TerminalContracts() {
   const { currentFarm } = useFarm();
   const { mode } = useThemeMode();
+  const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
   const gridRef = useRef();
   const [rows, setRows] = useState([]);
   const [summary, setSummary] = useState(null);
@@ -199,6 +202,24 @@ export default function TerminalContracts() {
     }
   };
 
+  const handleDeleteContract = async () => {
+    if (!editContract) return;
+    const ok = await confirm({
+      title: 'Delete Contract',
+      message: `Delete contract ${editContract.contract_number}? This cannot be undone.`,
+      confirmText: 'Delete',
+      confirmColor: 'error',
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/api/farms/${farmId}/terminal/contracts/${editContract.id}`);
+      setEditContract(null);
+      load();
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Failed to delete contract'));
+    }
+  };
+
   const fmtMt = v => v != null ? `${v.toLocaleString('en-CA', { maximumFractionDigits: 1 })} MT` : '—';
 
   return (
@@ -354,9 +375,12 @@ export default function TerminalContracts() {
             Add blend line
           </Button>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setEditContract(null)}>Cancel</Button>
-          <Button variant="contained" onClick={handleEditSubmit} disabled={!editForm.contract_number || !editForm.counterparty_id || !editForm.commodity_id || !editForm.contracted_mt}>Save</Button>
+        <DialogActions sx={{ justifyContent: 'space-between' }}>
+          <Button color="error" startIcon={<DeleteIcon />} onClick={handleDeleteContract}>Delete</Button>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button onClick={() => setEditContract(null)}>Cancel</Button>
+            <Button variant="contained" onClick={handleEditSubmit} disabled={!editForm.contract_number || !editForm.counterparty_id || !editForm.commodity_id || !editForm.contracted_mt}>Save</Button>
+          </Box>
         </DialogActions>
       </Dialog>
 
@@ -366,6 +390,7 @@ export default function TerminalContracts() {
         farmId={farmId}
         onImported={load}
       />
+      <ConfirmDialog {...confirmDialogProps} />
     </Box>
   );
 }

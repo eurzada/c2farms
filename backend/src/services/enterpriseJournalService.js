@@ -171,6 +171,8 @@ export async function getEnterpriseJournal(farmId, fiscalYear) {
     const deductions = getDeductions(s);
     const totalDeductions = round2(deductions.reduce((sum, d) => sum + d.amount, 0));
     const isTransfer = s.marketing_contract?.contract_type === 'transfer';
+    const isRealization = s.source === 'lgx_realization';
+    const realizationData = isRealization ? (s.reconciliation_report || s.extraction_json?.realization || null) : null;
 
     // Location breakdown from matched tickets
     // Detect if lines have actual per-line pricing (LGX transfers have grade-based $/MT)
@@ -287,6 +289,8 @@ export async function getEnterpriseJournal(farmId, fiscalYear) {
       contract_number: contractNum,
       commodity,
       is_transfer: isTransfer,
+      is_realization: isRealization,
+      realization: realizationData,
       total_mt: totalMt,
       price_per_mt: pricePerMt,
       gross_per_mt: grossPerMt,
@@ -373,8 +377,9 @@ export async function generateEnterpriseJournalCsv(farmId, fiscalYear) {
   for (const buyer of data.by_buyer) {
     for (const s of buyer.settlements) {
       const date = s.date ? new Date(s.date).toISOString().slice(0, 10) : '';
-      const memo = `Settlement #${s.settlement_number}`;
-      const transferTag = s.is_transfer ? ' [Transfer]' : '';
+      const realizationMemo = s.is_realization ? `LGX Realization Margin - Contract #${s.contract_number}` : null;
+      const memo = realizationMemo || `Settlement #${s.settlement_number}`;
+      const transferTag = s.is_transfer ? ' [Transfer]' : s.is_realization ? ' [LGX Margin]' : '';
 
       const sMt = s.total_mt || '';
       const sPrice = s.price_per_mt ? s.price_per_mt.toFixed(2) : '';
@@ -545,7 +550,7 @@ export async function generateEnterpriseJournalExcel(farmId, fiscalYear) {
         date: s.date ? new Date(s.date).toISOString().slice(0, 10) : '',
         contract_number: s.contract_number,
         commodity: s.commodity,
-        type: s.is_transfer ? 'Transfer' : 'Sale',
+        type: s.is_realization ? 'LGX Margin' : s.is_transfer ? 'Transfer' : 'Sale',
         mt: s.total_mt,
         gross: s.gross,
         deductions: s.total_deductions,
@@ -594,8 +599,8 @@ export async function generateEnterpriseJournalExcel(farmId, fiscalYear) {
   for (const buyer of data.by_buyer) {
     for (const s of buyer.settlements) {
       const date = s.date ? new Date(s.date).toISOString().slice(0, 10) : '';
-      const memo = `Settlement #${s.settlement_number}`;
-      const transferTag = s.is_transfer ? ' [Transfer]' : '';
+      const memo = s.is_realization ? `LGX Realization Margin - Contract #${s.contract_number}` : `Settlement #${s.settlement_number}`;
+      const transferTag = s.is_transfer ? ' [Transfer]' : s.is_realization ? ' [LGX Margin]' : '';
 
       if (s.location_allocation.length === 0) {
         // Fallback: settlement-level entries
@@ -712,7 +717,7 @@ export async function generateEnterpriseJournalPdf(farmId, fiscalYear) {
     ]];
 
     for (const s of buyer.settlements) {
-      const typeTag = s.is_transfer ? ' [T]' : '';
+      const typeTag = s.is_realization ? ' [M]' : s.is_transfer ? ' [T]' : '';
 
       if (s.location_allocation.length === 0) {
         // Settlement-level row (no matched locations)

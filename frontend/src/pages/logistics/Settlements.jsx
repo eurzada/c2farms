@@ -475,13 +475,14 @@ export default function Settlements() {
       checkboxSelection: true,
       headerCheckboxSelectionFilteredOnly: true,
       width: 44,
+      flex: 0,
       sortable: false,
       filter: false,
       resizable: false,
       pinned: 'left',
     },
     {
-      field: 'settlement_number', headerName: 'Settlement #', width: 160,
+      field: 'settlement_number', headerName: 'Settlement #', minWidth: 140, flex: 1.5,
       cellRenderer: p => (
         <Stack direction="row" alignItems="center" spacing={0.5}>
           <span>{p.value}</span>
@@ -492,32 +493,32 @@ export default function Settlements() {
       ),
     },
     {
-      field: 'settlement_date', headerName: 'Date', width: 110,
+      field: 'settlement_date', headerName: 'Date', minWidth: 100, flex: 1,
       valueFormatter: p => p.value ? new Date(p.value).toLocaleDateString() : '',
     },
-    { field: 'counterparty.name', headerName: 'Buyer', width: 150 },
-    { field: 'buyer_format', headerName: 'Format', width: 100, valueFormatter: p => p.value?.toUpperCase() || '' },
+    { field: 'counterparty.name', headerName: 'Buyer', minWidth: 120, flex: 1.5 },
+    { field: 'buyer_format', headerName: 'Format', minWidth: 80, flex: 0.8, valueFormatter: p => p.value?.toUpperCase() || '' },
     {
-      headerName: 'Contract #', width: 130,
+      headerName: 'Contract #', minWidth: 110, flex: 1.2,
       valueGetter: p => p.data.marketing_contract?.contract_number || p.data.extraction_json?.contract_number || '',
     },
     {
-      headerName: 'Commodity', width: 120,
+      headerName: 'Commodity', minWidth: 100, flex: 1,
       valueGetter: p => p.data.marketing_contract?.commodity?.name || p.data.extraction_json?.commodity || '',
     },
     {
-      field: 'total_amount', headerName: 'Amount', width: 120,
+      field: 'total_amount', headerName: 'Amount', minWidth: 100, flex: 1,
       valueFormatter: p => p.value ? fmtDollar(p.value) : '',
     },
-    { field: '_count.lines', headerName: 'Lines', width: 70 },
+    { field: '_count.lines', headerName: 'Lines', minWidth: 60, flex: 0.5 },
     {
-      field: 'status', headerName: 'Status', width: 110,
+      field: 'status', headerName: 'Status', minWidth: 100, flex: 0.9,
       cellRenderer: p => (
         <Chip label={p.value} size="small" color={STATUS_COLORS[p.value] || 'default'} />
       ),
     },
     {
-      headerName: 'Actions', width: 160, sortable: false, filter: false, pinned: 'right',
+      headerName: 'Actions', minWidth: 120, width: 140, flex: 0, sortable: false, filter: false, pinned: 'right',
       cellRenderer: p => (
         <Stack direction="row" spacing={0} alignItems="center">
           <Tooltip title="View Details">
@@ -631,7 +632,7 @@ export default function Settlements() {
           ref={gridRef}
           rowData={settlements}
           columnDefs={columnDefs}
-          defaultColDef={{ sortable: true, resizable: true, filter: true }}
+          defaultColDef={{ sortable: true, resizable: true, filter: true, flex: 1 }}
           animateRows
           rowSelection="multiple"
           suppressRowClickSelection

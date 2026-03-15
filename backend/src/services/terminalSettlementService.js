@@ -2,6 +2,7 @@ import prisma from '../config/database.js';
 import createLogger from '../utils/logger.js';
 import { resolveInventoryFarm } from './resolveInventoryFarm.js';
 import { getOrCreateLgxCounterparty } from './marketingService.js';
+import { extractSettlementFromPdf } from './settlementService.js';
 import PdfPrinter from 'pdfmake';
 import { getFontPaths } from '../utils/fontPaths.js';
 
@@ -606,6 +607,505 @@ export async function getSettlementSummary(farmId) {
     total_amount: settlements.reduce((s, x) => s + (x.net_amount || 0), 0),
     by_type: byType,
   };
+}
+
+// ── Buyer Settlement Functions ──────────────────────────────────────────────
+
+/**
+ * Upload and extract a buyer settlement PDF (e.g. JGL settlement).
+ * Creates a TerminalSettlement with type='buyer_settlement' in draft status.
+ */
+export async function uploadBuyerSettlementPdf(farmId, pdfBuffer, filename) {
+  logger.info('Uploading buyer settlement PDF', { farmId, filename });
+
+  // 1. Extract via Claude Vision (reuses existing extraction prompts)
+  const { extraction, buyerFormat, usage } = await extractSettlementFromPdf(pdfBuffer);
+
+  // 2. Auto-find counterparty by buyer name
+  const buyerName = extraction.buyer || '';
+  let counterparty = await prisma.counterparty.findFirst({
+    where: {
+      farm_id: farmId,
+      name: { contains: buyerName.split(' ')[0], mode: 'insensitive' },
+      is_active: true,
+    },
+  });
+  if (!counterparty) {
+    // Fallback: create one
+    counterparty = await prisma.counterparty.create({
+      data: {
+        farm_id: farmId,
+        name: buyerName || 'Unknown Buyer',
+        short_code: (buyerName || 'UNK').substring(0, 4).toUpperCase(),
+        type: 'buyer',
+      },
+    });
+  }
+
+  // 3. Auto-link to TerminalContract by contract_number (direction='sale')
+  let contractId = null;
+  if (extraction.contract_number) {
+    const contract = await prisma.terminalContract.findFirst({
+      where: {
+        farm_id: farmId,
+        contract_number: extraction.contract_number,
+        direction: 'sale',
+      },
+    });
+    if (contract) contractId = contract.id;
+  }
+
+  // 4. Build settlement number
+  const settlementNumber = extraction.settlement_number
+    ? `BUYER-${extraction.settlement_number}`
+    : `BUYER-${Date.now()}`;
+
+  // 5. Build deductions summary
+  const deductionsSummary = extraction.deductions_summary || [];
+  const totalDeductions = deductionsSummary.reduce((s, d) => s + (d.amount || 0), 0);
+  const grossAmount = extraction.total_gross_amount || extraction.settlement_gross || 0;
+  const netAmount = extraction.total_net_amount || (grossAmount + totalDeductions) || 0;
+
+  // 6. Build lines from extraction
+  const lines = (extraction.lines || []).map((line, idx) => ({
+    line_number: line.line_number ?? (idx + 1),
+    ticket_id: null,
+    source_farm_name: line.origin || null,
+    commodity_id: null,
+    grade: line.grade || null,
+    gross_weight_mt: line.gross_weight_mt ?? null,
+    tare_weight_mt: null,
+    net_weight_mt: line.net_weight_mt ?? null,
+    price_per_mt: line.price_per_mt ?? null,
+    line_amount: line.line_gross ?? (line.net_weight_mt && line.price_per_mt ? line.net_weight_mt * line.price_per_mt : null),
+    match_status: 'unmatched',
+    match_confidence: null,
+    // Stash ticket_number in source_farm_name temporarily for reconciliation
+    source_farm_name: line.ticket_number ? String(line.ticket_number) : null,
+  }));
+
+  // 7. Find commodity by extraction
+  let commodityId = null;
+  if (extraction.commodity) {
+    const commodity = await prisma.commodity.findFirst({
+      where: {
+        farm_id: farmId,
+        name: { contains: extraction.commodity.split(' ')[0], mode: 'insensitive' },
+      },
+    });
+    if (commodity) commodityId = commodity.id;
+  }
+  if (commodityId) {
+    for (const line of lines) {
+      line.commodity_id = commodityId;
+    }
+  }
+
+  // 8. Create settlement
+  const settlement = await prisma.terminalSettlement.create({
+    data: {
+      farm_id: farmId,
+      type: 'buyer_settlement',
+      settlement_number: settlementNumber,
+      counterparty_id: counterparty.id,
+      contract_id: contractId,
+      settlement_date: extraction.settlement_date ? new Date(extraction.settlement_date) : new Date(),
+      gross_amount: grossAmount,
+      net_amount: netAmount,
+      settlement_gross: grossAmount,
+      deductions_summary: deductionsSummary,
+      extraction_json: extraction,
+      extraction_status: 'completed',
+      buyer_format: buyerFormat,
+      status: 'draft',
+      lines: { create: lines },
+    },
+    include: standardIncludes,
+  });
+
+  logger.info('Created buyer settlement from PDF', {
+    id: settlement.id,
+    buyer: buyerName,
+    contract: extraction.contract_number,
+    lines: lines.length,
+    gross: grossAmount,
+    net: netAmount,
+  });
+
+  return { settlement, extraction, usage };
+}
+
+/**
+ * Reconcile buyer settlement lines against outbound TerminalTickets.
+ * Matches by ticket_number from the extraction (stored in source_farm_name on lines).
+ */
+export async function reconcileBuyerSettlement(farmId, settlementId) {
+  const settlement = await prisma.terminalSettlement.findFirst({
+    where: { id: settlementId, farm_id: farmId, type: 'buyer_settlement' },
+    include: { lines: { orderBy: { line_number: 'asc' } } },
+  });
+  if (!settlement) throw Object.assign(new Error('Buyer settlement not found'), { status: 404 });
+
+  // Load outbound TerminalTickets
+  const outboundTickets = await prisma.terminalTicket.findMany({
+    where: { farm_id: farmId, direction: 'outbound', status: 'complete' },
+    select: { id: true, ticket_number: true, ticket_date: true, weight_kg: true, product: true },
+  });
+  const ticketMap = new Map();
+  for (const t of outboundTickets) {
+    ticketMap.set(String(t.ticket_number), t);
+  }
+
+  let matched = 0;
+  let unmatched = 0;
+
+  await prisma.$transaction(async (tx) => {
+    for (const line of settlement.lines) {
+      // The ticket number from the PDF is stored in source_farm_name
+      const extractedTicketNum = line.source_farm_name;
+      if (!extractedTicketNum) {
+        unmatched++;
+        continue;
+      }
+
+      const ticket = ticketMap.get(extractedTicketNum);
+      if (ticket) {
+        await tx.terminalSettlementLine.update({
+          where: { id: line.id },
+          data: {
+            ticket_id: ticket.id,
+            match_status: 'matched',
+            match_confidence: 1.0,
+          },
+        });
+        matched++;
+      } else {
+        // Fallback: try weight/date scoring
+        const lineMt = line.net_weight_mt || 0;
+        let bestMatch = null;
+        let bestScore = 0;
+
+        for (const t of outboundTickets) {
+          const ticketMt = (t.weight_kg || 0) / 1000;
+          if (ticketMt <= 0) continue;
+          const weightDiff = Math.abs(ticketMt - lineMt) / ticketMt;
+          if (weightDiff < 0.02) { // within 2%
+            const score = 1 - weightDiff;
+            if (score > bestScore) {
+              bestScore = score;
+              bestMatch = t;
+            }
+          }
+        }
+
+        if (bestMatch && bestScore > 0.95) {
+          await tx.terminalSettlementLine.update({
+            where: { id: line.id },
+            data: {
+              ticket_id: bestMatch.id,
+              match_status: 'matched',
+              match_confidence: bestScore,
+            },
+          });
+          matched++;
+        } else {
+          await tx.terminalSettlementLine.update({
+            where: { id: line.id },
+            data: { match_status: 'unmatched', match_confidence: null },
+          });
+          unmatched++;
+        }
+      }
+    }
+  });
+
+  logger.info('Reconciled buyer settlement', { settlementId, matched, unmatched });
+
+  return {
+    total_lines: settlement.lines.length,
+    matched,
+    unmatched,
+    match_rate: settlement.lines.length > 0 ? Math.round((matched / settlement.lines.length) * 100) : 0,
+  };
+}
+
+/**
+ * Compute realization: buyer_net - transfer_net = margin.
+ * Finds transfer settlements on the same contract.
+ */
+export async function computeRealization(farmId, settlementId) {
+  const settlement = await prisma.terminalSettlement.findFirst({
+    where: { id: settlementId, farm_id: farmId, type: 'buyer_settlement' },
+    include: {
+      contract: { select: { id: true, contract_number: true } },
+      lines: true,
+    },
+  });
+  if (!settlement) throw Object.assign(new Error('Buyer settlement not found'), { status: 404 });
+
+  if (!settlement.contract_id) {
+    throw Object.assign(new Error('No contract linked to this buyer settlement'), { status: 400 });
+  }
+
+  // Find all transfer settlements on the same contract
+  const transfers = await prisma.terminalSettlement.findMany({
+    where: {
+      farm_id: farmId,
+      contract_id: settlement.contract_id,
+      type: 'transfer',
+      status: { in: ['finalized', 'pushed'] },
+    },
+    select: { id: true, net_amount: true, settlement_number: true },
+  });
+
+  const transferNet = transfers.reduce((s, t) => s + (t.net_amount || 0), 0);
+  const buyerNet = settlement.net_amount || 0;
+  const totalMt = settlement.lines.reduce((s, l) => s + (l.net_weight_mt || 0), 0);
+  const margin = buyerNet - transferNet;
+  const marginPerMt = totalMt > 0 ? Math.round((margin / totalMt) * 100) / 100 : 0;
+  const marginPct = buyerNet > 0 ? Math.round((margin / buyerNet) * 10000) / 100 : 0;
+
+  const realization = {
+    transfer_net: Math.round(transferNet * 100) / 100,
+    buyer_net: Math.round(buyerNet * 100) / 100,
+    margin: Math.round(margin * 100) / 100,
+    margin_per_mt: marginPerMt,
+    margin_pct: marginPct,
+    total_mt: Math.round(totalMt * 100) / 100,
+    transfer_count: transfers.length,
+    transfer_ids: transfers.map(t => t.id),
+    contract_number: settlement.contract?.contract_number,
+  };
+
+  // Save realization + paired transfer IDs
+  await prisma.terminalSettlement.update({
+    where: { id: settlementId },
+    data: {
+      realization_json: realization,
+      paired_transfer_id: transfers.map(t => t.id).join(','),
+    },
+  });
+
+  logger.info('Computed realization', { settlementId, ...realization });
+  return realization;
+}
+
+/**
+ * Finalize a buyer settlement — validates all lines matched and realization computed.
+ */
+export async function finalizeBuyerSettlement(farmId, settlementId) {
+  const settlement = await prisma.terminalSettlement.findFirst({
+    where: { id: settlementId, farm_id: farmId, type: 'buyer_settlement' },
+    include: { lines: true },
+  });
+  if (!settlement) throw Object.assign(new Error('Buyer settlement not found'), { status: 404 });
+  if (settlement.status !== 'draft') {
+    throw Object.assign(new Error(`Cannot finalize settlement with status "${settlement.status}"`), { status: 400 });
+  }
+
+  const unmatchedCount = settlement.lines.filter(l => l.match_status !== 'matched').length;
+  if (unmatchedCount > 0) {
+    throw Object.assign(
+      new Error(`${unmatchedCount} line(s) still unmatched — reconcile all lines first`),
+      { status: 400 },
+    );
+  }
+
+  if (!settlement.realization_json) {
+    throw Object.assign(new Error('Realization not computed — compute realization first'), { status: 400 });
+  }
+
+  return prisma.terminalSettlement.update({
+    where: { id: settlementId },
+    data: { status: 'finalized' },
+    include: standardIncludes,
+  });
+}
+
+/**
+ * Push a finalized buyer settlement to logistics as a margin-only Settlement.
+ * The existing transfer settlement ($600K) stays untouched.
+ * Only the margin (buyer_net - transfer_net) gets pushed.
+ */
+export async function pushBuyerToLogistics(farmId, settlementId, io) {
+  const settlement = await prisma.terminalSettlement.findFirst({
+    where: { id: settlementId, farm_id: farmId, type: 'buyer_settlement' },
+    include: {
+      contract: {
+        select: {
+          id: true,
+          contract_number: true,
+          commodity: { select: { id: true, name: true, code: true } },
+        },
+      },
+      counterparty: { select: { id: true, name: true, short_code: true } },
+      lines: {
+        include: {
+          ticket: { select: { id: true, ticket_number: true, ticket_date: true } },
+          commodity: { select: { id: true, name: true } },
+        },
+        orderBy: { line_number: 'asc' },
+      },
+    },
+  });
+  if (!settlement) throw Object.assign(new Error('Buyer settlement not found'), { status: 404 });
+  if (settlement.status !== 'finalized') {
+    throw Object.assign(new Error('Settlement must be finalized before pushing'), { status: 400 });
+  }
+  if (settlement.pushed_settlement_id) {
+    throw Object.assign(new Error('Settlement has already been pushed'), { status: 400 });
+  }
+
+  const realization = settlement.realization_json;
+  if (!realization) {
+    throw Object.assign(new Error('Realization not computed'), { status: 400 });
+  }
+
+  // Resolve enterprise farm
+  const { farmId: enterpriseFarmId } = await resolveInventoryFarm(farmId);
+
+  // Find/create the actual buyer counterparty in enterprise context
+  let buyerCounterparty = await prisma.counterparty.findFirst({
+    where: {
+      farm_id: enterpriseFarmId,
+      name: { contains: settlement.counterparty?.name?.split(' ')[0] || '', mode: 'insensitive' },
+      is_active: true,
+    },
+  });
+  if (!buyerCounterparty) {
+    buyerCounterparty = await prisma.counterparty.create({
+      data: {
+        farm_id: enterpriseFarmId,
+        name: settlement.counterparty?.name || 'Unknown Buyer',
+        short_code: settlement.counterparty?.short_code || 'UNK',
+        type: 'buyer',
+      },
+    });
+  }
+
+  const contractNum = settlement.contract?.contract_number;
+  const margin = realization.margin || 0;
+
+  const result = await prisma.$transaction(async (tx) => {
+    // Build settlement number for margin entry
+    const existingCount = await tx.settlement.count({
+      where: {
+        farm_id: enterpriseFarmId,
+        source: 'lgx_realization',
+      },
+    });
+    const seq = String(existingCount + 1).padStart(3, '0');
+    const settlementNum = `LGXM-${seq}-${contractNum || settlement.settlement_number}`;
+
+    // Create margin-only logistics Settlement
+    const logisticsSettlement = await tx.settlement.create({
+      data: {
+        farm_id: enterpriseFarmId,
+        settlement_number: settlementNum,
+        source: 'lgx_realization',
+        terminal_settlement_id: settlement.id,
+        counterparty_id: buyerCounterparty.id,
+        settlement_date: settlement.settlement_date,
+        total_amount: margin,
+        settlement_gross: realization.buyer_net,
+        status: 'approved', // auto-approve margin entries
+        buyer_format: settlement.buyer_format || 'lgx',
+        extraction_status: 'completed',
+        extraction_json: {
+          contract_number: contractNum || null,
+          commodity: settlement.contract?.commodity?.name || null,
+          source: 'lgx_realization',
+          realization: realization,
+        },
+        reconciliation_report: realization,
+        notes: `LGX Realization Margin - Contract #${contractNum || 'N/A'}`,
+      },
+    });
+
+    // Update TerminalContract status → 'settled'
+    if (settlement.contract_id) {
+      await tx.terminalContract.update({
+        where: { id: settlement.contract_id },
+        data: { status: 'settled' },
+      });
+
+      // Update linked MarketingContract status → 'settled'
+      const linkedMc = await tx.marketingContract.findFirst({
+        where: { linked_terminal_contract_id: settlement.contract_id },
+      });
+      if (linkedMc) {
+        await tx.marketingContract.update({
+          where: { id: linkedMc.id },
+          data: { status: 'settled' },
+        });
+        // Link settlement to marketing contract
+        await tx.settlement.update({
+          where: { id: logisticsSettlement.id },
+          data: { marketing_contract_id: linkedMc.id },
+        });
+      }
+    }
+
+    // Mark terminal settlement as pushed
+    await tx.terminalSettlement.update({
+      where: { id: settlementId },
+      data: {
+        status: 'pushed',
+        pushed_settlement_id: logisticsSettlement.id,
+      },
+    });
+
+    return logisticsSettlement;
+  });
+
+  // Broadcast event
+  if (io) {
+    io.to(enterpriseFarmId).emit('settlement:created', { id: result.id });
+  }
+
+  logger.info('Pushed buyer settlement margin to logistics', {
+    terminalSettlementId: settlementId,
+    settlementId: result.id,
+    margin,
+    enterpriseFarmId,
+  });
+
+  return result;
+}
+
+/**
+ * Manually match a buyer settlement line to an outbound ticket.
+ */
+export async function manualMatchBuyerLine(farmId, settlementId, lineId, ticketId) {
+  const settlement = await prisma.terminalSettlement.findFirst({
+    where: { id: settlementId, farm_id: farmId, type: 'buyer_settlement' },
+  });
+  if (!settlement) throw Object.assign(new Error('Buyer settlement not found'), { status: 404 });
+  if (settlement.status !== 'draft') {
+    throw Object.assign(new Error('Can only match lines on draft settlements'), { status: 400 });
+  }
+
+  const line = await prisma.terminalSettlementLine.findFirst({
+    where: { id: lineId, terminal_settlement_id: settlementId },
+  });
+  if (!line) throw Object.assign(new Error('Line not found'), { status: 404 });
+
+  // Verify ticket belongs to this farm and is outbound
+  const ticket = await prisma.terminalTicket.findFirst({
+    where: { id: ticketId, farm_id: farmId, direction: 'outbound' },
+  });
+  if (!ticket) throw Object.assign(new Error('Outbound ticket not found'), { status: 404 });
+
+  await prisma.terminalSettlementLine.update({
+    where: { id: lineId },
+    data: {
+      ticket_id: ticketId,
+      match_status: 'manual',
+      match_confidence: 1.0,
+    },
+  });
+
+  return getSettlement(farmId, settlementId);
 }
 
 /**

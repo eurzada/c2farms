@@ -6,11 +6,13 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import CountertopsIcon from '@mui/icons-material/Countertops';
 import TimelineIcon from '@mui/icons-material/Timeline';
+import GradingIcon from '@mui/icons-material/Grade';
 import { useFarm } from '../../contexts/FarmContext';
 
 const TABS = [
   { label: 'Dashboard', path: '/inventory/dashboard', icon: <DashboardIcon />, enterprise: true },
   { label: 'Bin Inventory', path: '/inventory/bins', icon: <InventoryIcon /> },
+  { label: 'Grading', path: '/inventory/grading', icon: <GradingIcon />, enterprise: true },
   { label: 'Count History', path: '/inventory/history', icon: <TimelineIcon />, enterprise: true },
   { label: 'Contracts', path: '/inventory/contracts', icon: <DescriptionIcon />, enterprise: true },
   { label: 'Reconciliation', path: '/inventory/recon', icon: <CompareArrowsIcon />, enterprise: true },

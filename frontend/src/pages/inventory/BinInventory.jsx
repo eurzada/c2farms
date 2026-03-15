@@ -49,8 +49,8 @@ export default function BinInventory() {
   }, [currentFarm, filters, isEnterprise]);
 
   const columnDefs = useMemo(() => [
-    { field: 'location_name', headerName: 'Location', width: 160 },
-    { field: 'bin_number', headerName: 'Bin #', width: 100, comparator: (a, b) => {
+    { field: 'location_name', headerName: 'Location', minWidth: 110, flex: 1.2 },
+    { field: 'bin_number', headerName: 'Bin #', minWidth: 70, flex: 0.6, comparator: (a, b) => {
       const numA = parseInt(a, 10);
       const numB = parseInt(b, 10);
       if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
@@ -58,14 +58,14 @@ export default function BinInventory() {
       if (!isNaN(numB)) return 1;
       return String(a).localeCompare(String(b));
     }, sort: 'asc' },
-    { field: 'bin_type', headerName: 'Type', width: 100 },
-    { field: 'capacity_bu', headerName: 'Capacity (bu)', width: 130, valueFormatter: p => p.value ? p.value.toLocaleString() : '-' },
-    { field: 'commodity_name', headerName: 'Commodity', width: 150 },
-    { field: 'bushels', headerName: 'Bushels', width: 120, valueFormatter: p => p.value ? p.value.toLocaleString() : '0' },
-    { field: 'kg', headerName: 'KG', width: 120, valueFormatter: p => p.value ? p.value.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '0' },
-    { field: 'crop_year', headerName: 'Crop Year', width: 100 },
-    { field: 'status', headerName: 'Status', width: 110, cellRenderer: StatusCell },
-    { field: 'notes', headerName: 'Notes', flex: 1, minWidth: 150 },
+    { field: 'bin_type', headerName: 'Type', minWidth: 80, flex: 0.7 },
+    { field: 'capacity_bu', headerName: 'Capacity (bu)', minWidth: 100, flex: 1, valueFormatter: p => p.value ? p.value.toLocaleString() : '-' },
+    { field: 'commodity_name', headerName: 'Commodity', minWidth: 110, flex: 1.2 },
+    { field: 'bushels', headerName: 'Bushels', minWidth: 90, flex: 0.9, valueFormatter: p => p.value ? p.value.toLocaleString() : '0' },
+    { field: 'kg', headerName: 'KG', minWidth: 90, flex: 0.9, valueFormatter: p => p.value ? p.value.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '0' },
+    { field: 'crop_year', headerName: 'Crop Year', minWidth: 80, flex: 0.7 },
+    { field: 'status', headerName: 'Status', minWidth: 90, flex: 0.8, cellRenderer: StatusCell },
+    { field: 'notes', headerName: 'Notes', minWidth: 120, flex: 1.5 },
   ], []);
 
   const defaultColDef = useMemo(() => ({

@@ -345,6 +345,35 @@ model InventoryBin {
 
   @@unique([farm_id, location_id, bin_number])
   @@map("inventory_bins")
+  bin_grades      BinGrade[]
+}
+
+model BinGrade {
+  id              String            @id @default(uuid())
+  farm_id         String
+  bin_id          String
+  crop_year       Int
+  grade           String            // e.g. "Wheat, No.1 CWRS"
+  grade_short     String?           // e.g. "1 CWRS" — display-friendly
+  variety         String?           // e.g. "CWRS", "Nexera", "Eston", "Kabuli"
+  grade_reason    String?           // e.g. "HVK", "FROST", "Colour"
+  protein_pct     Float?
+  moisture_pct    Float?
+  dockage_pct     Float?
+  test_weight     Float?            // g/0.5L
+  hvk_pct         Float?
+  frost           String?           // e.g. "1-M"
+  inspector_notes String?
+  source          String            @default("efu") // efu, manual, other
+  grade_date      DateTime?         @db.Date
+  status          String            @default("available") // available, shipped, emptied
+  created_at      DateTime          @default(now())
+  updated_at      DateTime          @updatedAt
+  bin             InventoryBin      @relation(fields: [bin_id], references: [id], onDelete: Cascade)
+
+  @@unique([farm_id, bin_id, crop_year])
+  @@index([farm_id, crop_year])
+  @@map("bin_grades")
 }
 
 model CountPeriod {
@@ -1090,7 +1119,7 @@ model TerminalSettlement {
   id                    String    @id @default(uuid())
   farm_id               String
   settlement_number     String
-  type                  String    @default("transfer") // transfer | transloading
+  type                  String    @default("transfer") // transfer | transloading | buyer_settlement
   counterparty_id       String
   contract_id           String?
   marketing_contract_id String?
@@ -1100,6 +1129,13 @@ model TerminalSettlement {
   net_amount            Float     @default(0)
   status                String    @default("draft") // draft | finalized | pushed
   pushed_settlement_id  String?
+  paired_transfer_id    String?   // links buyer settlement → paired transfer settlement(s)
+  realization_json      Json?     // { transfer_net, buyer_net, margin, margin_per_mt, margin_pct }
+  settlement_gross      Float?    // gross before deductions (from PDF extraction)
+  deductions_summary    Json?     // [{ name, amount, gst, pst, category }] from PDF
+  extraction_json       Json?     // raw Claude Vision extraction result
+  extraction_status     String?   // pending | completed | failed
+  buyer_format          String?   // jgl | cargill | richardson | etc.
   notes                 String?
   created_at            DateTime  @default(now())
   updated_at            DateTime  @updatedAt
@@ -1126,6 +1162,8 @@ model TerminalSettlementLine {
   net_weight_mt           Float?
   price_per_mt            Float?
   line_amount             Float?
+  match_status            String?  @default("unmatched") // matched | unmatched | exception | manual
+  match_confidence        Float?
   created_at              DateTime @default(now())
 
   terminal_settlement  TerminalSettlement @relation(fields: [terminal_settlement_id], references: [id], onDelete: Cascade)

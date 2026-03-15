@@ -22,6 +22,7 @@ const Contracts = lazy(() => import('./pages/inventory/Contracts'));
 const Reconciliation = lazy(() => import('./pages/inventory/Reconciliation'));
 const FarmManagerView = lazy(() => import('./pages/inventory/FarmManagerView'));
 const CountHistory = lazy(() => import('./pages/inventory/CountHistory'));
+const Grading = lazy(() => import('./pages/inventory/Grading'));
 const LogisticsLayout = lazy(() => import('./components/logistics/LogisticsLayout'));
 const Tickets = lazy(() => import('./pages/logistics/Tickets'));
 const Settlements = lazy(() => import('./pages/logistics/Settlements'));
@@ -163,6 +164,7 @@ export default function App() {
                       <Route path="/inventory" element={<ModuleRoute module="inventory"><InventoryRedirect /></ModuleRoute>} />
                       <Route path="/inventory/dashboard" element={<EnterpriseRoute><InventoryLayout><InventoryDashboard /></InventoryLayout></EnterpriseRoute>} />
                       <Route path="/inventory/bins" element={<ModuleRoute module="inventory"><InventoryLayout><BinInventory /></InventoryLayout></ModuleRoute>} />
+                      <Route path="/inventory/grading" element={<EnterpriseRoute><InventoryLayout><Grading /></InventoryLayout></EnterpriseRoute>} />
                       <Route path="/inventory/contracts" element={<EnterpriseRoute><InventoryLayout><Contracts /></InventoryLayout></EnterpriseRoute>} />
                       <Route path="/inventory/recon" element={<EnterpriseRoute><InventoryLayout><Reconciliation /></InventoryLayout></EnterpriseRoute>} />
                       <Route path="/inventory/count" element={<ModuleRoute module="inventory"><InventoryLayout><FarmManagerView /></InventoryLayout></ModuleRoute>} />

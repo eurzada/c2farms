@@ -5,8 +5,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useAuth } from '../contexts/AuthContext';
 import LoginScreen from '../screens/LoginScreen';
-import CameraScreen from '../screens/CameraScreen';
-import ReviewScreen from '../screens/ReviewScreen';
+import NewTicketScreen from '../screens/NewTicketScreen';
 import HistoryScreen from '../screens/HistoryScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 
@@ -14,15 +13,10 @@ import SettingsScreen from '../screens/SettingsScreen';
 export type RootStackParamList = {
   Login: undefined;
   Main: undefined;
-  Review: {
-    imageUri: string;
-    extraction: Record<string, unknown> | null;
-    confidence: number | null;
-  };
 };
 
 export type MainTabParamList = {
-  Capture: undefined;
+  NewTicket: undefined;
   Tickets: undefined;
   Settings: undefined;
 };
@@ -42,20 +36,18 @@ function MainTabs() {
       }}
     >
       <Tab.Screen
-        name="Capture"
-        component={CameraScreen}
+        name="NewTicket"
+        component={NewTicketScreen}
         options={{
-          title: 'Capture',
+          title: 'New Ticket',
           tabBarIcon: ({ color, size }) => (
             <View style={{
-              width: size, height: size, borderRadius: size / 2,
-              backgroundColor: color, opacity: 0.3,
+              width: size, height: size, borderRadius: 4,
+              borderWidth: 2, borderColor: color,
               justifyContent: 'center', alignItems: 'center',
             }}>
-              <View style={{
-                width: size * 0.5, height: size * 0.5,
-                borderRadius: size * 0.25, backgroundColor: color,
-              }} />
+              <View style={{ width: size * 0.5, height: 2, backgroundColor: color, position: 'absolute' }} />
+              <View style={{ width: 2, height: size * 0.5, backgroundColor: color, position: 'absolute' }} />
             </View>
           ),
         }}
@@ -112,19 +104,7 @@ export default function AppNavigator() {
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {isAuthenticated ? (
-          <>
-            <Stack.Screen name="Main" component={MainTabs} />
-            <Stack.Screen
-              name="Review"
-              component={ReviewScreen}
-              options={{
-                headerShown: true,
-                title: 'Review Ticket',
-                headerStyle: { backgroundColor: '#1B5E20' },
-                headerTintColor: '#fff',
-              }}
-            />
-          </>
+          <Stack.Screen name="Main" component={MainTabs} />
         ) : (
           <Stack.Screen name="Login" component={LoginScreen} />
         )}

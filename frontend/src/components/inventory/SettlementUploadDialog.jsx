@@ -181,6 +181,7 @@ export default function SettlementUploadDialog({ open, onClose, farmId, onUpload
                   <MenuItem value="bunge">Bunge</MenuItem>
                   <MenuItem value="gsl">GSL (Grain St-Laurent)</MenuItem>
                   <MenuItem value="jgl">JGL Commodities</MenuItem>
+                  <MenuItem value="ldc">Louis Dreyfus (LDC)</MenuItem>
                   <MenuItem value="richardson">Richardson Pioneer</MenuItem>
                   <MenuItem value="unknown">Other</MenuItem>
                 </TextField>
