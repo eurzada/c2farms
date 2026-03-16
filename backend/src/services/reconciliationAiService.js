@@ -12,13 +12,36 @@ import prisma from '../config/database.js';
  */
 
 const WEIGHT_TOLERANCE_PCT = 0.03; // 3% tolerance (settlement net includes dockage deductions)
-const DATE_TOLERANCE_DAYS = 3;     // ±3 days for date proximity
+const DATE_TOLERANCE_DAYS = 2;     // ±2 days — with CST timestamps dates should be exact or ±1
 
 // Weight/date mode — tighter tolerances, no ticket-number matching
 // Used for three-party deliveries (e.g. GSL buys, delivers to JK Milling)
 // where the buyer's settlement references their own ticket numbers, not the delivery site's.
 const WD_WEIGHT_TOLERANCE_PCT = 0.015; // 1.5% — tighter when matching solely on weight
 const WD_DATE_TOLERANCE_DAYS = 2;      // ±2 days
+
+/**
+ * Convert a UTC timestamp to CST (Saskatchewan, always UTC-6, no DST) date string.
+ * Returns YYYY-MM-DD in CST. Used to get the true local delivery date from source_timestamp.
+ */
+function utcToCstDate(utcDate) {
+  if (!utcDate) return null;
+  const d = new Date(utcDate);
+  // Subtract 6 hours for CST
+  d.setUTCHours(d.getUTCHours() - 6);
+  return d.toISOString().split('T')[0];
+}
+
+/**
+ * Get the best delivery date for a ticket, preferring source_timestamp (converted to CST).
+ * source_timestamp is the exact Traction Ag timestamp; delivery_date may have timezone artifacts.
+ */
+function getTicketCstDate(ticket) {
+  if (ticket.source_timestamp) {
+    return new Date(utcToCstDate(ticket.source_timestamp) + 'T12:00:00Z');
+  }
+  return ticket.delivery_date ? new Date(ticket.delivery_date) : null;
+}
 
 // Map common western Canadian grain grade designations to commodity names
 const GRADE_TO_COMMODITY = {
@@ -131,12 +154,12 @@ function computeMatchScore(line, ticket, contractNumber, { weightDateMode = fals
     issues.push('weight_missing');
   }
 
-  // 2. Date proximity
+  // 2. Date proximity — use source_timestamp (CST) when available for accurate comparison
   const dateDimWeight = weightDateMode ? 0.45 : 0.3;
   totalWeight += dateDimWeight;
-  if (line.delivery_date && ticket.delivery_date) {
+  const ticketDate = getTicketCstDate(ticket);
+  if (line.delivery_date && ticketDate) {
     const lineDate = new Date(line.delivery_date);
-    const ticketDate = new Date(ticket.delivery_date);
     const daysDiff = Math.abs((lineDate - ticketDate) / (1000 * 60 * 60 * 24));
     if (daysDiff <= 1) {
       dimensions.date = { matched: true, score: 1, days_diff: daysDiff };
@@ -471,8 +494,14 @@ export async function reconcileSettlement(settlementId, { matchMode = 'auto' } =
     }
   }
 
-  // Sort by score descending (greedy assignment)
-  scoredPairs.sort((a, b) => b.score - a.score);
+  // Sort by score descending; break ties by date proximity (closest date wins)
+  scoredPairs.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    // Tiebreaker: prefer closer date match
+    const aDays = a.dimensions?.date?.days_diff ?? 999;
+    const bDays = b.dimensions?.date?.days_diff ?? 999;
+    return aDays - bDays;
+  });
 
   // Greedy assignment — in weight_date mode use a higher minimum threshold (0.5)
   // because we're relying entirely on weight+date with no ticket number confirmation

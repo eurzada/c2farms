@@ -305,6 +305,72 @@ CRITICAL RULES:
 
 Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.`,
 
+  g3: `You are extracting data from a G3 Canada Limited grain settlement PDF. This document may have TWO different formats:
+
+FORMAT A — "EFT Document" + rotated "Settlement Document" pages:
+- Page 1 is an "EFT Document - Payable in CAD" summary showing payment info. The "TICKET / SOURCE NBR" column on this page is a BATCH reference number — it is NOT the per-ticket weigh scale number. IGNORE this number for ticket_number.
+- Subsequent pages are "SETTLEMENT DOCUMENT" detail pages (may be rotated 90°). Each page shows 2-3 individual ticket blocks with Receipt Number, Receipt Date, Product, weights, deductions, contract info.
+
+FORMAT B — Clean tabular "SETTLEMENT DOCUMENT" pages:
+- Each page shows the G3 header with Settle Date, Cheque/EFT Nbr, Payment Amount, Location, Grain.
+- Ticket rows appear in a table with columns: Receipt Date | Receipt Number | Product | Gross WT | Vehicle Weight | Grain Unloaded | Dock % | Dock WT | Moist % | Net MT | Split Percent | Price / Net MT | Gross Amt Payable
+- Deductions listed per ticket (Type, Rate, Net Deduction)
+- Pricing info (Apply Type, Contract Nbr, Net of Discounts) per ticket
+- Last page has CONTRACT summary and DEDUCTIONS summary tables
+
+Extract ALL of the following into structured JSON:
+
+{
+  "settlement_number": "string (the Cheque / EFT Nbr from the header, e.g. '789', '900', '882'. For EFT format, look for 'Payment Nbr' on the EFT page or 'Settle Doc Nbr' — use the settlement # like '1521082')",
+  "settlement_date": "YYYY-MM-DD (the Settle Date or Payment Date from the header)",
+  "buyer": "G3 Canada Limited",
+  "contract_number": "string or null (the primary contract number — from the CONTRACT summary on the last page or the Contract Nbr column per ticket. If multiple contracts, use the most common one. Format: '304141', '307573', '317801')",
+  "commodity": "string (from the Grain field or Product column — e.g. 'Western Red Spring', 'Durum'. Product column shows grade like '1 CWRS 13.5' or '2 CWAD 13.3')",
+  "location": "string or null (from Location field — e.g. 'Melfort', 'Pasqua')",
+  "total_gross_amount": number (from the Gross Amt on the CONTRACT summary, or sum of all ticket Gross Amt Payable values),
+  "total_net_amount": number (the Net Settlement amount from the summary),
+  "settlement_gross": number or null (the Gross Amt from CONTRACT summary — before deductions),
+  "deductions_summary": [{"name": "string", "amount": number (negative for deductions), "gst": number or null, "pst": number or null, "category": "checkoff|drying|quality|freight|storage|commission|levy|premium|other"}],
+  "currency": "CAD",
+  "lines": [
+    {
+      "line_number": 1,
+      "ticket_number": "string — MUST be the Receipt Number (the highlighted number, e.g. '51828', '53762', '204614'). This is the weigh scale ticket number. See CRITICAL RULES below.",
+      "receipt_number": "string (same as ticket_number — the Receipt Number)",
+      "load_order": "string or null (the Load Order # if visible, e.g. '1436221')",
+      "delivery_date": "YYYY-MM-DD (from Receipt Date column — format is MM/DD/YY, convert to YYYY-MM-DD)",
+      "contract_number": "string or null (per-ticket Contract Nbr — e.g. '304141', '307573')",
+      "product": "string or null (the Product column, e.g. '1 CWRS 13.5', '2 CWAD 13.3')",
+      "gross_weight_mt": number or null (Gross WT),
+      "vehicle_weight": number or null (Vehicle Weight),
+      "grain_unloaded": number or null (Grain Unloaded — highlighted in yellow),
+      "net_weight_mt": number or null (Net MT),
+      "grade": "string or null (extract from Product field — e.g. '1 CWRS', '2 CWAD')",
+      "moisture_pct": number or null (Moist %),
+      "dockage_pct": number or null (Dock %),
+      "dockage_wt": number or null (Dock WT),
+      "split_percent": number or null (Split Percent — usually 100.000),
+      "price_per_mt": number or null (Price / Net MT),
+      "line_gross": number or null (Gross Amt Payable),
+      "line_net": number or null (Net of Discounts),
+      "pricing_type": "string or null (Apply Type — 'Fixed Prc', 'Flat', 'Spot')",
+      "deductions": [{"name": "string", "amount": number}]
+    }
+  ]
+}
+
+CRITICAL RULES FOR G3:
+1. The ticket_number MUST be the "Receipt Number" — this is the weigh scale ticket number that matches the trucker's scale ticket (e.g. 51828, 53762, 53785, 204614, 201425, 203203).
+2. DO NOT use the "TICKET / SOURCE NBR" from the EFT summary page — that is a batch reference number (e.g. 15722) that is the SAME for all lines. It is NOT a per-ticket identifier.
+3. DO NOT use the Load Order # as the ticket number — those are G3's internal order tracking numbers (e.g. 1436221, 1440931).
+4. Each ticket block on the settlement detail pages has its OWN unique Receipt Number. Extract EVERY ticket individually.
+5. Some tickets may have the same Receipt Number but different pricing (e.g. a split between "Flat" contract pricing and "Spot" pricing). These are sub-allocations of the SAME physical load — combine them into ONE line using the Receipt Number, summing the gross amounts and net amounts, and noting both contract numbers.
+6. Deduction types: SK Wht C/SK Wht Develop Com = checkoff (wheat), SK Durum/SK Durum Develop Com = checkoff (durum), Drying/DryRebC = drying, SHR_BKI = quality (shrinkage/breakage), GFRHTS/FRHTS = freight, MIL/TSPTD/HVK/TWT/FUS DMC/ERG/SFLY MD/SEVMDG/SEVSPTL = quality (grading factors). The per-ticket "Net Deduction" is the total deduction for that ticket.
+7. The last page typically shows: Total Number of Loads, Total Net Units (MT), CONTRACT summary (Contract Nbr, Gross Amt Payable), and DEDUCTIONS summary (Discount name, Discount Amt, Net Settlement). Extract these into deductions_summary.
+8. Weights are in MT (metric tonnes).
+
+Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.`,
+
   unknown: `You are extracting data from a grain settlement PDF. The buyer format is unknown. Extract ALL of the following into structured JSON:
 
 {
@@ -358,7 +424,7 @@ async function detectBuyerFormat(pdfBase64) {
           },
           {
             type: 'text',
-            text: 'What grain company issued this settlement document? Reply with ONLY one word: "cargill", "bunge", "jgl", "richardson", "gsl", "ldc", or "unknown". Note: Louis Dreyfus Company = "ldc".',
+            text: 'What grain company issued this settlement document? Reply with ONLY one word: "cargill", "bunge", "jgl", "richardson", "gsl", "ldc", "g3", or "unknown". Note: Louis Dreyfus Company = "ldc". G3 Canada Limited = "g3".',
           },
         ],
       }],
@@ -366,7 +432,7 @@ async function detectBuyerFormat(pdfBase64) {
 
     const usage = computeUsage(model, response);
     const answer = response.content[0]?.text?.trim().toLowerCase();
-    const format = ['cargill', 'bunge', 'jgl', 'richardson', 'gsl', 'ldc'].includes(answer) ? answer : 'unknown';
+    const format = ['cargill', 'bunge', 'jgl', 'richardson', 'gsl', 'ldc', 'g3'].includes(answer) ? answer : 'unknown';
     return { format, usage };
   } catch (err) {
     const classified = classifyApiError(err);
@@ -379,10 +445,37 @@ async function detectBuyerFormat(pdfBase64) {
 }
 
 /**
+ * Fetch active format hints for a given buyer format.
+ * These are admin-provided correction instructions stored per-buyer.
+ */
+async function getFormatHints(farmId, buyerFormat) {
+  const hints = await prisma.settlementFormatHint.findMany({
+    where: { farm_id: farmId, buyer_format: buyerFormat, is_active: true },
+    orderBy: { created_at: 'desc' },
+    take: 10,
+  });
+  return hints;
+}
+
+/**
+ * Build the full extraction prompt, including any admin-provided format hints.
+ */
+function buildExtractionPrompt(buyerFormat, hints = []) {
+  let prompt = EXTRACTION_PROMPTS[buyerFormat] || EXTRACTION_PROMPTS.unknown;
+
+  if (hints.length > 0) {
+    const hintsBlock = hints.map((h, i) => `${i + 1}. ${h.hint_text}`).join('\n');
+    prompt += `\n\nADDITIONAL CORRECTION INSTRUCTIONS FROM ADMINISTRATOR (apply these rules carefully):\n${hintsBlock}`;
+  }
+
+  return prompt;
+}
+
+/**
  * Extract settlement data from a PDF buffer using Claude Vision.
  * Returns { extraction, buyerFormat, usage } where usage includes token counts and cost.
  */
-export async function extractSettlementFromPdf(pdfBuffer, forceBuyerFormat = null) {
+export async function extractSettlementFromPdf(pdfBuffer, forceBuyerFormat = null, farmId = null) {
   const pdfBase64 = pdfBuffer.toString('base64');
   const usageBreakdown = [];
 
@@ -394,7 +487,9 @@ export async function extractSettlementFromPdf(pdfBuffer, forceBuyerFormat = nul
     if (detection.usage) usageBreakdown.push({ step: 'format_detection', ...detection.usage });
   }
 
-  const prompt = EXTRACTION_PROMPTS[buyerFormat] || EXTRACTION_PROMPTS.unknown;
+  // Fetch admin-provided correction hints for this buyer format
+  const hints = farmId ? await getFormatHints(farmId, buyerFormat) : [];
+  const prompt = buildExtractionPrompt(buyerFormat, hints);
   const model = MODELS.extraction;
 
   let response;
@@ -545,6 +640,29 @@ function postProcessTicketNumbers(lines, buyerFormat) {
       if (tn && (tn === assembly || tn === contract)) {
         // This line is the assembly/contract row misidentified as a ticket — skip it
         return { ...line, ticket_number: null, _skip: true };
+      }
+    }
+
+    // G3: The Receipt Number is the weigh scale ticket number.
+    // If the AI accidentally used the Load Order # (7-digit, e.g. 1436221) or the
+    // EFT batch "TICKET / SOURCE NBR" (same for all lines, e.g. 15722), fix it.
+    if (buyerFormat === 'g3') {
+      const receiptNum = String(line.receipt_number || '');
+      // If ticket_number is a Load Order # (7 digits starting with 14xxxxx) and
+      // receipt_number exists, swap to receipt_number
+      if (receiptNum && /^\d{5,6}$/.test(receiptNum) && tn !== receiptNum) {
+        return {
+          ...line,
+          ticket_number: receiptNum,
+          buyer_receipt_number: tn,
+        };
+      }
+      // If all ticket numbers in the batch are the same (EFT batch ref), the AI
+      // grabbed the wrong field. We can't fix this in post-processing per-line,
+      // but the prompt should handle it. At least ensure receipt_number propagates.
+      if (receiptNum && tn === receiptNum) {
+        // Already correct — receipt_number matches ticket_number
+        return line;
       }
     }
 

@@ -317,7 +317,8 @@ router.post('/:farmId/settlements/upload', authenticate, requireRole('admin', 'm
     try {
       ({ extraction, buyerFormat, usage } = await extractSettlementFromPdf(
         req.file.buffer,
-        buyer_format || null
+        buyer_format || null,
+        req.params.farmId
       ));
     } catch (apiErr) {
       // Return structured error with usage if available
@@ -356,6 +357,133 @@ router.post('/:farmId/settlements/upload', authenticate, requireRole('admin', 'm
     });
 
     res.status(201).json({ settlement, extraction, buyer_format: buyerFormat, usage });
+  } catch (err) { next(err); }
+});
+
+// ─── Extract-only (preview before save) ──────────────────────────────
+
+// POST extract — returns AI extraction without saving (for review/edit flow)
+router.post('/:farmId/settlements/extract', authenticate, requireRole('admin', 'manager'), upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    if (!req.file.originalname.match(/\.(pdf|jpg|jpeg|png)$/i)) {
+      return res.status(400).json({ error: 'Only PDF and image files are supported' });
+    }
+
+    const { buyer_format } = req.body;
+
+    let extraction, buyerFormat, usage;
+    try {
+      ({ extraction, buyerFormat, usage } = await extractSettlementFromPdf(
+        req.file.buffer,
+        buyer_format || null,
+        req.params.farmId
+      ));
+    } catch (apiErr) {
+      const status = apiErr.code === 'NO_API_KEY' || apiErr.code === 'INVALID_API_KEY' ? 500
+        : apiErr.code === 'RATE_LIMITED' ? 429
+        : apiErr.code === 'INSUFFICIENT_CREDITS' ? 402
+        : apiErr.code === 'API_OVERLOADED' ? 503
+        : 422;
+      return res.status(status).json({
+        error: apiErr.message,
+        code: apiErr.code,
+        usage: apiErr.usage || null,
+      });
+    }
+
+    // Return extraction for review — NOT saved yet
+    res.json({ extraction, buyer_format: buyerFormat, usage });
+  } catch (err) { next(err); }
+});
+
+// POST save — save reviewed/corrected extraction data
+router.post('/:farmId/settlements/save-reviewed', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { extraction, buyer_format, usage, hint } = req.body;
+    if (!extraction) return res.status(400).json({ error: 'No extraction data provided' });
+
+    // Save settlement with (possibly corrected) extraction
+    const settlement = await saveSettlement(
+      req.params.farmId,
+      extraction,
+      buyer_format || 'unknown',
+      { usage }
+    );
+
+    // If admin provided a correction hint, save it for future extractions
+    if (hint && hint.trim()) {
+      await prisma.settlementFormatHint.create({
+        data: {
+          farm_id: req.params.farmId,
+          buyer_format: buyer_format || 'unknown',
+          hint_text: hint.trim(),
+          created_by: req.userId,
+        },
+      });
+    }
+
+    logAudit({
+      farmId: req.params.farmId,
+      userId: req.userId,
+      entityType: 'Settlement',
+      entityId: settlement.id,
+      action: 'create',
+      changes: {
+        settlement_number: settlement.settlement_number,
+        buyer_format: buyer_format,
+        lines_extracted: settlement.lines.length,
+        reviewed: true,
+        had_corrections: !!hint,
+        ai_usage: usage,
+      },
+    });
+
+    res.status(201).json({ settlement, extraction, buyer_format, usage });
+  } catch (err) { next(err); }
+});
+
+// ─── Format Hints (admin training for AI extraction) ─────────────────
+
+// GET format hints for a buyer
+router.get('/:farmId/settlements/format-hints', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { buyer_format } = req.query;
+    const where = { farm_id: req.params.farmId };
+    if (buyer_format) where.buyer_format = buyer_format;
+
+    const hints = await prisma.settlementFormatHint.findMany({
+      where,
+      orderBy: { created_at: 'desc' },
+    });
+    res.json({ hints });
+  } catch (err) { next(err); }
+});
+
+// POST add a format hint
+router.post('/:farmId/settlements/format-hints', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const { buyer_format, hint_text } = req.body;
+    if (!buyer_format || !hint_text?.trim()) {
+      return res.status(400).json({ error: 'buyer_format and hint_text are required' });
+    }
+    const hint = await prisma.settlementFormatHint.create({
+      data: {
+        farm_id: req.params.farmId,
+        buyer_format,
+        hint_text: hint_text.trim(),
+        created_by: req.userId,
+      },
+    });
+    res.status(201).json({ hint });
+  } catch (err) { next(err); }
+});
+
+// DELETE a format hint
+router.delete('/:farmId/settlements/format-hints/:hintId', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    await prisma.settlementFormatHint.delete({ where: { id: req.params.hintId } });
+    res.json({ success: true });
   } catch (err) { next(err); }
 });
 

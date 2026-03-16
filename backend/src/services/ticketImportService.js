@@ -331,10 +331,18 @@ export async function previewTicketImport(farmId, csvText) {
 
     const isExisting = existingTicketSet.has(ticketNumber);
 
+    // Parse full source timestamp for audit/matching
+    let sourceTimestamp = null;
+    if (tsValue) {
+      const d = new Date(tsValue);
+      if (!isNaN(d.getTime())) sourceTimestamp = d.toISOString();
+    }
+
     tickets.push({
       row_number: rowNum,
       ticket_number: ticketNumber,
       delivery_date: deliveryDate?.toISOString()?.split('T')[0] || null,
+      source_timestamp: sourceTimestamp,
       crop_year: parseInt(row[colMap.cropYear]) || null,
       crop_name: cropName,
       net_weight_kg: netWeightKg,
@@ -385,10 +393,12 @@ export async function previewTicketImport(farmId, csvText) {
 }
 
 /**
- * Commit parsed tickets to the database. Upserts on farm_id + ticket_number.
+ * Commit parsed tickets to the database.
+ * Replaces all traction_ag tickets within the CSV's date range to maintain
+ * perfect fidelity with the source CSV — every CSV row = one DB record.
  */
 export async function commitTicketImport(farmId, tickets, resolutions) {
-  const results = { created: 0, updated: 0, errors: [] };
+  const results = { created: 0, deleted: 0, errors: [] };
 
   // Save commodity & counterparty alias mappings for future imports
   if (resolutions) {
@@ -418,56 +428,88 @@ export async function commitTicketImport(farmId, tickets, resolutions) {
     }
   }
 
-  for (const t of tickets) {
-    try {
-      const data = {
-        farm_id: farmId,
-        ticket_number: t.ticket_number,
-        delivery_date: t.delivery_date ? new Date(t.delivery_date) : new Date(),
-        net_weight_kg: t.net_weight_kg || 0,
-        net_weight_mt: (t.net_weight_kg || 0) / 1000,
-        gross_weight_kg: t.gross_weight_kg || null,
-        tare_weight_kg: t.tare_weight_kg || null,
-        moisture_pct: t.moisture_pct || null,
-        dockage_pct: t.dockage_pct || null,
-        protein_pct: t.protein_pct || null,
-        grade: t.grade || null,
-        source_system: 'traction_ag',
-        source_ref: t.source_ref || null,
-        source_ticket_number: t.source_ticket_number || null,
-        operator_name: t.operator_name || null,
-        vehicle: t.vehicle || null,
-        destination: t.destination || null,
-        crop_year: t.crop_year || null,
-        bin_label: t.bin_label || null,
-        contract_number: t.contract_number || null,
-        buyer_name: t.buyer_name || null,
-        settled: t.settled || false,
-        notes: t.notes || null,
-        marketing_contract_id: t.marketing_contract_id || null,
-        counterparty_id: t.counterparty_id || null,
-        commodity_id: t.commodity_id || null,
-        bin_id: t.bin_id || null,
-        location_id: t.location_id || null,
-      };
+  // Determine the date range covered by this CSV
+  const dates = tickets
+    .map(t => t.delivery_date)
+    .filter(Boolean)
+    .map(d => new Date(d))
+    .sort((a, b) => a - b);
 
-      await prisma.deliveryTicket.upsert({
-        where: {
-          farm_id_ticket_number: { farm_id: farmId, ticket_number: t.ticket_number },
-        },
-        update: data,
-        create: data,
+  if (dates.length === 0) {
+    results.errors.push('No valid dates found in CSV');
+    return results;
+  }
+
+  const minDate = dates[0];
+  const maxDate = dates[dates.length - 1];
+
+  // Use a transaction: clear existing traction_ag tickets in date range, then insert all CSV rows
+  await prisma.$transaction(async (tx) => {
+    // Unlink settlement lines referencing tickets we're about to delete
+    const ticketsToDelete = await tx.deliveryTicket.findMany({
+      where: {
+        farm_id: farmId,
+        source_system: 'traction_ag',
+        delivery_date: { gte: minDate, lte: maxDate },
+      },
+      select: { id: true },
+    });
+    const deleteIds = ticketsToDelete.map(t => t.id);
+
+    if (deleteIds.length > 0) {
+      await tx.settlementLine.updateMany({
+        where: { delivery_ticket_id: { in: deleteIds } },
+        data: { delivery_ticket_id: null, match_status: 'unmatched' },
       });
 
-      if (t.is_existing || t.status === 'update') {
-        results.updated++;
-      } else {
-        results.created++;
-      }
-    } catch (err) {
-      results.errors.push(`Ticket ${t.ticket_number}: ${err.message}`);
+      const deleted = await tx.deliveryTicket.deleteMany({
+        where: { id: { in: deleteIds } },
+      });
+      results.deleted = deleted.count;
     }
-  }
+
+    // Insert every CSV row as a new record
+    for (const t of tickets) {
+      try {
+        await tx.deliveryTicket.create({
+          data: {
+            farm_id: farmId,
+            ticket_number: t.ticket_number,
+            delivery_date: t.delivery_date ? new Date(t.delivery_date) : new Date(),
+            net_weight_kg: t.net_weight_kg || 0,
+            net_weight_mt: (t.net_weight_kg || 0) / 1000,
+            gross_weight_kg: t.gross_weight_kg || null,
+            tare_weight_kg: t.tare_weight_kg || null,
+            moisture_pct: t.moisture_pct || null,
+            dockage_pct: t.dockage_pct || null,
+            protein_pct: t.protein_pct || null,
+            grade: t.grade || null,
+            source_system: 'traction_ag',
+            source_ref: t.source_ref || null,
+            source_ticket_number: t.source_ticket_number || null,
+            source_timestamp: t.source_timestamp ? new Date(t.source_timestamp) : null,
+            operator_name: t.operator_name || null,
+            vehicle: t.vehicle || null,
+            destination: t.destination || null,
+            crop_year: t.crop_year || null,
+            bin_label: t.bin_label || null,
+            contract_number: t.contract_number || null,
+            buyer_name: t.buyer_name || null,
+            settled: t.settled || false,
+            notes: t.notes || null,
+            marketing_contract_id: t.marketing_contract_id || null,
+            counterparty_id: t.counterparty_id || null,
+            commodity_id: t.commodity_id || null,
+            bin_id: t.bin_id || null,
+            location_id: t.location_id || null,
+          },
+        });
+        results.created++;
+      } catch (err) {
+        results.errors.push(`Ticket ${t.ticket_number}: ${err.message}`);
+      }
+    }
+  });
 
   return results;
 }

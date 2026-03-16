@@ -122,7 +122,7 @@ export default function SettlementReconciliation() {
 
   const fetchTickets = useCallback(() => {
     if (!currentFarm) return;
-    api.get(`/api/farms/${currentFarm.id}/tickets?limit=500&settled=false`)
+    api.get(`/api/farms/${currentFarm.id}/tickets?limit=5000&settled=false`)
       .then(res => setTickets(res.data.tickets || []));
   }, [currentFarm]);
 
@@ -477,7 +477,11 @@ export default function SettlementReconciliation() {
                               <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>Closest Ticket Match</Typography>
                               <Typography variant="body2">Ticket #: {ticket.ticket_number}</Typography>
                               <Typography variant="body2">Weight: {fmt(ticket.net_weight_mt, 3)} MT</Typography>
-                              <Typography variant="body2">Date: {ticket.delivery_date ? new Date(ticket.delivery_date).toLocaleDateString() : 'N/A'}</Typography>
+                              <Typography variant="body2">
+                                Date: {ticket.source_timestamp
+                                  ? new Date(ticket.source_timestamp).toLocaleString('en-CA', { timeZone: 'America/Regina', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                                  : ticket.delivery_date ? new Date(ticket.delivery_date).toLocaleDateString() : 'N/A'}
+                              </Typography>
                               <Typography variant="body2">Location: {ticket.location?.name || 'N/A'}</Typography>
                             </Grid>
                           )}
@@ -615,6 +619,9 @@ export default function SettlementReconciliation() {
                             {line.delivery_ticket.net_weight_mt?.toFixed(2)} MT |{' '}
                             {line.delivery_ticket.commodity?.name} |{' '}
                             {line.delivery_ticket.location?.name}
+                            {line.delivery_ticket.source_timestamp && (
+                              <> | {new Date(line.delivery_ticket.source_timestamp).toLocaleString('en-CA', { timeZone: 'America/Regina', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</>
+                            )}
                           </Typography>
                           {!ticketNumsMatch && (
                             <Typography variant="caption" color="error.main">
@@ -698,36 +705,29 @@ export default function SettlementReconciliation() {
               ? availableTickets.filter(t => getBaseGrain(t.commodity?.name) === lineGrain)
               : availableTickets;
 
-            // Score remaining by weight proximity (primary), date (secondary)
+            // Filter & rank: date first (±2 days, ticket on or before settlement),
+            // then crop (already filtered above), then weight, then ticket #
+            const getCstDate = (ts) => {
+              if (!ts) return null;
+              const d = new Date(ts);
+              d.setUTCHours(d.getUTCHours() - 6);
+              return new Date(d.toISOString().split('T')[0] + 'T12:00:00Z');
+            };
             const scored = commodityFiltered.map(t => {
-              const tDate = t.delivery_date ? new Date(t.delivery_date) : null;
+              const tDate = t.source_timestamp ? getCstDate(t.source_timestamp) : (t.delivery_date ? new Date(t.delivery_date) : null);
               const daysDiff = lineDate && tDate ? Math.abs((lineDate - tDate) / (1000 * 60 * 60 * 24)) : 999;
+              // Positive = ticket delivered before settlement (expected flow)
+              const dateDirection = lineDate && tDate ? (lineDate - tDate) / (1000 * 60 * 60 * 24) : 0;
               const weightDiff = lineWeight && t.net_weight_mt
                 ? Math.abs(lineWeight - t.net_weight_mt) / Math.max(lineWeight, t.net_weight_mt)
                 : 1;
-              // Settlement date is typically on or after ticket date
-              const dateDirection = lineDate && tDate ? (lineDate - tDate) / (1000 * 60 * 60 * 24) : 0;
 
-              // Primary sort: weight proximity. Secondary: date proximity.
-              // Tickets with date BEFORE settlement date score slightly better (expected flow).
-              let score = 0;
-              if (weightDiff <= 0.01) score += 50;
-              else if (weightDiff <= 0.03) score += 40;
-              else if (weightDiff <= 0.08) score += 25;
-              else if (weightDiff <= 0.15) score += 10;
-
-              if (daysDiff <= 1) score += 30;
-              else if (daysDiff <= 3) score += 25;
-              else if (daysDiff <= 7) score += 15;
-              else if (daysDiff <= 14) score += 5;
-
-              // Bonus: ticket date is on or before settlement date (normal flow)
-              if (dateDirection >= 0 && dateDirection <= 30) score += 5;
-
-              return { ...t, score, daysDiff, weightDiff, dateDirection };
+              return { ...t, daysDiff, weightDiff, dateDirection };
             })
-            .filter(t => t.score > 0)
-            .sort((a, b) => b.score - a.score || a.weightDiff - b.weightDiff)
+            // Hard filter: ±7 days, ticket typically on or before settlement (allow 1 day grace after)
+            .filter(t => t.daysDiff <= 7 && t.dateDirection >= -1)
+            // Sort: closest date → closest weight → ticket number
+            .sort((a, b) => a.daysDiff - b.daysDiff || a.weightDiff - b.weightDiff || String(a.ticket_number).localeCompare(String(b.ticket_number)))
             .slice(0, 40);
 
             return (
@@ -743,7 +743,7 @@ export default function SettlementReconciliation() {
                 </Box>
                 <Divider sx={{ mb: 2 }} />
                 <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                  {scored.length} tickets — {lineGrain ? `${lineGrain} only` : 'all crops'}, ranked by weight then date
+                  {scored.length} tickets — {lineGrain ? `${lineGrain} only` : 'all crops'}, ±7 days, ranked by date → weight → ticket #
                 </Typography>
                 <TextField
                   select
@@ -756,14 +756,18 @@ export default function SettlementReconciliation() {
                 >
                   {scored.map(t => {
                     const wtLabel = t.weightDiff <= 0.01 ? '~exact' : t.weightDiff <= 0.03 ? '~close' : `${(t.weightDiff * 100).toFixed(1)}% off`;
+                    const dateLabel = t.source_timestamp
+                      ? new Date(t.source_timestamp).toLocaleString('en-CA', { timeZone: 'America/Regina', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                      : new Date(t.delivery_date).toLocaleDateString();
+                    const dayLabel = t.daysDiff <= 0.5 ? 'same day' : t.daysDiff <= 1.5 ? '1 day' : `${Math.round(t.daysDiff)} days`;
                     return (
                       <MenuItem key={t.id} value={t.id} sx={{ fontSize: '0.85rem' }}>
-                        #{t.ticket_number} | {t.commodity?.name} | {t.location?.name || '—'} | {new Date(t.delivery_date).toLocaleDateString()} | {t.net_weight_mt?.toFixed(2)} MT ({wtLabel})
+                        {dateLabel} ({dayLabel}) | {t.net_weight_mt?.toFixed(2)} MT ({wtLabel}) | #{t.ticket_number} | {t.location?.name || '—'}
                       </MenuItem>
                     );
                   })}
                   {scored.length === 0 && (
-                    <MenuItem disabled>No {lineGrain || ''} tickets found near this weight/date</MenuItem>
+                    <MenuItem disabled>No {lineGrain || ''} tickets within ±7 days of {lineDate?.toLocaleDateString() || 'settlement date'}</MenuItem>
                   )}
                 </TextField>
                 <TextField

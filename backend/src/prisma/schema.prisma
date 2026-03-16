@@ -664,6 +664,7 @@ model DeliveryTicket {
   source_system         String             @default("traction_ag") // traction_ag, manual
   source_ref            String?            // Load ID from Traction Ag
   source_ticket_number  String?            // buyer's ticket # if known
+  source_timestamp      DateTime?          // original Traction Ag timestamp (full date+time)
   operator_name         String?
   vehicle               String?
   destination           String?
@@ -689,8 +690,8 @@ model DeliveryTicket {
   location                  InventoryLocation? @relation(fields: [location_id], references: [id])
   settlement_lines          SettlementLine[]
 
-  @@unique([farm_id, ticket_number])
   @@unique([farm_id, client_id])
+  @@index([farm_id, ticket_number])
   @@index([farm_id, delivery_date])
   @@index([farm_id, marketing_contract_id])
   @@map("delivery_tickets")
@@ -780,6 +781,19 @@ model SettlementLine {
 
   @@index([settlement_id])
   @@map("settlement_lines")
+}
+
+model SettlementFormatHint {
+  id            String   @id @default(uuid())
+  farm_id       String
+  buyer_format  String   // g3, cargill, bunge, jgl, richardson, gsl, ldc, unknown
+  hint_text     String   // admin's correction instruction
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+  created_by    String?
+
+  @@index([farm_id, buyer_format])
+  @@map("settlement_format_hints")
 }
 
 model AgroPlan {

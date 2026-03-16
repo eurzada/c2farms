@@ -35,7 +35,7 @@ export default function Tickets() {
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
-  const [settledFilter, setSettledFilter] = useState('');
+  const [settledFilter, setSettledFilter] = useState('false');
   const [matchFilter, setMatchFilter] = useState('');
   const [fiscalYearFilter, setFiscalYearFilter] = useState('2026');
   const [photoUrl, setPhotoUrl] = useState(null);
@@ -73,7 +73,7 @@ export default function Tickets() {
     if (settledFilter !== '') params.append('settled', settledFilter);
     if (matchFilter !== '') params.append('matched', matchFilter);
     if (fiscalYearFilter !== '') params.append('fiscal_year', fiscalYearFilter);
-    params.append('limit', '500');
+    params.append('limit', '5000');
 
     const statsParams = new URLSearchParams();
     if (fiscalYearFilter !== '') statsParams.append('fiscal_year', fiscalYearFilter);
@@ -208,6 +208,7 @@ export default function Tickets() {
   // Toggleable columns — field key to headerName
   const toggleableColumns = [
     { field: 'ticket_number', headerName: 'Ticket #' },
+    { field: 'source_timestamp', headerName: 'Timestamp' },
     { field: 'delivery_date', headerName: 'Date' },
     { field: 'crop_year', headerName: 'Crop Yr' },
     { field: 'commodity.name', headerName: 'Crop' },
@@ -248,6 +249,14 @@ export default function Tickets() {
         : null,
     },
     !hiddenCols['ticket_number'] && { field: 'ticket_number', headerName: 'Ticket #', width: 100 },
+    !hiddenCols['source_timestamp'] && {
+      field: 'source_timestamp', headerName: 'Timestamp', width: 145,
+      valueFormatter: p => {
+        if (!p.value) return '';
+        const d = new Date(p.value);
+        return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      },
+    },
     !hiddenCols['delivery_date'] && {
       field: 'delivery_date', headerName: 'Date', width: 95,
       valueFormatter: p => p.value ? new Date(p.value).toLocaleDateString() : '',
