@@ -389,6 +389,14 @@ export default function SettlementUploadDialog({ open, onClose, farmId, onUpload
         {/* ─── Step 2: Review & Edit ─── */}
         {step === 'review' && extraction && (
           <Box>
+            {(() => {
+              const contracts = [...new Set(editedLines.map(l => l.contract_number).filter(Boolean))];
+              return contracts.length > 1 ? (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  Multi-contract detected ({contracts.join(', ')}). This will auto-split into {contracts.length} separate settlements on save.
+                </Alert>
+              ) : null;
+            })()}
             <Stack direction="row" spacing={2} sx={{ mb: 2 }} flexWrap="wrap" alignItems="center">
               <Chip label={detectedFormat?.toUpperCase() || 'UNKNOWN'} variant="outlined" color="primary" />
               <Chip label={`${editedLines.length} line(s)`} />
@@ -534,20 +542,44 @@ export default function SettlementUploadDialog({ open, onClose, farmId, onUpload
         {/* ─── Step 3: Saved ─── */}
         {step === 'saved' && savedResult && (
           <Box>
-            <Stack direction="row" spacing={2} sx={{ mb: 2 }} flexWrap="wrap">
-              <Chip label={`Settlement #${savedResult.settlement?.settlement_number}`} color="primary" />
-              <Chip label={savedResult.buyer_format?.toUpperCase() || 'UNKNOWN'} variant="outlined" />
-              {savedResult.settlement?.counterparty?.name && (
-                <Chip label={savedResult.settlement.counterparty.name} color="info" variant="outlined" />
-              )}
-              {savedResult.settlement?.total_amount && (
-                <Chip label={`$${savedResult.settlement.total_amount.toLocaleString()}`} color="success" />
-              )}
-              <Chip label={`${savedResult.settlement?.lines?.length || 0} line(s)`} />
-            </Stack>
+            {savedResult.split && savedResult.settlements ? (
+              // Multi-contract split view
+              <>
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  Multi-contract settlement detected and auto-split into {savedResult.settlements.length} separate settlements for independent reconciliation.
+                </Alert>
+                {savedResult.settlements.map((s) => (
+                  <Stack key={s.id} direction="row" spacing={2} sx={{ mb: 1.5 }} flexWrap="wrap" alignItems="center">
+                    <Chip label={`#${s.settlement_number}`} color="primary" />
+                    <Chip label={s.marketing_contract?.contract_number || 'No contract'} variant="outlined" size="small" />
+                    <Chip label={s.marketing_contract?.commodity?.name || s.lines?.[0]?.commodity || '—'} size="small" />
+                    {s.total_amount && (
+                      <Chip label={`$${s.total_amount.toLocaleString()}`} color="success" size="small" />
+                    )}
+                    <Chip label={`${s.lines?.length || 0} line(s)`} size="small" />
+                  </Stack>
+                ))}
+              </>
+            ) : (
+              // Single settlement view
+              <Stack direction="row" spacing={2} sx={{ mb: 2 }} flexWrap="wrap">
+                <Chip label={`Settlement #${savedResult.settlement?.settlement_number}`} color="primary" />
+                <Chip label={savedResult.buyer_format?.toUpperCase() || 'UNKNOWN'} variant="outlined" />
+                {savedResult.settlement?.counterparty?.name && (
+                  <Chip label={savedResult.settlement.counterparty.name} color="info" variant="outlined" />
+                )}
+                {savedResult.settlement?.total_amount && (
+                  <Chip label={`$${savedResult.settlement.total_amount.toLocaleString()}`} color="success" />
+                )}
+                <Chip label={`${savedResult.settlement?.lines?.length || 0} line(s)`} />
+              </Stack>
+            )}
 
             <Alert severity="success" sx={{ mt: 1 }}>
-              Settlement saved{correctionHint ? ' with training hint' : ''}. You can now run AI Reconciliation to match these lines to delivery tickets.
+              {savedResult.split
+                ? `${savedResult.settlements.length} settlements saved${correctionHint ? ' with training hint' : ''}. Run AI Reconciliation on each to match delivery tickets.`
+                : `Settlement saved${correctionHint ? ' with training hint' : ''}. You can now run AI Reconciliation to match these lines to delivery tickets.`
+              }
             </Alert>
             {correctionHint && (
               <Alert severity="info" variant="outlined" sx={{ mt: 1 }} icon={<SchoolIcon />}>

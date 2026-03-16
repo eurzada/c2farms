@@ -912,14 +912,60 @@ export async function saveSettlement(farmId, extraction, buyerFormat, { pdfUrl =
     });
   }
 
-  // Look up marketing contract
+  // Post-process: fix ticket numbers when AI grabs internal IDs instead of weigh scale numbers
+  let lines = postProcessTicketNumbers(extraction.lines || [], buyerFormat).filter(l => !l._skip);
+
+  // Cenovus: merge adjustment lines into their parent.
+  // Each physical load has a MAIN line + small "A" adjustment line (same ticket_number, tiny qty at $0.10).
+  // Combine them into a single line, summing line_gross/line_net.
+  if (buyerFormat === 'cenovus' && lines.length > 1) {
+    const merged = [];
+    const seen = new Set();
+    for (const line of lines) {
+      const tn = String(line.ticket_number || '');
+      if (seen.has(tn)) continue; // already merged as an adjustment
+      const adjustments = lines.filter(l =>
+        l !== line &&
+        String(l.ticket_number || '') === tn &&
+        (l.net_weight_mt || 0) < 1 &&
+        (l.price_per_mt || 0) <= 0.10
+      );
+      if (adjustments.length > 0) {
+        const adjGross = adjustments.reduce((s, a) => s + (a.line_gross || 0), 0);
+        merged.push({
+          ...line,
+          line_gross: (line.line_gross || 0) + adjGross,
+          line_net: line.line_net != null ? (line.line_net || 0) + adjGross : null,
+        });
+        adjustments.forEach(a => seen.add(String(a.ticket_number || '')));
+      } else {
+        merged.push(line);
+      }
+      seen.add(tn);
+    }
+    lines = merged;
+  }
+
+  // Detect multi-contract settlements: group lines by contract_number
+  const contractGroups = new Map();
+  for (const line of lines) {
+    const cn = line.contract_number || extraction.contract_number || '_default';
+    if (!contractGroups.has(cn)) contractGroups.set(cn, []);
+    contractGroups.get(cn).push(line);
+  }
+
+  const multiContract = contractGroups.size > 1 && !contractGroups.has('_default');
+
+  // If multiple contracts detected, split into separate settlements
+  if (multiContract) {
+    return saveMultiContractSettlements(farmId, extraction, buyerFormat, counterparty, lines, contractGroups, { pdfUrl, usage, batchId, batchCustomId });
+  }
+
+  // Single contract — original behavior
   let marketingContract = null;
   if (extraction.contract_number) {
     marketingContract = await prisma.marketingContract.findFirst({
-      where: {
-        farm_id: farmId,
-        contract_number: extraction.contract_number,
-      },
+      where: { farm_id: farmId, contract_number: extraction.contract_number },
     });
   }
 
@@ -945,46 +991,121 @@ export async function saveSettlement(farmId, extraction, buyerFormat, { pdfUrl =
     },
   });
 
-  // Post-process: fix ticket numbers when AI grabs internal IDs instead of weigh scale numbers
-  let lines = postProcessTicketNumbers(extraction.lines || [], buyerFormat).filter(l => !l._skip);
+  await createSettlementLines(settlement.id, lines, extraction);
 
-  // Cenovus: merge adjustment lines into their parent.
-  // Each physical load has a MAIN line + small "A" adjustment line (same ticket_number, tiny qty at $0.10).
-  // Combine them into a single line, summing line_gross/line_net.
-  if (buyerFormat === 'cenovus' && lines.length > 1) {
-    const merged = [];
-    const seen = new Set();
-    for (const line of lines) {
-      const tn = String(line.ticket_number || '');
-      if (seen.has(tn)) continue; // already merged as an adjustment
-      // Find adjustment lines: same ticket_number, very small qty (< 1 MT), price <= 0.10
-      const adjustments = lines.filter(l =>
-        l !== line &&
-        String(l.ticket_number || '') === tn &&
-        (l.net_weight_mt || 0) < 1 &&
-        (l.price_per_mt || 0) <= 0.10
-      );
-      if (adjustments.length > 0) {
-        const adjGross = adjustments.reduce((s, a) => s + (a.line_gross || 0), 0);
-        merged.push({
-          ...line,
-          line_gross: (line.line_gross || 0) + adjGross,
-          line_net: line.line_net != null ? (line.line_net || 0) + adjGross : null,
-        });
-        adjustments.forEach(a => seen.add(String(a.ticket_number || '')));
-      } else {
-        merged.push(line);
-      }
-      seen.add(tn);
+  return prisma.settlement.findUnique({
+    where: { id: settlement.id },
+    include: {
+      lines: { orderBy: { line_number: 'asc' } },
+      counterparty: true,
+      marketing_contract: { include: { commodity: true } },
+    },
+  });
+}
+
+/**
+ * Split a multi-contract extraction into separate settlements.
+ * Each contract group gets its own settlement with suffixed settlement_number
+ * (e.g. 571040066092-913, 571040066092-244) and pro-rata deductions.
+ */
+async function saveMultiContractSettlements(farmId, extraction, buyerFormat, counterparty, allLines, contractGroups, { pdfUrl, usage, batchId, batchCustomId }) {
+  const baseNumber = extraction.settlement_number || `UNK-${Date.now()}`;
+  const settlementDate = extraction.settlement_date ? new Date(extraction.settlement_date) : null;
+  const totalGrossAllLines = allLines.reduce((s, l) => s + (l.line_gross || l.gross_weight_mt || 0), 0);
+
+  const settlements = [];
+
+  for (const [contractNumber, groupLines] of contractGroups) {
+    // Suffix: last 3 digits of contract number
+    const suffix = contractNumber.slice(-3);
+    const settlementNumber = `${baseNumber}-${suffix}`;
+
+    // Look up this group's marketing contract
+    let marketingContract = null;
+    if (contractNumber && contractNumber !== '_default') {
+      marketingContract = await prisma.marketingContract.findFirst({
+        where: { farm_id: farmId, contract_number: contractNumber },
+      });
     }
-    lines = merged;
+
+    // Sum line-level amounts for this group
+    const groupGross = groupLines.reduce((s, l) => s + (l.line_gross || 0), 0);
+    const groupNet = groupLines.reduce((s, l) => s + (l.line_net || 0), 0);
+    const groupWeightMt = groupLines.reduce((s, l) => s + (l.net_weight_mt || 0), 0);
+
+    // Pro-rata deductions by gross amount proportion
+    const proportion = totalGrossAllLines > 0 ? groupGross / totalGrossAllLines : 1 / contractGroups.size;
+    const deductions = extraction.deductions_summary
+      ? extraction.deductions_summary.map(d => ({
+        ...d,
+        amount: Math.round((d.amount || 0) * proportion * 100) / 100,
+        gst: d.gst != null ? Math.round(d.gst * proportion * 100) / 100 : null,
+        pst: d.pst != null ? Math.round(d.pst * proportion * 100) / 100 : null,
+      }))
+      : null;
+
+    // Build per-group extraction snapshot for extraction_json
+    const groupExtraction = {
+      ...extraction,
+      contract_number: contractNumber,
+      settlement_number: settlementNumber,
+      total_gross_amount: Math.round(groupGross * 100) / 100,
+      total_net_amount: Math.round(groupNet * 100) / 100,
+      settlement_gross: Math.round(groupGross * 100) / 100,
+      deductions_summary: deductions,
+      lines: groupLines,
+      _split_from: baseNumber,
+      _split_contracts: [...contractGroups.keys()],
+    };
+
+    const settlement = await prisma.settlement.create({
+      data: {
+        farm_id: farmId,
+        counterparty_id: counterparty?.id || null,
+        marketing_contract_id: marketingContract?.id || null,
+        ai_batch_id: batchId || null,
+        batch_custom_id: batchCustomId || null,
+        extraction_status: 'completed',
+        settlement_number: settlementNumber,
+        settlement_date: settlementDate,
+        total_amount: Math.round(groupNet * 100) / 100 || null,
+        settlement_gross: Math.round(groupGross * 100) / 100 || null,
+        deductions_summary: deductions,
+        currency: extraction.currency || 'CAD',
+        status: 'pending',
+        buyer_format: buyerFormat,
+        source_pdf_url: pdfUrl,
+        extraction_json: groupExtraction,
+        usage_json: usage || null,
+      },
+    });
+
+    await createSettlementLines(settlement.id, groupLines, extraction);
+
+    const full = await prisma.settlement.findUnique({
+      where: { id: settlement.id },
+      include: {
+        lines: { orderBy: { line_number: 'asc' } },
+        counterparty: true,
+        marketing_contract: { include: { commodity: true } },
+      },
+    });
+    settlements.push(full);
   }
 
+  // Return first settlement for backward compat, but attach all splits
+  const result = settlements[0];
+  result._split_settlements = settlements;
+  return result;
+}
+
+/** Create SettlementLine records for a settlement */
+async function createSettlementLines(settlementId, lines, extraction) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     await prisma.settlementLine.create({
       data: {
-        settlement_id: settlement.id,
+        settlement_id: settlementId,
         line_number: line.line_number || i + 1,
         ticket_number_on_settlement: line.ticket_number || null,
         contract_number: line.contract_number || extraction.contract_number || null,
@@ -1002,16 +1123,6 @@ export async function saveSettlement(farmId, extraction, buyerFormat, { pdfUrl =
       },
     });
   }
-
-  // Fetch complete settlement with lines
-  return prisma.settlement.findUnique({
-    where: { id: settlement.id },
-    include: {
-      lines: { orderBy: { line_number: 'asc' } },
-      counterparty: true,
-      marketing_contract: { include: { commodity: true } },
-    },
-  });
 }
 
 // ─── Batch API (50% cheaper) ────────────────────────────────────────────────

@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button, Box, Typography,
   Alert, Stack, LinearProgress, Chip, Table, TableBody, TableCell, TableRow, Paper,
+  TextField, Tooltip,
 } from '@mui/material';
+import EditIcon from '@mui/icons-material/Edit';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import api from '../../services/api';
@@ -30,6 +32,7 @@ export default function ContractImportDialog({ open, onClose, farmId, onImported
   const [contract, setContract] = useState(null);
   const [pdfUrl, setPdfUrl] = useState(null);
   const [duplicate, setDuplicate] = useState(null);
+  const [editingField, setEditingField] = useState(null);
 
   // Clean up blob URL on unmount or reset
   useEffect(() => {
@@ -105,6 +108,7 @@ export default function ContractImportDialog({ open, onClose, farmId, onImported
     setStep('upload');
     setExtraction(null);
     setDuplicate(null);
+    setEditingField(null);
     if (pdfUrl) URL.revokeObjectURL(pdfUrl);
     setPdfUrl(null);
   };
@@ -168,25 +172,50 @@ export default function ContractImportDialog({ open, onClose, farmId, onImported
                 <Table size="small">
                   <TableBody>
                     {[
-                      ['Buyer', extraction.buyer],
-                      ['Contract #', extraction.contract_number],
-                      ['Date', extraction.contract_date],
-                      ['Commodity', extraction.commodity],
-                      ['Grade', extraction.grade],
-                      ['Quantity (MT)', fmt(extraction.quantity_mt)],
-                      ['$/MT', extraction.price_per_mt ? `$${fmt(extraction.price_per_mt)}` : null],
-                      ['$/bu', extraction.price_per_bu ? `$${extraction.price_per_bu.toFixed(2)}` : null],
-                      ['Pricing Type', extraction.pricing_type],
-                      ['Basis', extraction.basis_level ? `$${fmt(extraction.basis_level)}` : null],
-                      ['Futures Ref', extraction.futures_reference],
-                      ['Delivery Period', extraction.delivery_period_text || (extraction.delivery_start && extraction.delivery_end ? `${extraction.delivery_start} — ${extraction.delivery_end}` : null)],
-                      ['Elevator', extraction.elevator_site],
-                      ['Crop Year', extraction.crop_year],
-                      ['Special Terms', extraction.special_terms],
-                    ].filter(([, v]) => v != null && v !== '—').map(([label, value]) => (
+                      ['Buyer', 'buyer', extraction.buyer],
+                      ['Contract #', 'contract_number', extraction.contract_number],
+                      ['Date', 'contract_date', extraction.contract_date],
+                      ['Commodity', 'commodity', extraction.commodity],
+                      ['Grade', 'grade', extraction.grade],
+                      ['Quantity (MT)', 'quantity_mt', extraction.quantity_mt != null ? String(extraction.quantity_mt) : null],
+                      ['$/MT', 'price_per_mt', extraction.price_per_mt != null ? String(extraction.price_per_mt) : null],
+                      ['$/bu', 'price_per_bu', extraction.price_per_bu != null ? String(extraction.price_per_bu) : null],
+                      ['Pricing Type', 'pricing_type', extraction.pricing_type],
+                      ['Basis', 'basis_level', extraction.basis_level != null ? String(extraction.basis_level) : null],
+                      ['Futures Ref', 'futures_reference', extraction.futures_reference],
+                      ['Delivery Period', 'delivery_period_text', extraction.delivery_period_text || (extraction.delivery_start && extraction.delivery_end ? `${extraction.delivery_start} — ${extraction.delivery_end}` : null)],
+                      ['Elevator', 'elevator_site', extraction.elevator_site],
+                      ['Crop Year', 'crop_year', extraction.crop_year],
+                      ['Special Terms', 'special_terms', extraction.special_terms],
+                    ].filter(([,, v]) => v != null && v !== '—').map(([label, key, value]) => (
                       <TableRow key={label}>
                         <TableCell sx={{ fontWeight: 600, width: 130, py: 0.5 }}>{label}</TableCell>
-                        <TableCell sx={{ py: 0.5 }}>{value}</TableCell>
+                        <TableCell sx={{ py: 0.5 }}>
+                          {editingField === key ? (
+                            <TextField
+                              size="small"
+                              variant="standard"
+                              defaultValue={value}
+                              autoFocus
+                              fullWidth
+                              onBlur={(e) => {
+                                const v = e.target.value;
+                                const numFields = ['quantity_mt', 'price_per_mt', 'price_per_bu', 'basis_level'];
+                                setExtraction(prev => ({ ...prev, [key]: numFields.includes(key) ? (v ? Number(v) : null) : v }));
+                                setEditingField(null);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') e.target.blur();
+                                if (e.key === 'Escape') setEditingField(null);
+                              }}
+                            />
+                          ) : (
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', '&:hover .edit-icon': { opacity: 1 } }} onClick={() => setEditingField(key)}>
+                              <span>{['price_per_mt', 'basis_level'].includes(key) ? `$${fmt(Number(value))}` : key === 'price_per_bu' ? `$${Number(value).toFixed(2)}` : key === 'quantity_mt' ? fmt(Number(value)) : value}</span>
+                              <Tooltip title="Click to edit"><EditIcon className="edit-icon" sx={{ fontSize: 14, opacity: 0, ml: 1, color: 'text.secondary', transition: 'opacity 0.2s' }} /></Tooltip>
+                            </Box>
+                          )}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

@@ -24,6 +24,7 @@ import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
+import LinkIcon from '@mui/icons-material/Link';
 import { useNavigate } from 'react-router-dom';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
@@ -264,6 +265,20 @@ export default function Settlements() {
       setGapOpen(false);
     } finally {
       setGapLoading(false);
+    }
+  };
+
+  const [relinking, setRelinking] = useState(false);
+  const handleRelinkContracts = async () => {
+    setRelinking(true);
+    try {
+      const res = await api.post(`/api/farms/${currentFarm.id}/settlements/relink-contracts`);
+      setSnack({ open: true, message: res.data.message, severity: res.data.linked > 0 ? 'success' : 'info' });
+      if (res.data.linked > 0) handleReconGapReport();
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to re-link contracts'), severity: 'error' });
+    } finally {
+      setRelinking(false);
     }
   };
 
@@ -1088,9 +1103,14 @@ export default function Settlements() {
                   <Button size="small" onClick={() => toggleSection('settled_no_contract')} startIcon={expandedSections.settled_no_contract ? <ExpandLessIcon /> : <ExpandMoreIcon />} sx={{ mb: 0.5 }}>
                     Settled, No Contract in System ({gapData.sections.settled_no_contract.length})
                   </Button>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, ml: 1 }}>
-                    Action: Contract # is on the settlement — retrieve from SharePoint, marketer, or buyer portal
-                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5, ml: 1 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      Action: Contract # is on the settlement — retrieve from SharePoint, marketer, or buyer portal
+                    </Typography>
+                    <Button size="small" variant="outlined" startIcon={relinking ? <CircularProgress size={14} /> : <LinkIcon />} onClick={handleRelinkContracts} disabled={relinking}>
+                      Re-link
+                    </Button>
+                  </Box>
                   <Collapse in={!!expandedSections.settled_no_contract}>
                     <TableContainer component={Paper} variant="outlined">
                       <Table size="small">

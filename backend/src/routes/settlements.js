@@ -188,6 +188,37 @@ router.get('/:farmId/settlements/reports/recon-gaps/csv', authenticate, async (r
   } catch (err) { next(err); }
 });
 
+// POST re-link orphaned settlements to existing MarketingContracts by contract number
+router.post('/:farmId/settlements/relink-contracts', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const farmId = req.params.farmId;
+    // Find all settlements with no marketing_contract_id but with a contract number in extraction_json
+    const orphans = await prisma.settlement.findMany({
+      where: { farm_id: farmId, marketing_contract_id: null },
+      select: { id: true, extraction_json: true },
+    });
+
+    let linked = 0;
+    for (const s of orphans) {
+      const contractNum = s.extraction_json?.contract_number;
+      if (!contractNum) continue;
+      const mc = await prisma.marketingContract.findFirst({
+        where: { farm_id: farmId, contract_number: String(contractNum).trim() },
+        select: { id: true },
+      });
+      if (mc) {
+        await prisma.settlement.update({
+          where: { id: s.id },
+          data: { marketing_contract_id: mc.id },
+        });
+        linked++;
+      }
+    }
+
+    res.json({ linked, message: `Re-linked ${linked} settlement(s) to existing contracts` });
+  } catch (err) { next(err); }
+});
+
 // GET monthly three-way reconciliation report
 router.get('/:farmId/settlements/reports/monthly-recon', authenticate, async (req, res, next) => {
   try {
@@ -334,7 +365,7 @@ router.post('/:farmId/settlements/upload', authenticate, requireRole('admin', 'm
       });
     }
 
-    // Save to database
+    // Save to database (may split multi-contract PDFs into separate settlements)
     const settlement = await saveSettlement(
       req.params.farmId,
       extraction,
@@ -342,21 +373,32 @@ router.post('/:farmId/settlements/upload', authenticate, requireRole('admin', 'm
       { usage }
     );
 
-    logAudit({
-      farmId: req.params.farmId,
-      userId: req.userId,
-      entityType: 'Settlement',
-      entityId: settlement.id,
-      action: 'create',
-      changes: {
-        settlement_number: settlement.settlement_number,
-        buyer_format: buyerFormat,
-        lines_extracted: settlement.lines.length,
-        ai_usage: usage,
-      },
-    });
+    const allSettlements = settlement._split_settlements || [settlement];
+    for (const s of allSettlements) {
+      logAudit({
+        farmId: req.params.farmId,
+        userId: req.userId,
+        entityType: 'Settlement',
+        entityId: s.id,
+        action: 'create',
+        changes: {
+          settlement_number: s.settlement_number,
+          buyer_format: buyerFormat,
+          lines_extracted: s.lines.length,
+          split: allSettlements.length > 1,
+          ai_usage: usage,
+        },
+      });
+    }
 
-    res.status(201).json({ settlement, extraction, buyer_format: buyerFormat, usage });
+    res.status(201).json({
+      settlement,
+      settlements: allSettlements.length > 1 ? allSettlements : undefined,
+      split: allSettlements.length > 1,
+      extraction,
+      buyer_format: buyerFormat,
+      usage,
+    });
   } catch (err) { next(err); }
 });
 
@@ -403,13 +445,15 @@ router.post('/:farmId/settlements/save-reviewed', authenticate, requireRole('adm
     const { extraction, buyer_format, usage, hint } = req.body;
     if (!extraction) return res.status(400).json({ error: 'No extraction data provided' });
 
-    // Save settlement with (possibly corrected) extraction
+    // Save settlement with (possibly corrected) extraction — may split multi-contract
     const settlement = await saveSettlement(
       req.params.farmId,
       extraction,
       buyer_format || 'unknown',
       { usage }
     );
+
+    const allSettlements = settlement._split_settlements || [settlement];
 
     // If admin provided a correction hint, save it for future extractions
     if (hint && hint.trim()) {
@@ -423,33 +467,46 @@ router.post('/:farmId/settlements/save-reviewed', authenticate, requireRole('adm
       });
     }
 
-    logAudit({
-      farmId: req.params.farmId,
-      userId: req.userId,
-      entityType: 'Settlement',
-      entityId: settlement.id,
-      action: 'create',
-      changes: {
-        settlement_number: settlement.settlement_number,
-        buyer_format: buyer_format,
-        lines_extracted: settlement.lines.length,
-        reviewed: true,
-        had_corrections: !!hint,
-        ai_usage: usage,
-      },
-    });
+    for (const s of allSettlements) {
+      logAudit({
+        farmId: req.params.farmId,
+        userId: req.userId,
+        entityType: 'Settlement',
+        entityId: s.id,
+        action: 'create',
+        changes: {
+          settlement_number: s.settlement_number,
+          buyer_format: buyer_format,
+          lines_extracted: s.lines.length,
+          reviewed: true,
+          split: allSettlements.length > 1,
+          had_corrections: !!hint,
+          ai_usage: usage,
+        },
+      });
+    }
 
     // Broadcast settlement creation for real-time table updates
     const io = req.app.get('io');
     if (io) {
-      broadcastMarketingEvent(io, req.params.farmId, 'settlement:created', {
-        id: settlement.id,
-        settlement_number: settlement.settlement_number,
-        buyer_format,
-      });
+      for (const s of allSettlements) {
+        broadcastMarketingEvent(io, req.params.farmId, 'settlement:created', {
+          id: s.id,
+          settlement_number: s.settlement_number,
+          buyer_format,
+          split: allSettlements.length > 1,
+        });
+      }
     }
 
-    res.status(201).json({ settlement, extraction, buyer_format, usage });
+    res.status(201).json({
+      settlement,
+      settlements: allSettlements.length > 1 ? allSettlements : undefined,
+      split: allSettlements.length > 1,
+      extraction,
+      buyer_format,
+      usage,
+    });
   } catch (err) { next(err); }
 });
 
