@@ -439,6 +439,16 @@ router.post('/:farmId/settlements/save-reviewed', authenticate, requireRole('adm
       },
     });
 
+    // Broadcast settlement creation for real-time table updates
+    const io = req.app.get('io');
+    if (io) {
+      broadcastMarketingEvent(io, req.params.farmId, 'settlement:created', {
+        id: settlement.id,
+        settlement_number: settlement.settlement_number,
+        buyer_format,
+      });
+    }
+
     res.status(201).json({ settlement, extraction, buyer_format, usage });
   } catch (err) { next(err); }
 });
@@ -899,6 +909,134 @@ router.post('/:farmId/settlements/bulk-approve', authenticate, requireRole('admi
       entityId: 'bulk_approve',
       action: 'bulk_approve',
       changes: { approved: results.approved, requested: ids.length, notes },
+    });
+
+    res.json(results);
+  } catch (err) { next(err); }
+});
+
+// POST bulk unapprove settlements — reverses approval side effects
+router.post('/:farmId/settlements/bulk-unapprove', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const { ids, notes } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids array is required' });
+    }
+
+    const results = { unapproved: 0, errors: [], details: [] };
+    const contractIdsToReaggregate = new Set();
+
+    for (const id of ids) {
+      try {
+        const settlement = await prisma.settlement.findFirst({
+          where: { id, farm_id: req.params.farmId, status: 'approved' },
+          include: {
+            lines: { include: { delivery_ticket: { include: { marketing_contract: true } } } },
+          },
+        });
+        if (!settlement) {
+          results.errors.push(`${id}: not found or not approved`);
+          continue;
+        }
+
+        await prisma.$transaction(async (tx) => {
+          // 1. Un-settle matched tickets
+          const ticketIds = settlement.lines
+            .filter(l => l.delivery_ticket_id)
+            .map(l => l.delivery_ticket_id);
+          if (ticketIds.length > 0) {
+            await tx.deliveryTicket.updateMany({
+              where: { id: { in: ticketIds } },
+              data: { settled: false },
+            });
+          }
+
+          // 2. Delete auto-created Delivery records from this settlement's tickets
+          for (const line of settlement.lines) {
+            const ticket = line.delivery_ticket;
+            if (!ticket?.marketing_contract_id) continue;
+            await tx.delivery.deleteMany({
+              where: {
+                marketing_contract_id: ticket.marketing_contract_id,
+                ticket_number: ticket.ticket_number,
+                farm_id: req.params.farmId,
+                notes: 'Auto-created from settlement approval',
+              },
+            });
+            contractIdsToReaggregate.add(ticket.marketing_contract_id);
+          }
+
+          // 3. Delete auto-created CashFlowEntry records
+          await tx.cashFlowEntry.deleteMany({
+            where: {
+              farm_id: req.params.farmId,
+              is_actual: true,
+              notes: 'Auto-created from settlement approval',
+              description: { contains: settlement.settlement_number },
+            },
+          });
+
+          // 4. Reset settlement status and clear report
+          await tx.settlement.update({
+            where: { id },
+            data: {
+              status: 'pending',
+              reconciliation_report: null,
+              notes: notes || 'Unapproved by admin for re-reconciliation',
+            },
+          });
+
+          // 5. Reset line match statuses back to unmatched, clear ticket links
+          await tx.settlementLine.updateMany({
+            where: { settlement_id: id },
+            data: {
+              match_status: 'unmatched',
+              delivery_ticket_id: null,
+              match_confidence: null,
+              exception_reason: null,
+            },
+          });
+        });
+
+        results.unapproved++;
+        results.details.push({ id, settlement_number: settlement.settlement_number });
+      } catch (err) {
+        results.errors.push(`${id}: ${err.message}`);
+      }
+    }
+
+    // Re-aggregate contract delivered_mt for all affected contracts
+    for (const contractId of contractIdsToReaggregate) {
+      const agg = await prisma.delivery.aggregate({
+        where: { marketing_contract_id: contractId },
+        _sum: { mt_delivered: true },
+      });
+      const totalDelivered = agg._sum.mt_delivered || 0;
+      const contract = await prisma.marketingContract.findUnique({ where: { id: contractId } });
+      if (!contract) continue;
+
+      const rawRemaining = contract.contracted_mt - totalDelivered;
+      const remaining = rawRemaining < 0.5 ? 0 : rawRemaining;
+
+      // Revert status if no longer fully delivered
+      let newStatus = contract.status;
+      if (contract.status === 'delivered' && remaining > 0) {
+        newStatus = totalDelivered > 0 ? 'in_delivery' : 'executed';
+      }
+
+      await prisma.marketingContract.update({
+        where: { id: contractId },
+        data: { delivered_mt: totalDelivered, remaining_mt: remaining, status: newStatus },
+      });
+    }
+
+    logAudit({
+      farmId: req.params.farmId,
+      userId: req.userId,
+      entityType: 'Settlement',
+      entityId: 'bulk_unapprove',
+      action: 'bulk_unapprove',
+      changes: { unapproved: results.unapproved, requested: ids.length, notes },
     });
 
     res.json(results);

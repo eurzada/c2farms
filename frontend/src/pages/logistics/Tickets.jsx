@@ -169,7 +169,7 @@ export default function Tickets() {
   }), [unmatchedReport]);
 
   const copyUnmatchedReport = () => {
-    const lines = ['Unmatched Tickets Report', `Generated: ${new Date().toLocaleDateString()}`, ''];
+    const lines = ['Not Reconciled — Tickets Report', `Generated: ${new Date().toLocaleDateString()}`, ''];
     lines.push(`Total: ${unmatchedTotal.tickets} tickets, ${unmatchedTotal.mt.toFixed(2)} MT`, '');
     lines.push('Contract #\tBuyer\tCrop\tTickets\tTotal MT');
     for (const g of unmatchedReport) {
@@ -189,7 +189,7 @@ export default function Tickets() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `unmatched-tickets-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `not-reconciled-tickets-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -222,8 +222,8 @@ export default function Tickets() {
     { field: 'operator_name', headerName: 'Operator' },
     { field: 'destination', headerName: 'Destination' },
     { field: 'source_system', headerName: 'Source' },
-    { field: 'match', headerName: 'Match' },
-    { field: 'settled', headerName: 'Settled' },
+    { field: 'match', headerName: 'Settlement' },
+    { field: 'settled', headerName: 'Paid' },
   ];
 
   const columnDefs = useMemo(() => [
@@ -286,15 +286,15 @@ export default function Tickets() {
       },
     },
     !hiddenCols['match'] && {
-      headerName: 'Match', width: 120, colId: 'match',
+      headerName: 'Settlement', width: 120, colId: 'match',
       valueGetter: p => {
         const sl = p.data?.settlement_lines?.[0];
-        if (!sl) return 'Unmatched';
+        if (!sl) return 'Not Reconciled';
         return `#${sl.settlement?.settlement_number || '?'}`;
       },
       cellRenderer: p => {
         const sl = p.data?.settlement_lines?.[0];
-        if (!sl) return <Chip label="Unmatched" size="small" color="default" variant="outlined" />;
+        if (!sl) return <Chip label="Not Reconciled" size="small" color="default" variant="outlined" />;
         const sStatus = sl.settlement?.status;
         const color = sStatus === 'approved' ? 'success' : sStatus === 'reconciled' ? 'info' : 'warning';
         return (
@@ -305,9 +305,9 @@ export default function Tickets() {
       },
     },
     !hiddenCols['settled'] && {
-      field: 'settled', headerName: 'Settled', width: 75,
+      field: 'settled', headerName: 'Paid', width: 75,
       cellRenderer: p => p.value
-        ? <Chip label="Yes" size="small" color="success" />
+        ? <Chip label="Paid" size="small" color="success" />
         : <Chip label="No" size="small" color="default" variant="outlined" />,
     },
   ].filter(Boolean), [hiddenCols]);
@@ -318,7 +318,8 @@ export default function Tickets() {
         <Box>
           <Typography variant="h5" sx={{ fontWeight: 600 }}>Delivery Tickets</Typography>
           <Typography variant="body2" color="text.secondary">
-            {total} tickets{stats ? ` | ${stats.matched || 0} matched | ${stats.settled} settled | ${stats.unsettled} unsettled` : ''}
+            Showing {total} of {stats ? stats.total : total}
+            {stats ? <> &mdash; {stats.matched || 0} reconciled to settlements &middot; {stats.settled} paid &middot; {stats.unsettled} awaiting payment</> : ''}
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} alignItems="center">
@@ -362,26 +363,26 @@ export default function Tickets() {
           <TextField
             select
             size="small"
-            label="Match"
+            label="Reconciled"
             value={matchFilter}
             onChange={(e) => setMatchFilter(e.target.value)}
-            sx={{ minWidth: 120 }}
+            sx={{ minWidth: 130 }}
           >
             <MenuItem value="">All</MenuItem>
-            <MenuItem value="true">Matched</MenuItem>
-            <MenuItem value="false">Unmatched</MenuItem>
+            <MenuItem value="true">Reconciled</MenuItem>
+            <MenuItem value="false">Not Reconciled</MenuItem>
           </TextField>
           <TextField
             select
             size="small"
-            label="Settled"
+            label="Payment"
             value={settledFilter}
             onChange={(e) => setSettledFilter(e.target.value)}
-            sx={{ minWidth: 120 }}
+            sx={{ minWidth: 130 }}
           >
             <MenuItem value="">All</MenuItem>
-            <MenuItem value="true">Settled</MenuItem>
-            <MenuItem value="false">Unsettled</MenuItem>
+            <MenuItem value="true">Paid</MenuItem>
+            <MenuItem value="false">Awaiting Payment</MenuItem>
           </TextField>
           <Tooltip title="Toggle columns">
             <IconButton size="small" onClick={(e) => setColAnchor(e.currentTarget)}>
@@ -390,7 +391,7 @@ export default function Tickets() {
           </Tooltip>
           {unmatchedTotal.tickets > 0 && (
             <Button variant="outlined" color="warning" startIcon={<SummarizeIcon />} onClick={() => setUnmatchedReportOpen(true)}>
-              Unmatched ({unmatchedTotal.tickets})
+              Not Reconciled ({unmatchedTotal.tickets})
             </Button>
           )}
           {canEdit && (
@@ -487,7 +488,7 @@ export default function Tickets() {
       <Dialog open={unmatchedReportOpen} onClose={() => setUnmatchedReportOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <span>Unmatched Tickets by Contract</span>
+            <span>Not Reconciled — Tickets by Contract</span>
             {unmatchedReport.length > 0 && (
               <Stack direction="row" spacing={1}>
                 <Tooltip title="Copy to clipboard">
@@ -504,11 +505,11 @@ export default function Tickets() {
         </DialogTitle>
         <DialogContent dividers>
           {unmatchedReport.length === 0 ? (
-            <Alert severity="success">All tickets are matched to settlements.</Alert>
+            <Alert severity="success">All tickets are reconciled to settlements.</Alert>
           ) : (
             <>
               <Alert severity="info" sx={{ mb: 2 }}>
-                {unmatchedTotal.tickets} ticket{unmatchedTotal.tickets !== 1 ? 's' : ''} ({unmatchedTotal.mt.toFixed(2)} MT) not yet matched to a settlement.
+                {unmatchedTotal.tickets} ticket{unmatchedTotal.tickets !== 1 ? 's' : ''} ({unmatchedTotal.mt.toFixed(2)} MT) not yet reconciled to a settlement.
               </Alert>
               <TableContainer component={Paper} variant="outlined">
                 <Table size="small">

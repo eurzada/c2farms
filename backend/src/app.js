@@ -32,6 +32,7 @@ import ticketRoutes from './routes/tickets.js';
 import settlementRoutes from './routes/settlements.js';
 import { fieldOpsGeneralRouter, fieldOpsFarmRouter } from './routes/fieldOps.js';
 import mobileTicketRoutes from './routes/mobileTickets.js';
+import logisticsDashboardRoutes from './routes/logisticsDashboard.js';
 import labourRoutes, { labourGeneralRouter } from './routes/labour.js';
 import terminalRoutes from './routes/terminal.js';
 import { errorHandler } from './middleware/errorHandler.js';
@@ -137,9 +138,11 @@ app.use('/api/farms', priceAlertRoutes);
 // Logistics module
 app.use('/api/farms/:farmId/tickets', requireModule('logistics'));
 app.use('/api/farms/:farmId/settlements', requireModule('logistics'));
+app.use('/api/farms/:farmId/logistics', requireModule('logistics'));
 app.use('/api/farms', ticketRoutes);
 app.use('/api/farms', settlementRoutes);
 app.use('/api/farms', mobileTicketRoutes);
+app.use('/api/farms', logisticsDashboardRoutes);
 
 // Terminal operations module (LGX)
 app.use('/api/farms/:farmId/terminal', requireModule('terminal'));

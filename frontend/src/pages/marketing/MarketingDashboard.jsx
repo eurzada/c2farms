@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
-  Box, Typography, Paper, Stack, Chip,
+  Box, Typography, Paper, Stack, Chip, Tooltip,
 } from '@mui/material';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Tooltip as ChartTooltip, Legend } from 'chart.js';
 import { Bar } from 'react-chartjs-2';
@@ -241,20 +241,37 @@ export default function MarketingDashboard() {
     <Box>
       <Typography variant="h5" sx={{ fontWeight: 600, mb: 2 }}>Marketing Dashboard</Typography>
 
-      {/* KPI Cards */}
+      {/* KPI Cards — Row 1: Inventory */}
+      <Stack direction="row" spacing={2} sx={{ mb: 1.5 }}>
+        {[
+          { label: 'Total On Hand', value: `${fmt(kpis.total_mt)} MT`, tip: 'Total grain in bins from the latest inventory count' },
+          { label: 'Available to Sell', value: `${fmt(kpis.available_mt)} MT`, tip: 'On hand minus what is already committed to contracts' },
+          { label: 'Inventory Value', value: fmtDollar(kpis.total_value), tip: 'On-hand inventory valued at current bid prices' },
+        ].map(k => (
+          <Tooltip key={k.label} title={k.tip} arrow placement="top">
+            <Paper sx={{ px: 2, py: 1.5, flex: 1, textAlign: 'center', cursor: 'default' }} variant="outlined">
+              <Typography variant="caption" color="text.secondary">{k.label}</Typography>
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>{k.value}</Typography>
+            </Paper>
+          </Tooltip>
+        ))}
+      </Stack>
+
+      {/* KPI Cards — Row 2: Contract Fulfilment Pipeline */}
       <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
         {[
-          { label: 'Total On Hand', value: `${fmt(kpis.total_mt)} MT` },
-          { label: 'YTD Hauled', value: `${fmt(kpis.ytd_hauled)} MT` },
-          { label: 'Committed', value: `${fmt(kpis.committed_mt)} MT` },
-          { label: 'Available', value: `${fmt(kpis.available_mt)} MT` },
-          { label: 'Total Value', value: fmtDollar(kpis.total_value) },
-          { label: '% Sold', value: `${(kpis.pct_sold || 0).toFixed(0)}%` },
+          { label: 'Gross Commitment', value: `${fmt(kpis.gross_commitment)} MT`, color: 'text.primary', tip: 'Total MT across all signed contracts (executed + in delivery)' },
+          { label: 'Hauled', value: `${fmt(kpis.hauled_mt)} MT`, color: 'info.main', tip: 'MT physically delivered per weigh scale tickets in Logistics' },
+          { label: 'Still to Haul', value: `${fmt(kpis.remaining_less_hauled)} MT`, color: 'error.main', tip: 'Gross commitment minus hauled — grain still to be physically moved' },
+          { label: 'Confirmed (Paid)', value: `${fmt(kpis.settled_mt)} MT`, color: 'success.main', tip: 'MT from approved settlement documents — buyer has paid' },
+          { label: 'Awaiting Payment', value: `${fmt(kpis.remaining_less_settled)} MT`, color: 'warning.main', tip: 'Gross commitment minus confirmed paid — still awaiting settlement' },
         ].map(k => (
-          <Paper key={k.label} sx={{ px: 2, py: 1.5, flex: 1, textAlign: 'center' }} variant="outlined">
-            <Typography variant="caption" color="text.secondary">{k.label}</Typography>
-            <Typography variant="h6" sx={{ fontWeight: 600 }}>{k.value}</Typography>
-          </Paper>
+          <Tooltip key={k.label} title={k.tip} arrow placement="top">
+            <Paper sx={{ px: 2, py: 1.5, flex: 1, textAlign: 'center', cursor: 'default' }} variant="outlined">
+              <Typography variant="caption" color="text.secondary">{k.label}</Typography>
+              <Typography variant="h6" sx={{ fontWeight: 600, color: k.color }}>{k.value}</Typography>
+            </Paper>
+          </Tooltip>
         ))}
       </Stack>
 

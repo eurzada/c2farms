@@ -24,6 +24,7 @@ const FarmManagerView = lazy(() => import('./pages/inventory/FarmManagerView'));
 const CountHistory = lazy(() => import('./pages/inventory/CountHistory'));
 const Grading = lazy(() => import('./pages/inventory/Grading'));
 const LogisticsLayout = lazy(() => import('./components/logistics/LogisticsLayout'));
+const LogisticsDashboard = lazy(() => import('./pages/logistics/LogisticsDashboard'));
 const Tickets = lazy(() => import('./pages/logistics/Tickets'));
 const Settlements = lazy(() => import('./pages/logistics/Settlements'));
 const SettlementReconciliation = lazy(() => import('./pages/logistics/SettlementReconciliation'));
@@ -171,7 +172,8 @@ export default function App() {
                       <Route path="/inventory/history" element={<EnterpriseRoute><InventoryLayout><CountHistory /></InventoryLayout></EnterpriseRoute>} />
 
                       {/* Enterprise-only modules */}
-                      <Route path="/logistics" element={<EnterpriseRoute><Navigate to="/logistics/tickets" /></EnterpriseRoute>} />
+                      <Route path="/logistics" element={<EnterpriseRoute><Navigate to="/logistics/dashboard" /></EnterpriseRoute>} />
+                      <Route path="/logistics/dashboard" element={<EnterpriseRoute><LogisticsLayout><LogisticsDashboard /></LogisticsLayout></EnterpriseRoute>} />
                       <Route path="/logistics/tickets" element={<EnterpriseRoute><LogisticsLayout><Tickets /></LogisticsLayout></EnterpriseRoute>} />
                       <Route path="/logistics/settlements" element={<EnterpriseRoute><LogisticsLayout><Settlements /></LogisticsLayout></EnterpriseRoute>} />
                       <Route path="/logistics/settlement-recon" element={<EnterpriseRoute><LogisticsLayout><SettlementReconciliation /></LogisticsLayout></EnterpriseRoute>} />

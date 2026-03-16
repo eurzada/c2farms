@@ -255,6 +255,7 @@ DEDUCTIONS: The last page has a TOTALS row and an Adjustment/Remarks summary tab
     {
       "line_number": 1,
       "ticket_number": "string (the Ticket Number from per-ticket rows — e.g. '5717345236'. These are 10-digit weigh scale numbers in the detail section BELOW the Assembly summary. Do NOT use the Assembly # or Contract # as a ticket number.)",
+      "contract_number": "string or null (the Contract number for the Assembly this ticket belongs to — e.g. '8008913'. CRITICAL for multi-contract settlements.)",
       "delivery_date": "YYYY-MM-DD",
       "split_pct": number or null (the Split % column),
       "gross_weight_mt": number or null (the Gross column — in MT),
@@ -302,6 +303,7 @@ CRITICAL RULES:
 3. Ticket numbers are 10-digit numbers in the per-ticket detail rows (e.g. 5717345236), NOT the Assembly # or Contract #
 4. Do NOT create a line entry for the Assembly # or Contract # — only for actual ticket rows
 5. Weights in the per-ticket rows are in MT
+6. MULTI-CONTRACT SETTLEMENTS: A single LDC settlement may contain MULTIPLE Assembly sections, each with a DIFFERENT Contract number. For example, Assembly 571020120184 / Contract 8008913 and Assembly 571020124557 / Contract 8011244 on the same settlement. Each ticket line MUST include the contract_number from its parent Assembly. The top-level contract_number should be the first/primary contract, but every line must carry its own contract_number.
 
 Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.`,
 
@@ -371,6 +373,179 @@ CRITICAL RULES FOR G3:
 
 Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.`,
 
+  wilde_bros: `You are extracting data from a Wilde Bros. Ag Trading grain settlement PDF. This is a QuickBooks "Bill Payment Stub" with one or more attached "Bill" detail pages. The document represents ONE payment (cheque/debit) that may cover multiple Bills. Extract ALL of the following into structured JSON:
+
+{
+  "settlement_number": "string (use the contract Ref. No. + Cheque Date, e.g. 'P25-7292E-20260206')",
+  "settlement_date": "YYYY-MM-DD (the Cheque Date from the Bill Payment Stub header)",
+  "buyer": "Wilde Bros. Ag Trading",
+  "contract_number": "string (the Ref. No. from the Bill pages, e.g. 'P25-7292E')",
+  "commodity": "string (from the Item column on Bill pages — e.g. 'Barley' from 'Barley P')",
+  "total_gross_amount": number (the Cheque Amount from the Payment Stub — this is the total payment),
+  "total_net_amount": number (same as total_gross_amount — the cheque amount IS the net after per-line deductions),
+  "settlement_gross": number or null (sum of all 'Barley P' line amounts BEFORE shrinkage and commission deductions),
+  "deductions_summary": [{"name": "string", "amount": number (negative for deductions), "gst": number or null, "pst": number or null, "category": "checkoff|shrinkage|other"}],
+  "currency": "CAD",
+  "lines": [
+    {
+      "line_number": 1,
+      "ticket_number": "string (the ticket number from the description — e.g. '15-10397' from 'Barley P 15-10397, 01/20/2026...')",
+      "delivery_date": "YYYY-MM-DD (the date from the description — e.g. '01/20/2026' → '2026-01-20')",
+      "contract_number": "string or null (the Ref. No.)",
+      "gross_weight_mt": number (the Qty from the 'Barley P' row — this is gross MT before shrinkage),
+      "net_weight_mt": number (gross_weight_mt minus the shrinkage Qty, e.g. 43.45 - 0.4345 = 43.0155)",
+      "grade": "string or null",
+      "price_per_mt": number (the Cost column, e.g. 241.13)",
+      "price_per_bu": number or null (extract from description if present, e.g. '$5.25/bu')",
+      "line_gross": number (the Amount from the 'Barley P' row — gross before shrinkage/commission)",
+      "line_net": number (sum of Barley P amount + Shrinkage P amount + Sask Barley Com amount for this ticket)",
+      "deductions": [{"name": "string", "amount": number}]
+    }
+  ]
+}
+
+CRITICAL LAYOUT — Wilde Bros QB Bills have THREE rows per ticket:
+1. "Barley P" row: ticket#, date, price breakdown in Description; Qty = gross MT; Cost = $/MT; Amount = gross $
+2. "Shrinkage P" row: "Less 1% shrinkage"; Qty = negative (1% of gross MT); Amount = negative
+3. "Sask Barley Com" row: commission checkoff; Qty = gross MT; Cost = -$1.06/MT; Amount = negative
+
+Group these three rows into ONE line per ticket. The ticket_number comes from the "Barley P" description (e.g. "15-10397").
+
+The Bill Payment Stub (page 1) shows the total Cheque Amount and lists all Bills being paid. Subsequent pages are individual Bill details with per-ticket line items. Combine ALL tickets from ALL Bills into one flat lines array.
+
+For deductions_summary, aggregate ALL shrinkage deductions (category: "shrinkage") and ALL Sask Barley Commission deductions (category: "checkoff") across all lines. Return ONLY valid JSON, no extra text.`,
+
+  mb_agri: `You are extracting data from an MB Agri-Food Innovations broker completion receipt. This is typically a printed Outlook email from Mark Boryski containing a structured cost breakdown table. It represents a LUMP SUM settlement — no per-ticket detail. Extract ALL of the following into structured JSON:
+
+{
+  "settlement_number": "string (the Contract Number, e.g. 'TM 631974-1,2,3' or 'TM 641524')",
+  "settlement_date": "YYYY-MM-DD (the email Date field)",
+  "buyer": "MB Agri-Food Innovations",
+  "end_buyer": "string (the 'Buyer' field in the table — the actual international buyer, e.g. 'Almacenes Vaca', 'Empacadora El Fresno')",
+  "contract_number": "string (the Contract Number from the table, e.g. 'TM 631974-1,2,3')",
+  "c2_contract_number": "string or null (if a P-series number appears in the email subject or body, e.g. 'P-008-1,2,3' or 'P-017')",
+  "commodity": "string (from the Commodity field — e.g. 'Eston', 'Canary')",
+  "invoice_number": "string or null (the Invoice Number field if present)",
+  "total_gross_amount": number (the 'Total Value' or 'Total Received' in USD × FX rate = CAD gross, OR compute as Grower Price + all CAD deductions)",
+  "total_net_amount": number (the 'Grower Price' — this is what C2 Farms actually receives in CAD)",
+  "settlement_gross": number or null (the 'Total CAD Cost' — total CAD value before margin split)",
+  "mt_shipped": number (the 'MT Shipped' value),
+  "price_usd_per_mt": number (the 'Price USD/mt' value),
+  "fx_rate": number (the Foreign Exchange rate, e.g. 1.4067),
+  "total_value_usd": number (the 'Total Value' or 'Total Received' in USD),
+  "deductions_summary": [{"name": "string", "amount": number (negative — these are costs deducted from gross), "gst": number or null, "pst": number or null, "category": "freight|commission|processing|inspection|other", "vendor": "string or null (the vendor name from the right column, e.g. 'LIT', 'Cotecna', 'CFIA')"}],
+  "margin": {"total": number, "trading_margin_1": number, "trading_margin_2": number},
+  "currency": "CAD",
+  "lines": [
+    {
+      "line_number": 1,
+      "ticket_number": null,
+      "delivery_date": null,
+      "gross_weight_mt": number (MT Shipped),
+      "net_weight_mt": number (MT Shipped — same, no shrinkage applied at this level),
+      "price_per_mt": number (Grower Price / MT Shipped = effective CAD $/MT to grower),
+      "line_gross": number (Total Value USD × FX rate in CAD),
+      "line_net": number (Grower Price),
+      "deductions": [{"name": "string", "amount": number}]
+    }
+  ]
+}
+
+MB AGRI COST BREAKDOWN — The table has two sections:
+1. **USD Costs**: Freight, Brokerage → subtotal as "Total USD Cost"
+2. **CAD Costs**: Processing ($/mt × MT), Rail Freight, Sampling/Testing, CFIA testing, CFIA Cert., Documents, Courier, Bank Charges
+
+Category mapping for deductions_summary:
+- Freight (USD) → category: "freight"
+- Brokerage (USD) → category: "commission"
+- Processing → category: "processing", vendor from table (e.g. "LIT")
+- Rail Freight → category: "freight", vendor from table (e.g. "CP / SSR")
+- Sampling/Testing → category: "inspection", vendor from table
+- CFIA testing/Cert. → category: "inspection", vendor: "CFIA"
+- Documents → category: "other", vendor from table
+- Courier → category: "other", vendor from table (e.g. "Purolator")
+- Bank Charges → category: "other", vendor from table (e.g. "BMO")
+
+Convert USD costs to CAD using the FX rate before putting in deductions_summary (all amounts should be in CAD, negative).
+The "Margin" and "Trading Margin 1/2" are the broker's cut — extract into the margin object but do NOT include in deductions_summary.
+
+NOTE: There are no per-ticket lines. Create ONE line representing the entire shipment. The email body may contain notes about disputes or partial payments — capture these in a "notes" field if present.
+
+Return ONLY valid JSON, no extra text.`,
+
+  cenovus: `You are extracting data from a Cenovus Energy grain settlement PDF. Cenovus settlements originate as "Husky Energy Mktg Partner" (Husky merged into Cenovus in 2021). The plant is LLOYDMINSTER ETHANOL. Extract ALL of the following into structured JSON:
+
+{
+  "settlement_number": "string (the Invoice Document number from the 'Cash Purchase Ticket Payment Information' page — e.g. '5205144045', '5205141723'. This is also the 'Invoice Ref.' on the Payment Remittance page.)",
+  "settlement_date": "YYYY-MM-DD (the Payment Date — format is DD.MM.YYYY, convert to YYYY-MM-DD)",
+  "buyer": "Cenovus Energy",
+  "document_number": "string or null (the Document No. from the Payment Remittance page — e.g. '1100002840'. This is Cenovus's internal document reference.)",
+  "contract_number": "string or null (the Document No. — e.g. '1100002840'. Cenovus uses Document No. as the contract/PO reference.)",
+  "purchase_order": "string or null (the Purchase Order number from the Cash Purchase Ticket page — e.g. '8401871648')",
+  "commodity": "string (from the Material Description column — e.g. 'FEED STOCK, ETHANOL,WHEAT'. Map to: 'SWW' or 'Feed Wheat' if it says WHEAT/ETHANOL, 'Barley' if BARLEY, 'Canola' if CANOLA)",
+  "total_gross_amount": number (sum of all material line Net Amounts from page 2 — this is gross before discounts on page 3),
+  "total_net_amount": number (the Total Payment Amount from page 1, or 'Total Including Tax CAD' from page 2),
+  "settlement_gross": number or null (sum of material line Net Amounts BEFORE page 3 discounts),
+  "deductions_summary": [{"name": "string", "amount": number (negative for deductions), "gst": number or null, "pst": number or null, "category": "checkoff|drying|quality|freight|storage|commission|levy|premium|other"}],
+  "currency": "CAD",
+  "lines": [
+    {
+      "line_number": 1,
+      "ticket_number": "string — MUST be the BOL number (e.g. '165263', '165242'). See CRITICAL RULES below.",
+      "truck_number": "string or null (the Truck column — e.g. '2142617')",
+      "delivery_date": "YYYY-MM-DD (the Receipt Date — format is YYYY.MM.DD, convert to YYYY-MM-DD)",
+      "contract_number": "string or null",
+      "gross_weight_mt": number or null,
+      "net_weight_mt": number (the Net Qty in TO/tonnes from the MAIN material line — NOT the small adjustment line)",
+      "grade": "string or null",
+      "moisture_pct": number or null,
+      "dockage_pct": number or null,
+      "price_per_mt": number or null (the Gr. Price — gross price per MT, e.g. 275.00)",
+      "net_price_per_mt": number or null (the Net Price — after per-unit discount, e.g. 273.91)",
+      "line_gross": number or null (the Net Amount from the MAIN material line)",
+      "line_net": number or null,
+      "deductions": [{"name": "string", "amount": number}]
+    }
+  ]
+}
+
+CENOVUS SETTLEMENT LAYOUT — READ CAREFULLY:
+
+The document has 3 pages (or 2 pages if no discounts):
+
+PAGE 1 — "Payment Remittance":
+- Header table: Date | Document No. | Invoice Ref. | Invoice Amount | Discount | Amount Paid | Currency
+- Vendor info, Payment Document No, Payment Date, Total Payment Amount
+- The Invoice Ref. is the SETTLEMENT NUMBER (e.g. 5205144045)
+- The Document No. is the CONTRACT/DOCUMENT reference (e.g. 1100002840)
+
+PAGE 2 — "Cash Purchase Ticket Payment Information":
+- Header: Invoice Document (same as Invoice Ref), FI Document, Purchase Order, Payment info
+- Material lines table: Material Description | BOL | Truck | Receipt Date | Net Qty UM | Gr. Price | Net Price | Net Amount
+- IMPORTANT: Each physical load has TWO material rows:
+  1. MAIN line: "FEED STOCK, ETHANOL,WHEAT" with BOL (e.g. 165263), full Net Qty (e.g. 43.576 TO), real prices (275.00/273.91), real amount (11935.90)
+  2. ADJUSTMENT line: "FEED STOCK, ETHANOL,WHEAT - A165263" (note the "A" prefix on BOL) — tiny qty (e.g. 0.664 TO) at $0.10 price = $0.07. This is a weight adjustment/rounding line.
+- COMBINE both lines into ONE line entry: use the BOL from the main line as ticket_number, use the main line's Net Qty as net_weight_mt, and SUM both Net Amounts for line_gross.
+- Tax section shows 0.00% GST / 0.00% PST (tax exempt grain)
+
+PAGE 3 — "Cash Purchase Ticket Discount Information" (may not exist if no discounts):
+- Same header info as page 2
+- Discount lines: Discount Description | GR Document | BOL | Truck | Receipt Date | Quantity | Disc Price | Amount
+- Common discounts: "AB WHEAT COMMISSION" (Alberta Wheat Commission checkoff — category: checkoff)
+- The Disc Price is per-MT (e.g. $1.09/MT), Amount is total discount for that load
+- Extract each discount into deductions_summary with NEGATIVE amounts
+
+CRITICAL RULES:
+1. ticket_number MUST be the BOL number from page 2 (e.g. 165263, 165242, 165187, 165205, 165160). These are 6-digit numbers.
+2. The Truck number (e.g. 2142617) is the truck identifier, NOT the ticket number.
+3. The Document No. from page 1 (e.g. 1100002840) is a contract reference, NOT a ticket number.
+4. COMBINE the main material line and its "A" adjustment line into a single line entry per BOL.
+5. For multi-ticket settlements (2+ loads on one settlement), extract EACH load as a separate line.
+6. Weights are in TO (tonnes = metric tonnes).
+7. The difference between Gr. Price and Net Price (e.g. 275.00 - 273.91 = 1.09) equals the AB WHEAT COMMISSION rate.
+
+Extract ALL ticket rows across ALL pages. Return ONLY valid JSON, no extra text.`,
+
   unknown: `You are extracting data from a grain settlement PDF. The buyer format is unknown. Extract ALL of the following into structured JSON:
 
 {
@@ -424,7 +599,7 @@ async function detectBuyerFormat(pdfBase64) {
           },
           {
             type: 'text',
-            text: 'What grain company issued this settlement document? Reply with ONLY one word: "cargill", "bunge", "jgl", "richardson", "gsl", "ldc", "g3", or "unknown". Note: Louis Dreyfus Company = "ldc". G3 Canada Limited = "g3".',
+            text: 'What grain company issued this settlement document? Reply with ONLY one word: "cargill", "bunge", "jgl", "richardson", "gsl", "ldc", "g3", "wilde_bros", "mb_agri", "cenovus", or "unknown". Note: Louis Dreyfus Company = "ldc". G3 Canada Limited = "g3". Wilde Bros. Ag Trading (QuickBooks Bill Payment Stub) = "wilde_bros". MB Agri-Food Innovations / Mark Boryski broker email completion receipt = "mb_agri". Cenovus Energy / Husky Energy Mktg Partner (Lloydminster Ethanol) = "cenovus".',
           },
         ],
       }],
@@ -432,7 +607,7 @@ async function detectBuyerFormat(pdfBase64) {
 
     const usage = computeUsage(model, response);
     const answer = response.content[0]?.text?.trim().toLowerCase();
-    const format = ['cargill', 'bunge', 'jgl', 'richardson', 'gsl', 'ldc', 'g3'].includes(answer) ? answer : 'unknown';
+    const format = ['cargill', 'bunge', 'jgl', 'richardson', 'gsl', 'ldc', 'g3', 'wilde_bros', 'mb_agri', 'cenovus'].includes(answer) ? answer : 'unknown';
     return { format, usage };
   } catch (err) {
     const classified = classifyApiError(err);
@@ -666,6 +841,32 @@ function postProcessTicketNumbers(lines, buyerFormat) {
       }
     }
 
+    // Cenovus: The BOL is the weigh scale ticket number (6-digit, e.g. 165263).
+    // The Truck number (7-digit, e.g. 2142617) is the truck identifier, NOT the ticket.
+    // The AI frequently puts Truck in ticket_number and BOL in truck_number — swap them.
+    if (buyerFormat === 'cenovus') {
+      const truckNum = String(line.truck_number || '');
+      // If ticket_number looks like a truck ID (7 digits, 21xxxxx pattern) and
+      // truck_number looks like a BOL (6 digits), they're swapped
+      if (truckNum && /^\d{5,6}$/.test(truckNum) && /^\d{7}$/.test(tn)) {
+        return {
+          ...line,
+          ticket_number: truckNum,
+          truck_number: tn,
+          buyer_receipt_number: tn,
+        };
+      }
+      // Also check: if ticket_number is long (7+ digits) and there's a bol field
+      const bol = String(line.bol || line.bol_number || '');
+      if (bol && /^\d{5,6}$/.test(bol) && tn.length >= 7) {
+        return {
+          ...line,
+          ticket_number: bol,
+          buyer_receipt_number: tn,
+        };
+      }
+    }
+
     // Bunge: The correct ticket_number is "BOL or Car #" (the weigh scale number).
     // If the AI extracted a bol_or_car field, always prefer it as ticket_number.
     // The Receipt # is Bunge's internal receipt — store it separately.
@@ -745,7 +946,40 @@ export async function saveSettlement(farmId, extraction, buyerFormat, { pdfUrl =
   });
 
   // Post-process: fix ticket numbers when AI grabs internal IDs instead of weigh scale numbers
-  const lines = postProcessTicketNumbers(extraction.lines || [], buyerFormat).filter(l => !l._skip);
+  let lines = postProcessTicketNumbers(extraction.lines || [], buyerFormat).filter(l => !l._skip);
+
+  // Cenovus: merge adjustment lines into their parent.
+  // Each physical load has a MAIN line + small "A" adjustment line (same ticket_number, tiny qty at $0.10).
+  // Combine them into a single line, summing line_gross/line_net.
+  if (buyerFormat === 'cenovus' && lines.length > 1) {
+    const merged = [];
+    const seen = new Set();
+    for (const line of lines) {
+      const tn = String(line.ticket_number || '');
+      if (seen.has(tn)) continue; // already merged as an adjustment
+      // Find adjustment lines: same ticket_number, very small qty (< 1 MT), price <= 0.10
+      const adjustments = lines.filter(l =>
+        l !== line &&
+        String(l.ticket_number || '') === tn &&
+        (l.net_weight_mt || 0) < 1 &&
+        (l.price_per_mt || 0) <= 0.10
+      );
+      if (adjustments.length > 0) {
+        const adjGross = adjustments.reduce((s, a) => s + (a.line_gross || 0), 0);
+        merged.push({
+          ...line,
+          line_gross: (line.line_gross || 0) + adjGross,
+          line_net: line.line_net != null ? (line.line_net || 0) + adjGross : null,
+        });
+        adjustments.forEach(a => seen.add(String(a.ticket_number || '')));
+      } else {
+        merged.push(line);
+      }
+      seen.add(tn);
+    }
+    lines = merged;
+  }
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     await prisma.settlementLine.create({
@@ -753,6 +987,7 @@ export async function saveSettlement(farmId, extraction, buyerFormat, { pdfUrl =
         settlement_id: settlement.id,
         line_number: line.line_number || i + 1,
         ticket_number_on_settlement: line.ticket_number || null,
+        contract_number: line.contract_number || extraction.contract_number || null,
         delivery_date: line.delivery_date ? new Date(line.delivery_date) : null,
         commodity: line.commodity || extraction.commodity || null,
         grade: line.grade || null,
@@ -1027,14 +1262,39 @@ async function processBatchResults(aiBatch) {
         });
 
         // Post-process ticket numbers and create settlement lines
-        const lines = postProcessTicketNumbers(extraction.lines || [], settlement.buyer_format).filter(l => !l._skip);
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
+        let lines2 = postProcessTicketNumbers(extraction.lines || [], settlement.buyer_format).filter(l => !l._skip);
+
+        // Cenovus: merge adjustment lines (same as in saveSettlement)
+        if (settlement.buyer_format === 'cenovus' && lines2.length > 1) {
+          const merged = [];
+          const seen = new Set();
+          for (const line of lines2) {
+            const tn = String(line.ticket_number || '');
+            if (seen.has(tn)) continue;
+            const adjustments = lines2.filter(l =>
+              l !== line && String(l.ticket_number || '') === tn &&
+              (l.net_weight_mt || 0) < 1 && (l.price_per_mt || 0) <= 0.10
+            );
+            if (adjustments.length > 0) {
+              const adjGross = adjustments.reduce((s, a) => s + (a.line_gross || 0), 0);
+              merged.push({ ...line, line_gross: (line.line_gross || 0) + adjGross, line_net: line.line_net != null ? (line.line_net || 0) + adjGross : null });
+              adjustments.forEach(a => seen.add(String(a.ticket_number || '')));
+            } else {
+              merged.push(line);
+            }
+            seen.add(tn);
+          }
+          lines2 = merged;
+        }
+
+        for (let i = 0; i < lines2.length; i++) {
+          const line = lines2[i];
           await prisma.settlementLine.create({
             data: {
               settlement_id: settlement.id,
               line_number: line.line_number || i + 1,
               ticket_number_on_settlement: line.ticket_number || null,
+              contract_number: line.contract_number || extraction.contract_number || null,
               delivery_date: line.delivery_date ? new Date(line.delivery_date) : null,
               commodity: line.commodity || extraction.commodity || null,
               grade: line.grade || null,

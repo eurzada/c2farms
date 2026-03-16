@@ -112,6 +112,9 @@ const BUYER_OPTIONS = [
   { value: 'jgl', label: 'JGL Commodities' },
   { value: 'ldc', label: 'Louis Dreyfus (LDC)' },
   { value: 'richardson', label: 'Richardson Pioneer' },
+  { value: 'wilde_bros', label: 'Wilde Bros. Ag Trading' },
+  { value: 'mb_agri', label: 'MB Agri-Food Innovations' },
+  { value: 'cenovus', label: 'Cenovus Energy' },
   { value: 'unknown', label: 'Other' },
 ];
 
@@ -215,6 +218,7 @@ export default function SettlementUploadDialog({ open, onClose, farmId, onUpload
 
       setSavedResult(res.data);
       setStep('saved');
+      onUploaded?.();
     } catch (err) {
       setError(err.response?.data?.error || err.message);
     } finally {
@@ -246,6 +250,7 @@ export default function SettlementUploadDialog({ open, onClose, farmId, onUpload
             clearInterval(pollRef.current);
             pollRef.current = null;
             setBatchPolling(false);
+            if (pollRes.data.status === 'completed') onUploaded?.();
           }
         } catch {
           // silently continue polling
@@ -280,7 +285,6 @@ export default function SettlementUploadDialog({ open, onClose, farmId, onUpload
     setSaving(false);
     setBatchPolling(false);
     onClose();
-    if (step === 'saved' || batchResult?.status === 'completed') onUploaded?.();
   };
 
   const hasResult = step === 'saved' || !!batchResult;

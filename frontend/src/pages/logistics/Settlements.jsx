@@ -35,6 +35,7 @@ import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { extractErrorMessage } from '../../utils/errorHelpers';
 import { fmt, fmtDollar } from '../../utils/formatting';
+import { useMarketingSocket } from '../../hooks/useMarketingSocket';
 
 const FLAG_COLORS = { ok: 'success', warning: 'warning', error: 'error' };
 
@@ -81,6 +82,7 @@ export default function Settlements() {
   const [reconAllLoading, setReconAllLoading] = useState(false);
   const [gapOpen, setGapOpen] = useState(false);
   const [gapData, setGapData] = useState(null);
+  const [missingLoads, setMissingLoads] = useState(null);
   const [gapLoading, setGapLoading] = useState(false);
   const [gapMonth, setGapMonth] = useState('');
   const [expandedSections, setExpandedSections] = useState({});
@@ -116,13 +118,25 @@ export default function Settlements() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Real-time updates via socket
+  useMarketingSocket(currentFarm?.id, useCallback((event) => {
+    if (event === 'settlement:created' || event === 'settlement:approved') {
+      fetchData();
+    }
+  }, [fetchData]));
+
   const openDetail = useCallback(async (id) => {
     setDetailOpen(true);
     setDetailLoading(true);
     setEditing(false);
+    setMissingLoads(null);
     try {
       const res = await api.get(`/api/farms/${currentFarm.id}/settlements/${id}`);
       setDetail(res.data.settlement);
+      // Fetch missing loads for this settlement (non-blocking)
+      api.get(`/api/farms/${currentFarm.id}/logistics/missing-loads/${id}`)
+        .then(mlRes => setMissingLoads(mlRes.data))
+        .catch(() => setMissingLoads(null));
     } catch {
       setDetail(null);
     } finally {
@@ -175,6 +189,35 @@ export default function Settlements() {
       fetchData();
     } catch (err) {
       setSnack({ open: true, message: extractErrorMessage(err, 'Failed to approve settlements'), severity: 'error' });
+    }
+  };
+
+  const handleBulkUnapprove = async () => {
+    const selectedRows = gridRef.current?.api?.getSelectedRows() || [];
+    const unapproveList = selectedRows.filter(s => s.status === 'approved');
+    if (unapproveList.length === 0) {
+      setSnack({ open: true, message: 'No approved settlements selected', severity: 'info' });
+      return;
+    }
+    const ok = await confirm({
+      title: 'Unapprove Settlements',
+      message: `Revert ${unapproveList.length} approved settlement${unapproveList.length !== 1 ? 's' : ''} back to pending? This will un-settle matched tickets, remove auto-created deliveries and cash flow entries, and clear line matches so you can re-reconcile.`,
+      confirmText: 'Unapprove All',
+      confirmColor: 'warning',
+    });
+    if (!ok) return;
+
+    try {
+      const ids = unapproveList.map(s => s.id);
+      const res = await api.post(`/api/farms/${currentFarm.id}/settlements/bulk-unapprove`, {
+        ids,
+        notes: 'Unapproved for re-reconciliation',
+      });
+      setSnack({ open: true, message: `${res.data.unapproved} settlement(s) reverted to pending`, severity: 'success' });
+      setSelectedCount(0);
+      fetchData();
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to unapprove settlements'), severity: 'error' });
     }
   };
 
@@ -578,15 +621,25 @@ export default function Settlements() {
             <MenuItem value="approved">Approved</MenuItem>
           </TextField>
           {selectedCount > 0 && isAdmin && (
-            <Button
-              variant="outlined"
-              color="success"
-              size="small"
-              startIcon={<CheckCircleOutlineIcon />}
-              onClick={handleBulkApprove}
-            >
-              Approve ({selectedCount})
-            </Button>
+            <>
+              <Button
+                variant="outlined"
+                color="success"
+                size="small"
+                startIcon={<CheckCircleOutlineIcon />}
+                onClick={handleBulkApprove}
+              >
+                Approve ({selectedCount})
+              </Button>
+              <Button
+                variant="outlined"
+                color="warning"
+                size="small"
+                onClick={handleBulkUnapprove}
+              >
+                Unapprove ({selectedCount})
+              </Button>
+            </>
           )}
           <Tooltip title="Missing tickets, settlements, or contracts — what needs attention">
             <Button variant="outlined" color="warning" startIcon={<SummarizeIcon />} onClick={handleReconGapReport}>
@@ -666,7 +719,7 @@ export default function Settlements() {
       />
 
       {/* Settlement Detail Dialog */}
-      <Dialog open={detailOpen} onClose={() => { setDetailOpen(false); setDetail(null); setEditing(false); }} maxWidth="lg" fullWidth>
+      <Dialog open={detailOpen} onClose={() => { setDetailOpen(false); setDetail(null); setEditing(false); setMissingLoads(null); }} maxWidth="lg" fullWidth>
         <DialogTitle>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
             <span>Settlement {detail?.settlement_number ? `#${detail.settlement_number}` : ''}</span>
@@ -792,6 +845,16 @@ export default function Settlements() {
 
               <Divider sx={{ mb: 2 }} />
 
+              {/* Missing loads warning */}
+              {missingLoads && missingLoads.missing_count > 0 && (
+                <Alert severity="warning" sx={{ mb: 2 }}>
+                  {missingLoads.missing_count} other load{missingLoads.missing_count > 1 ? 's' : ''}{' '}
+                  ({fmt(missingLoads.missing_mt)} MT) shipped on contract {missingLoads.contract_number}{' '}
+                  {missingLoads.missing_count > 1 ? 'are' : 'is'} not on any settlement.{' '}
+                  Tickets: {missingLoads.missing_tickets.join(', ')}
+                </Alert>
+              )}
+
               {/* Settlement Lines */}
               {detail.lines?.length > 0 ? (
                 <TableContainer component={Paper} variant="outlined">
@@ -800,6 +863,7 @@ export default function Settlements() {
                       <TableRow>
                         <TableCell>#</TableCell>
                         <TableCell>Ticket #</TableCell>
+                        <TableCell>Contract #</TableCell>
                         <TableCell>Date</TableCell>
                         <TableCell>Grade</TableCell>
                         <TableCell align="right">Gross MT</TableCell>
@@ -822,6 +886,7 @@ export default function Settlements() {
                         }}>
                           <TableCell>{line.line_number}</TableCell>
                           <TableCell>{line.ticket_number_on_settlement || '—'}</TableCell>
+                          <TableCell>{line.contract_number || '—'}</TableCell>
                           <TableCell>{line.delivery_date ? new Date(line.delivery_date).toLocaleDateString() : '—'}</TableCell>
                           <TableCell>{line.grade || '—'}</TableCell>
                           <TableCell align="right">{fmt(line.gross_weight_mt)}</TableCell>
@@ -908,7 +973,7 @@ export default function Settlements() {
               Reconcile
             </Button>
           )}
-          <Button onClick={() => { setDetailOpen(false); setDetail(null); setEditing(false); }}>Close</Button>
+          <Button onClick={() => { setDetailOpen(false); setDetail(null); setEditing(false); setMissingLoads(null); }}>Close</Button>
         </DialogActions>
       </Dialog>
 

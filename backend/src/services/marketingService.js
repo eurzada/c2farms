@@ -331,23 +331,57 @@ export async function getPositionByCommodity(farmId) {
 export async function getMarketingDashboard(farmId) {
   const positionGrid = await getPositionByCommodity(farmId);
 
-  // KPIs
+  // KPIs — position-based
   const totalMt = positionGrid.reduce((s, r) => s + r.inventory_mt, 0);
-  const committedMt = positionGrid.reduce((s, r) => s + r.committed_mt, 0);
   const availableMt = positionGrid.reduce((s, r) => s + r.available_mt, 0);
   const totalValue = positionGrid.reduce((s, r) => s + r.inventory_value, 0);
-  const pctSold = totalMt > 0 ? (committedMt / totalMt) * 100 : 0;
 
-  // Active contracts count
-  const activeContracts = await prisma.marketingContract.count({
+  // Active contracts — include contract_number + id for ticket/settlement matching
+  const activeContracts = await prisma.marketingContract.findMany({
     where: { farm_id: farmId, status: { in: ['executed', 'in_delivery'] } },
+    select: { id: true, contract_number: true, contracted_mt: true, remaining_mt: true, delivered_mt: true },
   });
 
-  // YTD hauled
-  const ytdContracts = await prisma.marketingContract.findMany({
-    where: { farm_id: farmId, status: { in: ['in_delivery', 'delivered', 'settled'] } },
+  // Gross Commitment — total contracted MT across all active contracts
+  const grossCommitment = activeContracts.reduce((s, c) => s + c.contracted_mt, 0);
+  const pctSold = totalMt > 0 ? (grossCommitment / totalMt) * 100 : 0;
+
+  // Active contract identifiers for scoping hauled/settled queries
+  const activeContractIds = activeContracts.map(c => c.id);
+  const activeContractNumbers = activeContracts.map(c => c.contract_number).filter(Boolean);
+
+  // Hauled — actual MT moved, from delivery tickets matching active contracts
+  // Match on FK (marketing_contract_id) OR text contract_number field from CSV import
+  const hauledResult = await prisma.deliveryTicket.aggregate({
+    where: {
+      farm_id: farmId,
+      OR: [
+        { marketing_contract_id: { in: activeContractIds } },
+        { contract_number: { in: activeContractNumbers } },
+      ],
+    },
+    _sum: { net_weight_mt: true },
   });
-  const ytdHauled = ytdContracts.reduce((s, c) => s + c.delivered_mt, 0);
+  const hauledMt = hauledResult._sum.net_weight_mt || 0;
+
+  // Settled — MT from approved settlement lines linked to active contracts
+  // Match via settlement.marketing_contract_id OR settlement line's contract match
+  const settledResult = await prisma.settlementLine.aggregate({
+    where: {
+      settlement: {
+        farm_id: farmId,
+        status: 'approved',
+        marketing_contract_id: { in: activeContractIds },
+      },
+      net_weight_mt: { not: null },
+    },
+    _sum: { net_weight_mt: true },
+  });
+  const settledMt = settledResult._sum.net_weight_mt || 0;
+
+  // Remaining calculations
+  const remainingLessSettled = Math.max(0, grossCommitment - settledMt);
+  const remainingLessHauled = Math.max(0, grossCommitment - hauledMt);
 
   // Chart data: committed vs available per crop
   const chartData = positionGrid.map(r => ({
@@ -362,12 +396,18 @@ export async function getMarketingDashboard(farmId) {
   return {
     kpis: {
       total_mt: totalMt,
-      ytd_hauled: ytdHauled,
-      committed_mt: committedMt,
+      gross_commitment: grossCommitment,
+      hauled_mt: hauledMt,
+      settled_mt: settledMt,
+      remaining_less_settled: remainingLessSettled,
+      remaining_less_hauled: remainingLessHauled,
       available_mt: availableMt,
-      active_contracts: activeContracts,
+      active_contracts: activeContracts.length,
       total_value: totalValue,
       pct_sold: pctSold,
+      // Legacy — keep for backward compat until frontend fully migrated
+      committed_mt: grossCommitment,
+      ytd_hauled: hauledMt,
     },
     positionGrid,
     chartData,

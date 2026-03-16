@@ -761,6 +761,7 @@ model SettlementLine {
   delivery_ticket_id         String?         // matched ticket
   line_number                Int
   ticket_number_on_settlement String?        // buyer's ticket #
+  contract_number            String?         // per-line contract # (multi-contract settlements)
   delivery_date              DateTime?       @db.Date
   commodity                  String?
   grade                      String?
