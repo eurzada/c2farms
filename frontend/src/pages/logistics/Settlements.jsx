@@ -25,6 +25,8 @@ import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import LinkIcon from '@mui/icons-material/Link';
+import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
+import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import { useNavigate } from 'react-router-dom';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
@@ -145,6 +147,39 @@ export default function Settlements() {
     }
   }, [currentFarm]);
 
+  const navigateDetail = useCallback((direction) => {
+    if (!detail || !gridRef.current?.api) return;
+    const allRows = [];
+    gridRef.current.api.forEachNodeAfterFilterAndSort(n => allRows.push(n.data));
+    const idx = allRows.findIndex(r => r.id === detail.id);
+    const nextIdx = idx + direction;
+    if (nextIdx >= 0 && nextIdx < allRows.length) {
+      openDetail(allRows[nextIdx].id);
+    }
+  }, [detail, openDetail]);
+
+  const handleApproveFromDetail = async () => {
+    if (!detail) return;
+    const ok = await confirm({
+      title: 'Approve Settlement',
+      message: `Approve settlement #${detail.settlement_number}? Unresolved lines will be dismissed.`,
+      confirmText: 'Approve',
+      confirmColor: 'success',
+    });
+    if (!ok) return;
+    try {
+      await api.post(`/api/farms/${currentFarm.id}/settlements/bulk-approve`, {
+        ids: [detail.id],
+        notes: 'Approved from settlement detail',
+      });
+      setSnack({ open: true, message: 'Settlement approved', severity: 'success' });
+      setDetail(prev => prev ? { ...prev, status: 'approved' } : prev);
+      fetchData();
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to approve'), severity: 'error' });
+    }
+  };
+
   const handleDelete = async (id, number) => {
     const ok = await confirm({
       title: 'Delete Settlement',
@@ -185,7 +220,10 @@ export default function Settlements() {
         ids,
         notes: 'Approved — prior year cutoff',
       });
-      setSnack({ open: true, message: `${res.data.approved} settlement(s) approved`, severity: 'success' });
+      const msg = res.data.errors?.length
+        ? `${res.data.approved} approved, ${res.data.errors.length} failed: ${res.data.errors[0]}`
+        : `${res.data.approved} settlement(s) approved`;
+      setSnack({ open: true, message: msg, severity: res.data.approved > 0 ? 'success' : 'warning' });
       setSelectedCount(0);
       fetchData();
     } catch (err) {
@@ -737,7 +775,15 @@ export default function Settlements() {
       <Dialog open={detailOpen} onClose={() => { setDetailOpen(false); setDetail(null); setEditing(false); setMissingLoads(null); }} maxWidth="lg" fullWidth>
         <DialogTitle>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <span>Settlement {detail?.settlement_number ? `#${detail.settlement_number}` : ''}</span>
+            <Stack direction="row" spacing={0.5} alignItems="center">
+              <Tooltip title="Previous settlement">
+                <span><IconButton size="small" onClick={() => navigateDetail(-1)} disabled={detailLoading}><NavigateBeforeIcon /></IconButton></span>
+              </Tooltip>
+              <span>Settlement {detail?.settlement_number ? `#${detail.settlement_number}` : ''}</span>
+              <Tooltip title="Next settlement">
+                <span><IconButton size="small" onClick={() => navigateDetail(1)} disabled={detailLoading}><NavigateNextIcon /></IconButton></span>
+              </Tooltip>
+            </Stack>
             <Stack direction="row" spacing={1} alignItems="center">
               {detail && (
                 <Chip label={editing ? editForm.status : detail.status} size="small" color={STATUS_COLORS[editing ? editForm.status : detail.status] || 'default'} />
@@ -986,6 +1032,11 @@ export default function Settlements() {
               onClick={() => { setDetailOpen(false); navigate(`/logistics/settlement-recon?id=${detail.id}`); }}
             >
               Reconcile
+            </Button>
+          )}
+          {detail && isAdmin && detail.status !== 'approved' && (
+            <Button color="success" variant="contained" startIcon={<CheckCircleOutlineIcon />} onClick={handleApproveFromDetail}>
+              Approve
             </Button>
           )}
           <Button onClick={() => { setDetailOpen(false); setDetail(null); setEditing(false); setMissingLoads(null); }}>Close</Button>
