@@ -1,6 +1,8 @@
-# C2 Farms — Farm Financial Manager
+# C2 Farms — Modular Farm ERP
 
-A full-stack farm financial management application for western Canadian grain operations. Built for farm managers and owners to budget, forecast, track actuals, and analyze per-acre profitability across a Nov–Oct fiscal year.
+A full-stack modular ERP for western Canadian grain operations. Manages financial forecasting, grain inventory, marketing contracts, logistics (ticket/settlement reconciliation), agronomy planning, and terminal operations across 7 business units and ~40,000 acres.
+
+**Live**: [c2farms.onrender.com](https://c2farms.onrender.com)
 
 ## Tech Stack
 
@@ -8,17 +10,13 @@ A full-stack farm financial management application for western Canadian grain op
 |-------|-----------|
 | Frontend | React 18, Vite 5, MUI v6, ag-Grid Community v31, Chart.js 4 |
 | Backend | Node.js 20, Express 4, Prisma 5, Socket.io 4 |
-| Database | PostgreSQL 16 (Docker) |
-| Auth | JWT (jsonwebtoken + bcrypt) |
+| Database | PostgreSQL 16 (Docker locally, Render managed in prod) |
+| AI | Anthropic Claude API (settlement PDF extraction, AI reconciliation) |
+| Auth | JWT (jsonwebtoken + bcrypt), 3 roles (admin/manager/viewer) |
 | Exports | ExcelJS (Excel), pdfmake (PDF) |
+| Real-time | Socket.io (cell edits, ticket events, marketing updates) |
 | Testing | Vitest, Supertest |
-| Linting | ESLint |
-
-## Prerequisites
-
-- Node.js 20+
-- Docker & Docker Compose
-- npm
+| Hosting | Render (web service + PostgreSQL) |
 
 ## Quick Start
 
@@ -28,7 +26,6 @@ docker compose up -d
 
 # 2. Backend
 cd backend
-cp .env.example .env   # or use existing .env
 npm install
 npx prisma db push --schema=src/prisma/schema.prisma
 npm run db:seed
@@ -38,6 +35,9 @@ npm run dev             # → http://localhost:3001
 cd frontend
 npm install
 npm run dev             # → http://localhost:5173
+
+# Or run both at once from root:
+npm run dev
 ```
 
 ## Seed Accounts
@@ -48,99 +48,118 @@ npm run dev             # → http://localhost:5173
 | `manager@c2farms.com` | `password123` | manager |
 | `viewer@c2farms.com` | `password123` | viewer |
 
-Seed farm: **C2 Farms Ltd** (5,000 acres — Canola, Durum, Chickpeas, Lentils)
-
 ## Application Modules
 
-| # | Module | Route | Description |
-|---|--------|-------|-------------|
-| 1 | Yield & Assumptions | `/assumptions` | Fiscal year setup, crops, acres, bins, freeze/unfreeze budget |
-| 2 | Cost Forecast | `/cost-forecast` | Monthly accounting grid, CSV import, Excel/PDF export |
-| 3 | Per-Unit Analysis | `/per-unit` | $/acre view with frozen budget comparison and variance |
-| 4 | Operations | `/operations` | Labour hours, equipment hours, fuel litres tracking |
-| 5 | Dashboard | `/dashboard` | KPI cards, gauges, crop yields, budget vs forecast charts |
-| — | Chart of Accounts | `/chart-of-accounts` | Category hierarchy, GL account management, YTD tracking |
-| — | Settings | `/settings` | User management, invites, role assignment, backup (admin only) |
+| # | Module | Status | Description |
+|---|--------|--------|-------------|
+| 1 | **Financial Forecast** | Complete | Budget, actuals, per-unit/accounting grids, GL rollup, freeze/variance |
+| 2 | **Grain Inventory** | Complete | 303 bins across 8 locations, FM counts, dashboard, grading |
+| 3 | **Grain Marketing** | Complete | Contracts, pricing, cash flow, sell decision tool, buyers |
+| 4 | **Grain Logistics** | Complete | Ticket import (CSV), settlement extraction (Claude Vision), AI reconciliation |
+| 5 | **Agronomy** | Phase 1 | Crop plans, nutrient balance, input costing |
+| 6 | **LGX Terminal** | Phase 1 | Blending/transloading operations, rail car management |
+| 7 | **Enterprise View** | Partial | Cross-BU rollup dashboards |
+
+## Codebase Stats
+
+- **240 source files** (~22,500 lines of JS/JSX)
+- **56 database models** (1,200-line Prisma schema)
+- **35 route files** (~100+ API endpoints)
+- **48 service files** (business logic)
+- **42 frontend pages** across 7 module directories
 
 ## Project Structure
 
 ```
 c2farms/
-├── backend/
-│   └── src/
-│       ├── server.js              # HTTP + Socket.io server
-│       ├── app.js                 # Express app, middleware, route registration
-│       ├── config/database.js     # Prisma client
-│       ├── middleware/
-│       │   ├── auth.js            # JWT auth, RBAC (requireRole, requireFarmAccess)
-│       │   └── errorHandler.js
-│       ├── routes/                # 14 route files (~54 endpoints)
-│       ├── services/              # Business logic (calculation, export, GL rollup, etc.)
-│       ├── socket/                # Socket.io handlers + AI event emitters
-│       ├── prisma/
-│       │   ├── schema.prisma      # 15 models
-│       │   └── seed.js
-│       ├── utils/                 # Fiscal year helpers, category templates
-│       └── scripts/               # Data migration scripts
-├── frontend/
-│   └── src/
-│       ├── App.jsx                # Routes + auth guards
-│       ├── pages/                 # 7 page components
-│       ├── components/            # ~28 components (layout, grids, dialogs, charts)
-│       ├── contexts/              # AuthContext, FarmContext
-│       └── services/              # API client (axios)
-├── docs/                          # Project documentation
-│   ├── ARCHITECTURE.md
-│   ├── API.md
-│   ├── DATABASE.md
-│   ├── RBAC.md
-│   ├── DEPLOYMENT.md
-│   └── SECURITY_CHECKLIST.md
-└── docker-compose.yml             # PostgreSQL 16
+├── backend/src/
+│   ├── server.js              # HTTP + Socket.io entry
+│   ├── app.js                 # Express app, middleware, route registration
+│   ├── config/database.js     # Prisma client singleton
+│   ├── middleware/             # auth.js (JWT + RBAC), errorHandler.js, validation.js
+│   ├── routes/                # 35 route files
+│   ├── services/              # 48 service files (calculation, inventory, marketing, etc.)
+│   ├── socket/                # Socket.io handler + AI events
+│   ├── prisma/schema.prisma   # 56 models
+│   ├── prisma/seed.js         # Demo data seeder
+│   ├── scripts/               # Data migration & seed scripts
+│   └── utils/                 # Fiscal year, categories, crypto, logger, fonts
+├── frontend/src/
+│   ├── App.jsx                # Routes + auth guards + code splitting
+│   ├── pages/                 # 42 page components across module dirs
+│   ├── components/            # Feature components (per-unit, accounting, marketing, etc.)
+│   ├── contexts/              # AuthContext, FarmContext, ThemeContext
+│   ├── hooks/                 # useRealtime, useMarketingSocket, useConfirmDialog
+│   ├── services/              # api.js (axios), socket.js (Socket.io client)
+│   └── utils/                 # formatting, fiscalYear, gridColors, validation
+├── apps/mobile/               # React Native trucker app (Expo)
+├── docs/                      # Architecture, API, DB schema, RBAC, deployment docs
+├── CLAUDE.md                  # AI assistant instructions
+├── render.yaml                # Render deployment blueprint
+└── docker-compose.yml         # PostgreSQL 16
 ```
 
 ## Key Concepts
 
-- **Fiscal Year**: Nov–Oct (configurable per assumption). FY2026 = Nov 2025 – Oct 2026.
-- **Two-Layer Reporting**: Per-unit ($/acre) and Accounting (total $) are bidirectionally linked via total acres.
-- **Budget Freeze**: Snapshots current data to `monthly_data_frozen` for variance analysis. Admin-only unfreeze.
-- **GL Rollup**: GL account actuals aggregate up to farm categories. Import via CSV or (future) QuickBooks sync.
-- **Category Hierarchy**: Revenue → Inputs → LPM → LBF → Insurance. Total Expense and Profit computed at query time.
-- **RBAC**: Three roles (admin/manager/viewer) enforced at both API and UI levels.
+- **Fiscal Year**: Nov–Oct. FY2026 = Nov 2025 – Oct 2026.
+- **Enterprise vs BU**: Enterprise farm (`is_enterprise=true`) holds all enterprise-wide data (inventory, marketing, logistics). 7 BU farms hold per-location forecast data.
+- **Two-Layer Reporting**: Per-unit ($/acre) and Accounting (total $) kept in bidirectional sync via `calculationService`.
+- **Settlement AI Pipeline**: Upload PDF → Claude Vision extracts structured data → review/edit → save → AI reconciliation matches to delivery tickets → approve.
+- **RBAC**: Three roles (admin/manager/viewer) enforced at both API middleware and frontend route guards.
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `JWT_SECRET` | Yes | JWT signing secret |
+| `ANTHROPIC_API_KEY` | For AI | Claude API key for settlement extraction |
+| `NODE_ENV` | Prod | `production` for production mode |
+| `CORS_ORIGIN` | Prod | Allowed CORS origin(s) |
+| `PORT` | No | Backend port (default: 3001, Render uses 10000) |
 
 ## NPM Scripts
 
-### Backend (`cd backend`)
-
+### Root
 | Script | Description |
 |--------|-------------|
-| `npm run dev` | Start with file watching |
-| `npm start` | Production start |
-| `npm test` | Run tests (Vitest) |
+| `npm run dev` | Start backend + frontend concurrently |
+| `npm run build` | Install deps + build Vite bundle + generate Prisma |
+| `npm run start` | Start production server |
+
+### Backend (`cd backend`)
+| Script | Description |
+|--------|-------------|
+| `npm run dev` | Start with `--watch` |
+| `npm test` | Run Vitest |
 | `npm run db:push` | Sync Prisma schema to DB |
-| `npm run db:seed` | Seed sample data |
+| `npm run db:seed` | Seed demo data |
 | `npm run db:studio` | Open Prisma Studio GUI |
 | `npm run lint` | ESLint |
 
 ### Frontend (`cd frontend`)
-
 | Script | Description |
 |--------|-------------|
-| `npm run dev` | Vite dev server |
+| `npm run dev` | Vite dev server (proxies /api → :3001) |
 | `npm run build` | Production build |
-| `npm run preview` | Preview production build |
 | `npm run lint` | ESLint |
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
+| [CLAUDE.md](CLAUDE.md) | AI assistant instructions & project conventions |
+| [Onboarding](docs/ONBOARDING.md) | New developer setup & orientation guide |
 | [Architecture](docs/ARCHITECTURE.md) | System design, data flow, services, real-time sync |
-| [API Reference](docs/API.md) | All endpoints with auth requirements and request/response formats |
+| [API Reference](docs/API.md) | Endpoints with auth requirements |
 | [Database Schema](docs/DATABASE.md) | Models, relationships, JSONB structures |
 | [RBAC](docs/RBAC.md) | Roles, permissions, middleware, invite flow |
-| [Deployment](docs/DEPLOYMENT.md) | Environment variables, Docker, VPS, managed platforms |
-| [Security Checklist](docs/SECURITY_CHECKLIST.md) | Production hardening checklist |
+| [Deployment](docs/DEPLOYMENT.md) | Render, Docker, environment setup |
+| [ERP Architecture](docs/ERP_ARCHITECTURE.md) | Multi-module ERP design decisions |
+| [Dev Process](docs/DEV_PROCESS.md) | How changes take effect, file watching |
+
+### Module Docs (`docs/modules/`)
+Agronomy, LGX Terminal Operations, LGX Reconciliation, LGX Accounting, Enterprise View, and more.
 
 ## License
 
