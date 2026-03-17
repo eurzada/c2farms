@@ -92,6 +92,18 @@ export default function Grading() {
       sort: 'asc',
     },
     { field: 'commodity_name', headerName: 'Commodity', minWidth: 110, flex: 1 },
+    {
+      field: 'inv_crop_year', headerName: 'Crop Year', minWidth: 90, flex: 0.6,
+      valueFormatter: p => p.value != null ? String(p.value) : '—',
+    },
+    {
+      field: 'inv_bushels', headerName: 'Inv Bu', minWidth: 90, flex: 0.7,
+      valueFormatter: p => p.value != null ? Math.round(p.value).toLocaleString() : '—',
+    },
+    {
+      field: 'inv_mt', headerName: 'Inv MT', minWidth: 80, flex: 0.6,
+      valueFormatter: p => p.value != null ? p.value.toFixed(1) : '—',
+    },
     { field: 'grade', headerName: 'Grade', minWidth: 180, flex: 1.5, editable: true },
     { field: 'variety', headerName: 'Variety', minWidth: 90, flex: 0.7, editable: true },
     { field: 'grade_reason', headerName: 'Reason', minWidth: 100, flex: 0.8, editable: true },
@@ -112,6 +124,20 @@ export default function Grading() {
       valueFormatter: p => p.value != null ? p.value.toFixed(1) : '—',
     },
     { field: 'frost', headerName: 'Frost', minWidth: 70, flex: 0.5, editable: true },
+    { field: 'origin', headerName: 'Origin', minWidth: 70, flex: 0.4, hide: true },
+    { field: 'colour', headerName: 'Colour', minWidth: 70, flex: 0.4, hide: true, editable: true },
+    {
+      field: 'falling_number', headerName: 'FN', minWidth: 65, flex: 0.4, hide: true, editable: true,
+      valueFormatter: p => p.value != null ? p.value.toFixed(0) : '—',
+    },
+    {
+      field: 'fusarium_pct', headerName: 'FUS %', minWidth: 70, flex: 0.4, hide: true, editable: true,
+      valueFormatter: p => p.value != null ? p.value.toFixed(2) : '—',
+    },
+    {
+      field: 'bushels', headerName: 'Grade Bu', minWidth: 80, flex: 0.5, hide: true,
+      valueFormatter: p => p.value != null ? p.value.toLocaleString() : '—',
+    },
     {
       field: 'status', headerName: 'Status', minWidth: 90, flex: 0.6,
       cellRenderer: ({ value }) => {
@@ -190,7 +216,7 @@ export default function Grading() {
           startIcon={<UploadFileIcon />}
           onClick={() => setImportOpen(true)}
         >
-          Import EFU Grading
+          Import Grading Sheet
         </Button>
       </Stack>
 
@@ -246,12 +272,12 @@ export default function Grading() {
 
       {/* Import Dialog */}
       <Dialog open={importOpen} onClose={() => { setImportOpen(false); setImportPreview(null); }} maxWidth="lg" fullWidth>
-        <DialogTitle>Import EFU Grading Sheet</DialogTitle>
+        <DialogTitle>Import Grading Sheet</DialogTitle>
         <DialogContent dividers>
           {!importPreview && !importing && (
             <Box sx={{ textAlign: 'center', py: 4 }}>
               <Typography variant="body1" gutterBottom>
-                Upload the EFU grading spreadsheet (.xlsb or .xlsx) to import bin grades.
+                Upload a grading spreadsheet (.xlsb or .xlsx) — supports both Grain Index and EFU formats.
               </Typography>
               <Typography variant="body2" color="text.secondary" gutterBottom>
                 The file will be parsed and matched against your bin inventory. You can review matches before confirming.

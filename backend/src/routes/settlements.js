@@ -938,7 +938,7 @@ router.post('/:farmId/settlements/bulk-approve', authenticate, requireRole('admi
         await prisma.settlementLine.updateMany({
           where: {
             settlement_id: id,
-            match_status: { in: ['unmatched', 'exception', null] },
+            match_status: { in: ['unmatched', 'exception'] },
           },
           data: {
             match_status: 'manual',

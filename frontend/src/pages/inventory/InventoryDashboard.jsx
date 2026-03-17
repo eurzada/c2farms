@@ -9,9 +9,11 @@ import AlertsPanel from '../../components/inventory/AlertsPanel';
 import DrawdownChart from '../../components/inventory/DrawdownChart';
 import LocationCommodityMatrix from '../../components/inventory/LocationCommodityMatrix';
 import ConversionHealthCard from '../../components/inventory/ConversionHealthCard';
+import MonthlyReconSummary from '../../components/inventory/MonthlyReconSummary';
+import AvailableToSellTable from '../../components/inventory/AvailableToSellTable';
 
 export default function InventoryDashboard() {
-  const { currentFarm } = useFarm();
+  const { currentFarm, isEnterprise } = useFarm();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -19,35 +21,62 @@ export default function InventoryDashboard() {
   useEffect(() => {
     if (!currentFarm) return;
     setLoading(true);
-    api.get(`/api/farms/${currentFarm.id}/inventory/dashboard`)
+
+    // In BU mode, pass the farm name so backend can map to inventory location
+    const params = {};
+    if (!isEnterprise && currentFarm.name) {
+      params.bu_farm_name = currentFarm.name;
+    }
+
+    api.get(`/api/farms/${currentFarm.id}/inventory/dashboard`, { params })
       .then(res => { setData(res.data); setError(''); })
       .catch(() => setError('Failed to load dashboard data'))
       .finally(() => setLoading(false));
-  }, [currentFarm]);
+  }, [currentFarm, isEnterprise]);
 
   if (loading) return <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress /></Box>;
   if (error) return <Alert severity="error" sx={{ m: 2 }}>{error}</Alert>;
   if (!data) return null;
 
-  const { kpi, cropInventory, farmStatus, alerts, drawdown, locationCommodityMatrix, conversionHealth } = data;
+  const { kpi, cropInventory, farmStatus, alerts, drawdown, locationCommodityMatrix, conversionHealth, monthlyRecon, available_to_sell, latest_period } = data;
 
   return (
     <Box>
-      <Typography variant="h5" sx={{ mb: 3, fontWeight: 600 }}>Inventory Management</Typography>
+      <Typography variant="h5" sx={{ mb: 3, fontWeight: 600 }}>
+        {isEnterprise ? 'Inventory Management' : `${currentFarm.name} Inventory`}
+      </Typography>
 
-      {/* KPI Cards */}
+      {/* Location × Commodity Matrix — top of page, enterprise only */}
+      {isEnterprise && locationCommodityMatrix && (
+        <Box sx={{ mb: 3 }}>
+          <LocationCommodityMatrix data={locationCommodityMatrix} asAtDate={latest_period?.period_date} />
+        </Box>
+      )}
+
+      {/* KPI Cards — 6 cards */}
       <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid item xs={12} sm={6} md={2}>
           <InventoryKPICard label="Total Inventory" value={kpi.total_mt} unit="MT" color="primary.main" />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid item xs={12} sm={6} md={2}>
           <InventoryKPICard label="Committed" value={kpi.committed_mt} unit="MT" color="warning.main" />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <InventoryKPICard label="Available" value={kpi.available_mt} unit="MT" color="success.main" />
+        <Grid item xs={12} sm={6} md={2}>
+          <InventoryKPICard label="Available to Sell" value={kpi.available_mt} unit="MT" color="success.main" />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <InventoryKPICard label="Active Contracts" value={kpi.active_contracts} unit="" color="info.main" />
+        <Grid item xs={12} sm={6} md={2}>
+          <InventoryKPICard label="Hauled This Month" value={kpi.hauled_this_month_mt} unit="MT" color="info.main" />
+        </Grid>
+        <Grid item xs={12} sm={6} md={2}>
+          <InventoryKPICard label="Settled This Month" value={kpi.settled_this_month_amount} unit="$" color="secondary.main" />
+        </Grid>
+        <Grid item xs={12} sm={6} md={2}>
+          <InventoryKPICard
+            label="Pending Settlements"
+            value={kpi.pending_settlements_count}
+            unit=""
+            color={kpi.pending_settlements_count > 0 ? 'warning.main' : 'text.secondary'}
+          />
         </Grid>
       </Grid>
 
@@ -55,12 +84,24 @@ export default function InventoryDashboard() {
       {alerts.length > 0 && <AlertsPanel alerts={alerts} />}
 
       <Grid container spacing={3}>
-        {/* Crop Inventory Table */}
+        {/* Monthly Reconciliation Summary — enterprise only */}
+        {isEnterprise && monthlyRecon && (
+          <Grid item xs={12}>
+            <MonthlyReconSummary data={monthlyRecon} />
+          </Grid>
+        )}
+
+        {/* Available-to-Sell Table */}
+        {available_to_sell?.length > 0 && (
+          <Grid item xs={12}>
+            <AvailableToSellTable data={available_to_sell} />
+          </Grid>
+        )}
+
+        {/* Crop Inventory + Farm Status side by side */}
         <Grid item xs={12} md={7}>
           <CropInventoryTable crops={cropInventory} />
         </Grid>
-
-        {/* Farm Status Panel */}
         <Grid item xs={12} md={5}>
           <FarmStatusPanel statuses={farmStatus} />
           {conversionHealth && (
@@ -68,11 +109,6 @@ export default function InventoryDashboard() {
               <ConversionHealthCard data={conversionHealth} />
             </Box>
           )}
-        </Grid>
-
-        {/* Location × Commodity Matrix */}
-        <Grid item xs={12}>
-          <LocationCommodityMatrix data={locationCommodityMatrix} />
         </Grid>
 
         {/* Drawdown Chart */}

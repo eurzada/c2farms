@@ -2,19 +2,16 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Box, Typography, Button, Alert, Dialog, DialogTitle, DialogContent, DialogActions,
   TextField, MenuItem, Chip, Paper, Grid, ToggleButton, ToggleButtonGroup,
-  IconButton, InputAdornment,
 } from '@mui/material';
 import { AgGridReact } from 'ag-grid-react';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import AddIcon from '@mui/icons-material/Add';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
-import DeleteIcon from '@mui/icons-material/Delete';
 import { useFarm } from '../../contexts/FarmContext';
 import TerminalContractImportDialog from '../../components/terminal/TerminalContractImportDialog';
+import TerminalContractDetailDialog from '../../components/terminal/TerminalContractDetailDialog';
 import { useThemeMode } from '../../contexts/ThemeContext';
-import { useConfirmDialog } from '../../hooks/useConfirmDialog';
-import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import api from '../../services/api';
 import { extractErrorMessage } from '../../utils/errorHelpers';
 import { formatCurrency } from '../../utils/formatting';
@@ -30,7 +27,6 @@ const STATUS_COLORS = {
 export default function TerminalContracts() {
   const { currentFarm } = useFarm();
   const { mode } = useThemeMode();
-  const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
   const gridRef = useRef();
   const [rows, setRows] = useState([]);
   const [summary, setSummary] = useState(null);
@@ -47,15 +43,7 @@ export default function TerminalContracts() {
     start_date: '', end_date: '', notes: '',
   });
 
-  // Edit contract state
-  const [editContract, setEditContract] = useState(null);
-  const [editForm, setEditForm] = useState({
-    contract_number: '', direction: 'purchase', counterparty_id: '', commodity_id: '',
-    contracted_mt: '', price_per_mt: '', ship_mode: 'truck', delivery_point: '',
-    start_date: '', end_date: '', notes: '',
-    grade_prices_json: [],
-    blend_requirement_json: [],
-  });
+  const [detailContract, setDetailContract] = useState(null);
 
   const farmId = currentFarm?.id;
 
@@ -144,82 +132,6 @@ export default function TerminalContracts() {
     }
   };
 
-  const openEditDialog = (contract) => {
-    const parseJsonArray = (val) => {
-      if (!val) return [];
-      try {
-        const arr = typeof val === 'string' ? JSON.parse(val) : val;
-        return Array.isArray(arr) ? arr : [];
-      } catch { return []; }
-    };
-    setEditContract(contract);
-    setEditForm({
-      contract_number: contract.contract_number || '',
-      direction: contract.direction || 'purchase',
-      counterparty_id: contract.counterparty_id || '',
-      commodity_id: contract.commodity_id || '',
-      contracted_mt: contract.contracted_mt != null ? String(contract.contracted_mt) : '',
-      price_per_mt: contract.price_per_mt != null ? String(contract.price_per_mt) : '',
-      ship_mode: contract.ship_mode || 'truck',
-      delivery_point: contract.delivery_point || '',
-      start_date: contract.start_date ? contract.start_date.slice(0, 10) : '',
-      end_date: contract.end_date ? contract.end_date.slice(0, 10) : '',
-      notes: contract.notes || '',
-      grade_prices_json: parseJsonArray(contract.grade_prices_json),
-      blend_requirement_json: parseJsonArray(contract.blend_requirement_json),
-    });
-  };
-
-  const handleEditSubmit = async () => {
-    if (!editContract) return;
-    try {
-      const gradeP = editForm.grade_prices_json
-        .filter(r => r.grade?.trim() && r.price_per_mt != null && r.price_per_mt !== '')
-        .map(r => ({ grade: r.grade.trim(), price_per_mt: parseFloat(r.price_per_mt) }));
-      const blendR = editForm.blend_requirement_json
-        .filter(r => r.grade?.trim() && r.mt != null && r.mt !== '')
-        .map(r => ({ grade: r.grade.trim(), mt: parseFloat(r.mt) }));
-
-      await api.put(`/api/farms/${farmId}/terminal/contracts/${editContract.id}`, {
-        contract_number: editForm.contract_number,
-        direction: editForm.direction,
-        counterparty_id: editForm.counterparty_id,
-        commodity_id: editForm.commodity_id,
-        contracted_mt: parseFloat(editForm.contracted_mt),
-        price_per_mt: editForm.price_per_mt ? parseFloat(editForm.price_per_mt) : null,
-        ship_mode: editForm.ship_mode,
-        delivery_point: editForm.delivery_point,
-        start_date: editForm.start_date || null,
-        end_date: editForm.end_date || null,
-        notes: editForm.notes,
-        grade_prices_json: gradeP.length ? gradeP : null,
-        blend_requirement_json: blendR.length ? blendR : null,
-      });
-      setEditContract(null);
-      load();
-    } catch (err) {
-      setError(extractErrorMessage(err, 'Failed to update contract'));
-    }
-  };
-
-  const handleDeleteContract = async () => {
-    if (!editContract) return;
-    const ok = await confirm({
-      title: 'Delete Contract',
-      message: `Delete contract ${editContract.contract_number}? This cannot be undone.`,
-      confirmText: 'Delete',
-      confirmColor: 'error',
-    });
-    if (!ok) return;
-    try {
-      await api.delete(`/api/farms/${farmId}/terminal/contracts/${editContract.id}`);
-      setEditContract(null);
-      load();
-    } catch (err) {
-      setError(extractErrorMessage(err, 'Failed to delete contract'));
-    }
-  };
-
   const fmtMt = v => v != null ? `${v.toLocaleString('en-CA', { maximumFractionDigits: 1 })} MT` : '—';
 
   return (
@@ -267,7 +179,7 @@ export default function TerminalContracts() {
           animateRows
           getRowId={p => p.data.id}
           loading={loading}
-          onRowDoubleClicked={p => openEditDialog(p.data)}
+          onRowDoubleClicked={p => setDetailContract(p.data)}
         />
       </Box>
 
@@ -306,83 +218,15 @@ export default function TerminalContracts() {
         </DialogActions>
       </Dialog>
 
-      {/* Edit Contract Dialog */}
-      <Dialog open={!!editContract} onClose={() => setEditContract(null)} maxWidth="sm" fullWidth>
-        <DialogTitle>Edit Contract</DialogTitle>
-        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
-          <TextField label="Contract #" value={editForm.contract_number} onChange={e => setEditForm(f => ({ ...f, contract_number: e.target.value }))} fullWidth required />
-          <TextField select label="Direction" value={editForm.direction} onChange={e => setEditForm(f => ({ ...f, direction: e.target.value }))} fullWidth>
-            <MenuItem value="purchase">Purchase (from grower)</MenuItem>
-            <MenuItem value="sale">Sale (to buyer)</MenuItem>
-          </TextField>
-          <TextField select label="Counterparty" value={editForm.counterparty_id} onChange={e => setEditForm(f => ({ ...f, counterparty_id: e.target.value }))} fullWidth required>
-            {counterparties.map(c => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
-          </TextField>
-          <TextField select label="Commodity" value={editForm.commodity_id} onChange={e => setEditForm(f => ({ ...f, commodity_id: e.target.value }))} fullWidth required>
-            {commodities.map(c => <MenuItem key={c.id} value={c.id}>{c.name} ({c.code})</MenuItem>)}
-          </TextField>
-          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5 }}>
-            <TextField label="Contracted MT" type="number" value={editForm.contracted_mt} onChange={e => setEditForm(f => ({ ...f, contracted_mt: e.target.value }))} required />
-            <TextField label="Price $/MT" type="number" value={editForm.price_per_mt} onChange={e => setEditForm(f => ({ ...f, price_per_mt: e.target.value }))} />
-          </Box>
-          <TextField select label="Ship Mode" value={editForm.ship_mode} onChange={e => setEditForm(f => ({ ...f, ship_mode: e.target.value }))} fullWidth>
-            <MenuItem value="truck">Truck</MenuItem>
-            <MenuItem value="rail">Rail</MenuItem>
-          </TextField>
-          <TextField label="Delivery Point" value={editForm.delivery_point} onChange={e => setEditForm(f => ({ ...f, delivery_point: e.target.value }))} fullWidth />
-          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5 }}>
-            <TextField label="Start Date" type="date" value={editForm.start_date} onChange={e => setEditForm(f => ({ ...f, start_date: e.target.value }))} InputLabelProps={{ shrink: true }} />
-            <TextField label="End Date" type="date" value={editForm.end_date} onChange={e => setEditForm(f => ({ ...f, end_date: e.target.value }))} InputLabelProps={{ shrink: true }} />
-          </Box>
-          <TextField label="Notes" value={editForm.notes} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} fullWidth multiline rows={2} />
-
-          {/* Grade Prices */}
-          <Typography variant="subtitle2" sx={{ mt: 1 }}>Grade Prices</Typography>
-          {editForm.grade_prices_json.map((row, idx) => (
-            <Box key={idx} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-              <TextField size="small" label="Grade" value={row.grade || ''}
-                onChange={e => setEditForm(f => ({ ...f, grade_prices_json: f.grade_prices_json.map((r, i) => i === idx ? { ...r, grade: e.target.value } : r) }))}
-                sx={{ width: 140 }} />
-              <TextField size="small" label="$/MT" type="number" value={row.price_per_mt ?? ''}
-                onChange={e => setEditForm(f => ({ ...f, grade_prices_json: f.grade_prices_json.map((r, i) => i === idx ? { ...r, price_per_mt: e.target.value } : r) }))}
-                sx={{ width: 100 }}
-                InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }} />
-              <IconButton size="small" onClick={() => setEditForm(f => ({ ...f, grade_prices_json: f.grade_prices_json.filter((_, i) => i !== idx) }))}>
-                <DeleteIcon fontSize="small" />
-              </IconButton>
-            </Box>
-          ))}
-          <Button size="small" startIcon={<AddIcon />} onClick={() => setEditForm(f => ({ ...f, grade_prices_json: [...f.grade_prices_json, { grade: '', price_per_mt: '' }] }))}>
-            Add grade price
-          </Button>
-
-          {/* Blend Requirement */}
-          <Typography variant="subtitle2" sx={{ mt: 1 }}>Blend Requirement</Typography>
-          {editForm.blend_requirement_json.map((row, idx) => (
-            <Box key={idx} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-              <TextField size="small" label="Grade" value={row.grade || ''}
-                onChange={e => setEditForm(f => ({ ...f, blend_requirement_json: f.blend_requirement_json.map((r, i) => i === idx ? { ...r, grade: e.target.value } : r) }))}
-                sx={{ width: 140 }} />
-              <TextField size="small" label="MT" type="number" value={row.mt ?? ''}
-                onChange={e => setEditForm(f => ({ ...f, blend_requirement_json: f.blend_requirement_json.map((r, i) => i === idx ? { ...r, mt: e.target.value } : r) }))}
-                sx={{ width: 100 }} />
-              <IconButton size="small" onClick={() => setEditForm(f => ({ ...f, blend_requirement_json: f.blend_requirement_json.filter((_, i) => i !== idx) }))}>
-                <DeleteIcon fontSize="small" />
-              </IconButton>
-            </Box>
-          ))}
-          <Button size="small" variant="outlined" startIcon={<AddIcon />} onClick={() => setEditForm(f => ({ ...f, blend_requirement_json: [...f.blend_requirement_json, { grade: '', mt: '' }] }))}>
-            Add blend line
-          </Button>
-        </DialogContent>
-        <DialogActions sx={{ justifyContent: 'space-between' }}>
-          <Button color="error" startIcon={<DeleteIcon />} onClick={handleDeleteContract}>Delete</Button>
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button onClick={() => setEditContract(null)}>Cancel</Button>
-            <Button variant="contained" onClick={handleEditSubmit} disabled={!editForm.contract_number || !editForm.counterparty_id || !editForm.commodity_id || !editForm.contracted_mt}>Save</Button>
-          </Box>
-        </DialogActions>
-      </Dialog>
+      <TerminalContractDetailDialog
+        open={!!detailContract}
+        onClose={() => setDetailContract(null)}
+        contract={detailContract}
+        farmId={farmId}
+        onSaved={() => { setDetailContract(null); load(); }}
+        counterparties={counterparties}
+        commodities={commodities}
+      />
 
       <TerminalContractImportDialog
         open={importDialogOpen}
@@ -390,7 +234,6 @@ export default function TerminalContracts() {
         farmId={farmId}
         onImported={load}
       />
-      <ConfirmDialog {...confirmDialogProps} />
     </Box>
   );
 }

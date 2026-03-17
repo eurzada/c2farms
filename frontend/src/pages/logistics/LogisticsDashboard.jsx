@@ -268,7 +268,96 @@ export default function LogisticsDashboard() {
         />
       </Stack>
 
-      {/* Row 2: Shipped (Tickets) vs Confirmed Sold (Marketing) */}
+      {/* Row 2: Monthly Shipped vs Settled */}
+      {data.monthly_shipments?.rows?.length > 0 && (() => {
+        const ms = data.monthly_shipments;
+        const hasData = ms.rows.some(r => r.shipped_mt > 0 || r.settled_mt > 0);
+        if (!hasData) return null;
+        const monthlyChartData = {
+          labels: ms.rows.map(r => r.month),
+          datasets: [
+            { label: 'Shipped MT', data: ms.rows.map(r => r.shipped_mt), backgroundColor: '#1976d2' },
+            { label: 'Settled MT', data: ms.rows.map(r => r.settled_mt), backgroundColor: '#2e7d32' },
+          ],
+        };
+        const monthlyChartOpts = {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'top' },
+            tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmt(ctx.raw)} MT` } },
+          },
+          scales: {
+            y: { title: { display: true, text: 'Metric Tonnes' }, ticks: { callback: v => fmt(v) } },
+          },
+        };
+        return (
+          <Paper sx={{ p: 2, mb: 3 }}>
+            <TileHeader
+              title="Monthly Shipments vs Settlements"
+              onExport={() => exportRowsCsv(
+                [...ms.rows, { month: 'TOTAL', ...ms.totals }],
+                [
+                  { key: 'month', label: 'Month' },
+                  { key: 'shipped_mt', label: 'Shipped MT' },
+                  { key: 'ticket_count', label: 'Tickets' },
+                  { key: 'settled_mt', label: 'Settled MT' },
+                  { key: 'settlement_count', label: 'Settlements' },
+                  { key: 'gap_mt', label: 'Gap MT' },
+                ],
+                'monthly-shipments-vs-settlements.csv',
+              )}
+            />
+            <Box sx={{ height: 260, mb: 2 }}>
+              <Bar data={monthlyChartData} options={monthlyChartOpts} />
+            </Box>
+            <Box sx={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid', borderColor: 'rgba(128,128,128,0.3)' }}>
+                    <th style={{ textAlign: 'left', padding: '6px 8px' }}>Month</th>
+                    <th style={{ textAlign: 'right', padding: '6px 8px' }}>Shipped MT</th>
+                    <th style={{ textAlign: 'right', padding: '6px 8px' }}>Tickets</th>
+                    <th style={{ textAlign: 'right', padding: '6px 8px' }}>Settled MT</th>
+                    <th style={{ textAlign: 'right', padding: '6px 8px' }}>Settlements</th>
+                    <th style={{ textAlign: 'right', padding: '6px 8px' }}>Gap MT</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ms.rows.filter(r => r.shipped_mt > 0 || r.settled_mt > 0).map(r => (
+                    <tr key={r.month} style={{ borderBottom: '1px solid rgba(128,128,128,0.15)' }}>
+                      <td style={{ padding: '6px 8px', fontWeight: 500 }}>{r.month}</td>
+                      <td style={{ textAlign: 'right', padding: '6px 8px' }}>{fmt(r.shipped_mt)}</td>
+                      <td style={{ textAlign: 'right', padding: '6px 8px' }}>{r.ticket_count}</td>
+                      <td style={{ textAlign: 'right', padding: '6px 8px' }}>{fmt(r.settled_mt)}</td>
+                      <td style={{ textAlign: 'right', padding: '6px 8px' }}>{r.settlement_count}</td>
+                      <td style={{
+                        textAlign: 'right', padding: '6px 8px', fontWeight: 600,
+                        color: r.gap_mt > 0 ? '#d32f2f' : r.gap_mt < 0 ? '#ed6c02' : undefined,
+                      }}>{fmt(r.gap_mt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: '2px solid', borderColor: 'rgba(128,128,128,0.3)', fontWeight: 700 }}>
+                    <td style={{ padding: '6px 8px' }}>TOTAL</td>
+                    <td style={{ textAlign: 'right', padding: '6px 8px' }}>{fmt(ms.totals.shipped_mt)}</td>
+                    <td style={{ textAlign: 'right', padding: '6px 8px' }}>{ms.totals.ticket_count}</td>
+                    <td style={{ textAlign: 'right', padding: '6px 8px' }}>{fmt(ms.totals.settled_mt)}</td>
+                    <td style={{ textAlign: 'right', padding: '6px 8px' }}>{ms.totals.settlement_count}</td>
+                    <td style={{
+                      textAlign: 'right', padding: '6px 8px', fontWeight: 700,
+                      color: ms.totals.gap_mt > 0 ? '#d32f2f' : ms.totals.gap_mt < 0 ? '#ed6c02' : undefined,
+                    }}>{fmt(ms.totals.gap_mt)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </Box>
+          </Paper>
+        );
+      })()}
+
+      {/* Row 3: Shipped (Tickets) vs Confirmed Sold (Marketing) */}
       {data.shipped_vs_confirmed?.rows?.length > 0 && (
         <Paper sx={{ p: 2, mb: 3 }}>
           <TileHeader

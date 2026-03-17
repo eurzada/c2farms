@@ -196,6 +196,73 @@ router.patch('/:farmId/tickets/bulk-settle', authenticate, requireRole('admin'),
   } catch (err) { next(err); }
 });
 
+// PATCH single ticket (admin/manager edit)
+router.patch('/:farmId/tickets/:ticketId', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { farmId, ticketId } = req.params;
+    const ticket = await prisma.deliveryTicket.findFirst({
+      where: { id: ticketId, farm_id: farmId },
+    });
+    if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+    if (ticket.settled) {
+      return res.status(400).json({ error: 'Cannot edit a settled ticket — un-settle it first' });
+    }
+
+    const allowedFields = [
+      'ticket_number', 'grade', 'delivery_date', 'net_weight_kg',
+      'destination', 'buyer_name', 'contract_number', 'notes',
+    ];
+    const data = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        if (field === 'delivery_date' && req.body[field]) {
+          data[field] = new Date(req.body[field]);
+        } else if (field === 'net_weight_kg' && req.body[field] != null) {
+          data[field] = parseFloat(req.body[field]);
+          data.net_weight_mt = data[field] / 1000;
+        } else {
+          data[field] = req.body[field];
+        }
+      }
+    }
+
+    // Handle commodity change by id
+    if (req.body.commodity_id) {
+      const commodity = await prisma.commodity.findFirst({
+        where: { id: req.body.commodity_id, farm_id: farmId },
+      });
+      if (!commodity) return res.status(400).json({ error: 'Commodity not found' });
+      data.commodity_id = commodity.id;
+    }
+
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: 'No editable fields provided' });
+    }
+
+    const updated = await prisma.deliveryTicket.update({
+      where: { id: ticketId },
+      data,
+      include: {
+        marketing_contract: { select: { contract_number: true } },
+        counterparty: { select: { name: true, short_code: true } },
+        commodity: { select: { name: true, code: true } },
+        location: { select: { name: true, code: true } },
+      },
+    });
+
+    logAudit({
+      farmId,
+      userId: req.userId,
+      entityType: 'DeliveryTicket',
+      entityId: ticketId,
+      action: 'update',
+      changes: data,
+    });
+
+    res.json({ ticket: updated });
+  } catch (err) { next(err); }
+});
+
 // DELETE bulk delete tickets
 router.delete('/:farmId/tickets', authenticate, requireRole('admin'), async (req, res, next) => {
   try {

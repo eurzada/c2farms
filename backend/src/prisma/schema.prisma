@@ -363,8 +363,14 @@ model BinGrade {
   test_weight     Float?            // g/0.5L
   hvk_pct         Float?
   frost           String?           // e.g. "1-M"
+  colour          String?           // e.g. "1" or "Satisfactory"
+  falling_number  Float?            // Falling Number (FN seconds)
+  fusarium_pct    Float?            // FUS %
+  bushels         Float?            // reported bushels from grading sheet
+  origin          String?           // e.g. "CAN" — grain origin
+  quality_json    Json?             // all remaining quality metrics as key-value pairs
   inspector_notes String?
-  source          String            @default("efu") // efu, manual, other
+  source          String            @default("efu") // efu, manual, grain_index
   grade_date      DateTime?         @db.Date
   status          String            @default("available") // available, shipped, emptied
   created_at      DateTime          @default(now())

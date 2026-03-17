@@ -18,7 +18,7 @@ import { Typography, Box, CircularProgress } from '@mui/material';
 const InventoryLayout = lazy(() => import('./components/inventory/InventoryLayout'));
 const InventoryDashboard = lazy(() => import('./pages/inventory/InventoryDashboard'));
 const BinInventory = lazy(() => import('./pages/inventory/BinInventory'));
-const Contracts = lazy(() => import('./pages/inventory/Contracts'));
+
 const Reconciliation = lazy(() => import('./pages/inventory/Reconciliation'));
 const FarmManagerView = lazy(() => import('./pages/inventory/FarmManagerView'));
 const CountHistory = lazy(() => import('./pages/inventory/CountHistory'));
@@ -32,9 +32,6 @@ const TruckerAdmin = lazy(() => import('./pages/logistics/TruckerAdmin'));
 const MarketingLayout = lazy(() => import('./components/marketing/MarketingLayout'));
 const MarketingDashboard = lazy(() => import('./pages/marketing/MarketingDashboard'));
 const MarketingContracts = lazy(() => import('./pages/marketing/MarketingContracts'));
-const MarketingPrices = lazy(() => import('./pages/marketing/MarketingPrices'));
-const MarketingCashFlow = lazy(() => import('./pages/marketing/MarketingCashFlow'));
-const SellDecisionTool = lazy(() => import('./pages/marketing/SellDecisionTool'));
 const MarketingBuyers = lazy(() => import('./pages/marketing/MarketingBuyers'));
 const AgronomyLayout = lazy(() => import('./components/agronomy/AgronomyLayout'));
 const AgronomyDashboard = lazy(() => import('./pages/agronomy/AgronomyDashboard'));
@@ -166,7 +163,7 @@ export default function App() {
                       <Route path="/inventory/dashboard" element={<EnterpriseRoute><InventoryLayout><InventoryDashboard /></InventoryLayout></EnterpriseRoute>} />
                       <Route path="/inventory/bins" element={<ModuleRoute module="inventory"><InventoryLayout><BinInventory /></InventoryLayout></ModuleRoute>} />
                       <Route path="/inventory/grading" element={<EnterpriseRoute><InventoryLayout><Grading /></InventoryLayout></EnterpriseRoute>} />
-                      <Route path="/inventory/contracts" element={<EnterpriseRoute><InventoryLayout><Contracts /></InventoryLayout></EnterpriseRoute>} />
+
                       <Route path="/inventory/recon" element={<EnterpriseRoute><InventoryLayout><Reconciliation /></InventoryLayout></EnterpriseRoute>} />
                       <Route path="/inventory/count" element={<ModuleRoute module="inventory"><InventoryLayout><FarmManagerView /></InventoryLayout></ModuleRoute>} />
                       <Route path="/inventory/history" element={<EnterpriseRoute><InventoryLayout><CountHistory /></InventoryLayout></EnterpriseRoute>} />
@@ -181,9 +178,6 @@ export default function App() {
                       <Route path="/marketing" element={<EnterpriseRoute><Navigate to="/marketing/dashboard" /></EnterpriseRoute>} />
                       <Route path="/marketing/dashboard" element={<EnterpriseRoute><MarketingLayout><MarketingDashboard /></MarketingLayout></EnterpriseRoute>} />
                       <Route path="/marketing/contracts" element={<EnterpriseRoute><MarketingLayout><MarketingContracts /></MarketingLayout></EnterpriseRoute>} />
-                      <Route path="/marketing/prices" element={<EnterpriseRoute><MarketingLayout><MarketingPrices /></MarketingLayout></EnterpriseRoute>} />
-                      <Route path="/marketing/cash-flow" element={<EnterpriseRoute><MarketingLayout><MarketingCashFlow /></MarketingLayout></EnterpriseRoute>} />
-                      <Route path="/marketing/sell-tool" element={<EnterpriseRoute><MarketingLayout><SellDecisionTool /></MarketingLayout></EnterpriseRoute>} />
                       <Route path="/marketing/buyers" element={<EnterpriseRoute><MarketingLayout><MarketingBuyers /></MarketingLayout></EnterpriseRoute>} />
 
                       {/* Terminal Operations (LGX) */}

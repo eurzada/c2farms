@@ -97,11 +97,11 @@ export async function getMonthlyReconciliation(farmId, fiscalYear, { startDate, 
     invByPeriodCommodity[key] = (invByPeriodCommodity[key] || 0) + (bc.kg || 0) / 1000;
   }
 
-  // Build month lookup helper
+  // Build month lookup helper — use UTC methods because Prisma returns @db.Date as midnight UTC
   function getMonthKey(date) {
     if (!date) return null;
     const d = new Date(date);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
   }
 
   function monthToFiscalLabel(monthKey) {

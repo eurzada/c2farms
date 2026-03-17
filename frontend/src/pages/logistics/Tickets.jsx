@@ -22,7 +22,9 @@ import { useFarm } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import api from '../../services/api';
 import { connectSocket } from '../../services/socket';
+import EditIcon from '@mui/icons-material/Edit';
 import TicketImportDialog from '../../components/inventory/TicketImportDialog';
+import TicketEditDialog from '../../components/logistics/TicketEditDialog';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { extractErrorMessage } from '../../utils/errorHelpers';
@@ -47,6 +49,7 @@ export default function Tickets() {
   const [hiddenCols, setHiddenCols] = useState(() => {
     try { return JSON.parse(localStorage.getItem('c2_tickets_hidden_cols')) || {}; } catch { return {}; }
   });
+  const [editTicket, setEditTicket] = useState(null);
   const { confirm, dialogProps } = useConfirmDialog();
 
   // Listen for real-time mobile ticket uploads
@@ -248,6 +251,14 @@ export default function Tickets() {
           />
         : null,
     },
+    canEdit && {
+      headerName: '', width: 44, sortable: false, filter: false, resizable: false,
+      cellRenderer: p => (
+        <IconButton size="small" onClick={() => setEditTicket(p.data)} sx={{ p: 0.5 }}>
+          <EditIcon fontSize="small" />
+        </IconButton>
+      ),
+    },
     !hiddenCols['ticket_number'] && { field: 'ticket_number', headerName: 'Ticket #', width: 100 },
     !hiddenCols['source_timestamp'] && {
       field: 'source_timestamp', headerName: 'Timestamp', width: 145,
@@ -310,7 +321,7 @@ export default function Tickets() {
         ? <Chip label="Paid" size="small" color="success" />
         : <Chip label="No" size="small" color="default" variant="outlined" />,
     },
-  ].filter(Boolean), [hiddenCols]);
+  ].filter(Boolean), [hiddenCols, canEdit]);
 
   return (
     <Box>
@@ -477,6 +488,14 @@ export default function Tickets() {
         onClose={() => setImportOpen(false)}
         farmId={currentFarm?.id}
         onImported={fetchData}
+      />
+
+      <TicketEditDialog
+        open={!!editTicket}
+        onClose={() => setEditTicket(null)}
+        farmId={currentFarm?.id}
+        ticket={editTicket}
+        onSaved={fetchData}
       />
 
       <ConfirmDialog {...dialogProps} />

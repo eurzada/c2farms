@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button, Box, Typography,
   Alert, CircularProgress, Paper, Chip, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, Divider, Tooltip, IconButton,
+  TableContainer, TableHead, TableRow, Tooltip, IconButton,
   Select, MenuItem, FormControl,
 } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -11,6 +11,7 @@ import LinkIcon from '@mui/icons-material/Link';
 import api from '../../services/api';
 import { fmtDollar, fmt } from '../../utils/formatting';
 import { extractErrorMessage } from '../../utils/errorHelpers';
+import RealizationPanel from './RealizationPanel';
 
 export default function BuyerSettlementReconciliationDialog({ open, onClose, farmId, settlementId, onDone }) {
   const [settlement, setSettlement] = useState(null);
@@ -268,55 +269,12 @@ export default function BuyerSettlementReconciliationDialog({ open, onClose, far
 
             {/* Realization Panel */}
             {(realization || settlement.realization_json) && (
-              <Paper variant="outlined" sx={{ p: 2, bgcolor: 'background.default' }}>
-                <Typography variant="subtitle1" fontWeight={700} gutterBottom>
-                  Contract Realization — {settlement.counterparty?.name} #{settlement.contract?.contract_number || ''}
-                </Typography>
-                <Divider sx={{ mb: 1 }} />
-                {(() => {
-                  const r = realization || settlement.realization_json;
-                  return (
-                    <>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                        <Typography>{settlement.counterparty?.name} Buyer Net:</Typography>
-                        <Typography fontWeight={600}>{fmtDollar(r.buyer_net)}</Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                        <Typography>LGX Transfer Net (COGS):</Typography>
-                        <Typography>{fmtDollar(r.transfer_net)}</Typography>
-                      </Box>
-                      <Divider sx={{ my: 1 }} />
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                        <Typography fontWeight={700}>LGX Blending Margin:</Typography>
-                        <Typography fontWeight={700} color={r.margin > 0 ? 'success.main' : 'error.main'}>
-                          {fmtDollar(r.margin)}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                        <Typography variant="body2" color="text.secondary">Margin per MT:</Typography>
-                        <Typography variant="body2">{fmtDollar(r.margin_per_mt)}/MT</Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                        <Typography variant="body2" color="text.secondary">Margin %:</Typography>
-                        <Typography variant="body2">{r.margin_pct}%</Typography>
-                      </Box>
-
-                      {deductions.length > 0 && (
-                        <>
-                          <Divider sx={{ my: 1 }} />
-                          <Typography variant="body2" color="text.secondary" gutterBottom>Buyer Deductions:</Typography>
-                          {deductions.map((d, i) => (
-                            <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', pl: 2 }}>
-                              <Typography variant="body2">{d.name}</Typography>
-                              <Typography variant="body2" color="error">{fmtDollar(d.amount)}</Typography>
-                            </Box>
-                          ))}
-                        </>
-                      )}
-                    </>
-                  );
-                })()}
-              </Paper>
+              <RealizationPanel
+                realization={realization || settlement.realization_json}
+                buyerName={settlement.counterparty?.name}
+                contractNumber={settlement.contract?.contract_number}
+                deductions={deductions}
+              />
             )}
 
             {/* Compute realization button */}

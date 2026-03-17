@@ -58,20 +58,22 @@ export default function CreateTerminalSettlementDialog({ open, onClose, farmId, 
     }
   }, [open, farmId, type]);
 
-  // Load eligible tickets when type changes or contract/counterparty selected
+  // Load eligible tickets — filtered by contract when one is selected
   const loadTickets = useCallback(async () => {
     if (!farmId) return;
     try {
-      const res = await api.get(`/api/farms/${farmId}/terminal/eligible-tickets`, {
-        params: { type },
-      });
+      const params = { type };
+      if (type === 'transfer' && selectedContractId) {
+        params.contract_id = selectedContractId;
+      }
+      const res = await api.get(`/api/farms/${farmId}/terminal/eligible-tickets`, { params });
       setTickets(res.data.tickets || []);
       setSelectedTicketIds([]);
       setLineOverrides({});
     } catch {
       setTickets([]);
     }
-  }, [farmId, type]);
+  }, [farmId, type, selectedContractId]);
 
   useEffect(() => {
     if (!open) return;

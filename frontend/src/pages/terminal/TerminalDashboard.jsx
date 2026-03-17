@@ -1,16 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Paper, Grid, Chip, Skeleton, Alert, Button, Divider, Menu, MenuItem,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, LinearProgress,
 } from '@mui/material';
 import WarehouseIcon from '@mui/icons-material/Warehouse';
 import InputIcon from '@mui/icons-material/Input';
 import OutputIcon from '@mui/icons-material/Output';
-import BlenderIcon from '@mui/icons-material/Blender';
+import SpeedIcon from '@mui/icons-material/Speed';
 import DescriptionIcon from '@mui/icons-material/Description';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import GavelIcon from '@mui/icons-material/Gavel';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
+import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import { useFarm } from '../../contexts/FarmContext';
 import api from '../../services/api';
 import { extractErrorMessage } from '../../utils/errorHelpers';
@@ -29,9 +30,15 @@ function StatCard({ icon, label, value, subtitle, color = 'primary.main' }) {
   );
 }
 
+function fmtMT(kg) {
+  if (kg == null) return '—';
+  const mt = kg / 1000;
+  return `${mt.toLocaleString('en-CA', { maximumFractionDigits: 1 })} MT`;
+}
+
 function fmtKg(kg) {
   if (kg == null) return '—';
-  if (kg >= 1_000_000) return `${(kg / 1000).toLocaleString('en-CA', { maximumFractionDigits: 0 })} MT`;
+  if (kg >= 1_000_000) return fmtMT(kg);
   return `${kg.toLocaleString('en-CA', { maximumFractionDigits: 0 })} kg`;
 }
 
@@ -99,9 +106,14 @@ export default function TerminalDashboard() {
   if (!data) return null;
 
   const totalKg = data.bins?.reduce((sum, b) => sum + (b.balance_kg || 0), 0) || 0;
+  const totalCapacity = data.bins?.reduce((sum, b) => sum + (b.capacity_kg || 0), 0) || 1;
+  const utilPct = Math.round((totalKg / totalCapacity) * 100);
+  const inboundKg = data.ticket_stats?.total_inbound_kg || 0;
+  const outboundKg = data.ticket_stats?.total_outbound_kg || 0;
 
   return (
     <Box>
+      {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="h5" fontWeight={700}>Terminal Dashboard</Typography>
         <Box>
@@ -130,21 +142,54 @@ export default function TerminalDashboard() {
         </Box>
       </Box>
 
+      {/* Top stat cards */}
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid item xs={12} sm={6} md={3}>
-          <StatCard icon={<WarehouseIcon />} label="Total Inventory" value={fmtKg(totalKg)} subtitle={`${data.bins?.length || 0} active bins`} />
+          <StatCard icon={<WarehouseIcon />} label="Total Inventory" value={fmtMT(totalKg)} subtitle={`${data.bins?.length || 0} active bins`} />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
-          <StatCard icon={<InputIcon />} label="Total Inbound" value={fmtKg(data.ticket_stats?.total_inbound_kg)} subtitle={`${data.ticket_stats?.total_inbound_count || 0} loads`} color="success.main" />
+          <StatCard icon={<InputIcon />} label="Inbound" value={fmtMT(inboundKg)} subtitle={`${data.ticket_stats?.total_inbound_count || 0} loads received`} color="success.main" />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
-          <StatCard icon={<OutputIcon />} label="Total Outbound" value={fmtKg(data.ticket_stats?.total_outbound_kg)} subtitle={`${data.ticket_stats?.total_outbound_count || 0} shipments`} color="warning.main" />
+          <StatCard icon={<OutputIcon />} label="Outbound" value={fmtMT(outboundKg)} subtitle={`${data.ticket_stats?.total_outbound_count || 0} shipments`} color="warning.main" />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
-          <StatCard icon={<BlenderIcon />} label="Blend Events" value={data.recent_blends?.length || 0} subtitle="Recent blends" color="info.main" />
+          <StatCard icon={<SpeedIcon />} label="Utilization" value={`${utilPct}%`} subtitle={`${fmtMT(totalCapacity)} total capacity`} color={utilPct > 85 ? 'error.main' : utilPct > 60 ? 'warning.main' : 'info.main'} />
         </Grid>
       </Grid>
 
+      {/* Grain Flow Strip */}
+      <Paper sx={{ p: 2.5, mb: 3 }}>
+        <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1.5 }}>Grain Flow</Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
+          <Paper variant="outlined" sx={{ p: 2, textAlign: 'center', flex: 1, borderColor: 'success.main', borderWidth: 2 }}>
+            <InputIcon sx={{ color: 'success.main', fontSize: 28, mb: 0.5 }} />
+            <Typography variant="h6" fontWeight={700}>{fmtMT(inboundKg)}</Typography>
+            <Typography variant="caption" color="text.secondary">Incoming</Typography>
+          </Paper>
+          <ArrowForwardIcon sx={{ color: 'text.disabled', fontSize: 28, flexShrink: 0 }} />
+          <Paper variant="outlined" sx={{ p: 2, textAlign: 'center', flex: 1.3, borderColor: 'primary.main', borderWidth: 2 }}>
+            <WarehouseIcon sx={{ color: 'primary.main', fontSize: 28, mb: 0.5 }} />
+            <Typography variant="h6" fontWeight={700}>{fmtMT(totalKg)}</Typography>
+            <Typography variant="caption" color="text.secondary">Bins (WIP)</Typography>
+            <LinearProgress
+              variant="determinate"
+              value={Math.min(utilPct, 100)}
+              sx={{ mt: 1, height: 6, borderRadius: 3 }}
+              color={utilPct > 85 ? 'error' : utilPct > 60 ? 'warning' : 'primary'}
+            />
+            <Typography variant="caption" color="text.secondary">{utilPct}% full</Typography>
+          </Paper>
+          <ArrowForwardIcon sx={{ color: 'text.disabled', fontSize: 28, flexShrink: 0 }} />
+          <Paper variant="outlined" sx={{ p: 2, textAlign: 'center', flex: 1, borderColor: 'warning.main', borderWidth: 2 }}>
+            <OutputIcon sx={{ color: 'warning.main', fontSize: 28, mb: 0.5 }} />
+            <Typography variant="h6" fontWeight={700}>{fmtMT(outboundKg)}</Typography>
+            <Typography variant="caption" color="text.secondary">Outgoing</Typography>
+          </Paper>
+        </Box>
+      </Paper>
+
+      {/* Contracts & Settlements row */}
       {(contractSummary || settlementSummary) && (
         <Grid container spacing={2} sx={{ mb: 3 }}>
           {contractSummary && (
@@ -170,6 +215,7 @@ export default function TerminalDashboard() {
         </Grid>
       )}
 
+      {/* Bin Status + Commodity Breakdown */}
       <Grid container spacing={2}>
         <Grid item xs={12} md={5}>
           <Paper sx={{ p: 2 }}>
@@ -181,22 +227,33 @@ export default function TerminalDashboard() {
                     <TableCell>Bin</TableCell>
                     <TableCell>Product</TableCell>
                     <TableCell align="right">Balance</TableCell>
-                    <TableCell align="right">C2</TableCell>
-                    <TableCell align="right">Non-C2</TableCell>
+                    <TableCell align="right" sx={{ width: 100 }}>Capacity</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {data.bins?.map(bin => (
-                    <TableRow key={bin.id}>
-                      <TableCell><strong>{bin.name}</strong></TableCell>
-                      <TableCell>
-                        <Chip label={bin.current_product_label || bin.product_label || '—'} size="small" variant="outlined" />
-                      </TableCell>
-                      <TableCell align="right">{fmtKg(bin.balance_kg)}</TableCell>
-                      <TableCell align="right">{bin.c2_balance_kg ? fmtKg(bin.c2_balance_kg) : '—'}</TableCell>
-                      <TableCell align="right">{bin.non_c2_balance_kg ? fmtKg(bin.non_c2_balance_kg) : '—'}</TableCell>
-                    </TableRow>
-                  ))}
+                  {data.bins?.map(bin => {
+                    const pct = bin.capacity_kg ? Math.round((bin.balance_kg / bin.capacity_kg) * 100) : 0;
+                    return (
+                      <TableRow key={bin.id}>
+                        <TableCell><strong>{bin.name}</strong></TableCell>
+                        <TableCell>
+                          <Chip label={bin.current_product_label || bin.product_label || '—'} size="small" variant="outlined" />
+                        </TableCell>
+                        <TableCell align="right">{fmtKg(bin.balance_kg)}</TableCell>
+                        <TableCell align="right">
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                            <LinearProgress
+                              variant="determinate"
+                              value={Math.min(pct, 100)}
+                              sx={{ flex: 1, height: 6, borderRadius: 3 }}
+                              color={pct > 85 ? 'error' : pct > 60 ? 'warning' : 'primary'}
+                            />
+                            <Typography variant="caption" sx={{ minWidth: 32, textAlign: 'right' }}>{pct}%</Typography>
+                          </Box>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -211,23 +268,33 @@ export default function TerminalDashboard() {
                 <TableHead>
                   <TableRow>
                     <TableCell>Commodity</TableCell>
-                    <TableCell align="right">Total KG</TableCell>
                     <TableCell align="right">MT</TableCell>
+                    <TableCell align="right">Share</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {data.totals_by_commodity?.map(row => (
-                    <TableRow key={row.product}>
-                      <TableCell>{row.product}</TableCell>
-                      <TableCell align="right">{row.total_kg?.toLocaleString('en-CA')}</TableCell>
-                      <TableCell align="right">{(row.total_kg / 1000).toFixed(1)}</TableCell>
-                    </TableRow>
-                  ))}
+                  {data.totals_by_commodity?.map(row => {
+                    const mt = row.total_kg / 1000;
+                    const share = totalKg > 0 ? Math.round((row.total_kg / totalKg) * 100) : 0;
+                    return (
+                      <TableRow key={row.product}>
+                        <TableCell>{row.product}</TableCell>
+                        <TableCell align="right">{mt.toLocaleString('en-CA', { maximumFractionDigits: 1 })}</TableCell>
+                        <TableCell align="right">
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                            <LinearProgress variant="determinate" value={share} sx={{ flex: 1, height: 6, borderRadius: 3 }} />
+                            <Typography variant="caption" sx={{ minWidth: 32, textAlign: 'right' }}>{share}%</Typography>
+                          </Box>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </TableContainer>
           </Paper>
 
+          {/* Recent Activity */}
           <Paper sx={{ p: 2, mt: 2 }}>
             <Typography variant="h6" gutterBottom>Recent Activity</Typography>
             <TableContainer>
@@ -239,7 +306,7 @@ export default function TerminalDashboard() {
                     <TableCell>Dir</TableCell>
                     <TableCell>Grower/Buyer</TableCell>
                     <TableCell>Product</TableCell>
-                    <TableCell align="right">KG</TableCell>
+                    <TableCell align="right">MT</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -257,7 +324,7 @@ export default function TerminalDashboard() {
                       </TableCell>
                       <TableCell>{t.grower_name || t.sold_to || '—'}</TableCell>
                       <TableCell>{t.product}</TableCell>
-                      <TableCell align="right">{(t.weight_kg || t.outbound_kg || 0).toLocaleString('en-CA')}</TableCell>
+                      <TableCell align="right">{((t.weight_kg || t.outbound_kg || 0) / 1000).toFixed(1)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

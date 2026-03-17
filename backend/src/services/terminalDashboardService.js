@@ -5,7 +5,7 @@ const logger = createLogger('terminal:dashboard');
 
 export async function getDashboard(farmId) {
   try {
-    const [bins, recentTickets, recentBlends, ticketAgg] = await Promise.all([
+    const [bins, recentTickets, ticketAgg] = await Promise.all([
       prisma.terminalBin.findMany({
         where: { farm_id: farmId, is_active: true },
         select: {
@@ -29,16 +29,6 @@ export async function getDashboard(farmId) {
         },
         orderBy: { ticket_date: 'desc' },
         take: 20,
-      }),
-
-      prisma.terminalBlendEvent.findMany({
-        where: { farm_id: farmId },
-        include: {
-          source_bin: { select: { id: true, bin_number: true, name: true } },
-          blend_bin: { select: { id: true, bin_number: true, name: true } },
-        },
-        orderBy: { blend_date: 'desc' },
-        take: 5,
       }),
 
       prisma.terminalTicket.findMany({
@@ -83,7 +73,6 @@ export async function getDashboard(farmId) {
       })),
       totals_by_commodity: Object.values(totalsByCommodity),
       recent_tickets: recentTickets,
-      recent_blends: recentBlends,
       ticket_stats: {
         total_inbound_count: totalInboundCount,
         total_outbound_count: totalOutboundCount,

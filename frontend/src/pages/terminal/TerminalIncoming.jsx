@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Box, Typography, Button, Alert, Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Checkbox, FormControlLabel } from '@mui/material';
+import { Box, Typography, Button, Alert, Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Checkbox, FormControlLabel, IconButton } from '@mui/material';
 import { AgGridReact } from 'ag-grid-react';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import AddIcon from '@mui/icons-material/Add';
+import EditIcon from '@mui/icons-material/Edit';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import TerminalTicketImportDialog from '../../components/terminal/TerminalTicketImportDialog';
+import TerminalTicketEditDialog from '../../components/terminal/TerminalTicketEditDialog';
 import { useFarm } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import api from '../../services/api';
@@ -22,6 +24,7 @@ export default function TerminalIncoming() {
   const [error, setError] = useState(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [editTicket, setEditTicket] = useState(null);
   const [bins, setBins] = useState([]);
   const [form, setForm] = useState({
     ticket_date: new Date().toISOString().slice(0, 10),
@@ -57,6 +60,14 @@ export default function TerminalIncoming() {
   useEffect(() => { load(); }, [load]);
 
   const columnDefs = useMemo(() => [
+    {
+      headerName: '', width: 44, sortable: false, filter: false, resizable: false,
+      cellRenderer: p => (
+        <IconButton size="small" onClick={() => setEditTicket(p.data)} sx={{ p: 0.5 }}>
+          <EditIcon fontSize="small" />
+        </IconButton>
+      ),
+    },
     { field: 'ticket_date', headerName: 'Date', width: 110, valueFormatter: p => p.value ? new Date(p.value).toLocaleDateString('en-CA') : '' },
     { field: 'grower_name', headerName: 'Grower', width: 200 },
     { field: 'product', headerName: 'Product', width: 100 },
@@ -143,6 +154,14 @@ export default function TerminalIncoming() {
         onClose={() => setImportDialogOpen(false)}
         farmId={farmId}
         onImported={load}
+      />
+
+      <TerminalTicketEditDialog
+        open={!!editTicket}
+        onClose={() => setEditTicket(null)}
+        farmId={farmId}
+        ticket={editTicket}
+        onSaved={load}
       />
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>

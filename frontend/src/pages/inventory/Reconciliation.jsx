@@ -74,6 +74,7 @@ export default function Reconciliation() {
     { field: 'beginning_mt', headerName: 'Beginning MT', width: 140, valueFormatter: p => fmt(p.value) },
     { field: 'ending_mt', headerName: 'Ending MT', width: 130, valueFormatter: p => fmt(p.value) },
     { field: 'hauled_mt', headerName: 'Hauled MT', width: 130, valueFormatter: p => fmt(p.value) },
+    { field: 'at_elevator_mt', headerName: 'At Elevator', width: 130, valueFormatter: p => fmt(p.value) },
     { field: 'variance_mt', headerName: 'Variance MT', width: 130, valueFormatter: p => fmt(p.value) },
     { field: 'variance_pct', headerName: 'Variance %', width: 120, valueFormatter: p => `${(p.value || 0).toFixed(1)}%` },
     { field: 'flag', headerName: 'Flag', width: 80, cellRenderer: FlagCell },
@@ -161,10 +162,11 @@ export default function Reconciliation() {
                   { label: 'Beginning', value: `${fmtInt(data.summary.total_beginning_mt)} MT`, color: '#1565C0' },
                   { label: 'Ending', value: `${fmtInt(data.summary.total_ending_mt)} MT`, color: '#1565C0' },
                   { label: 'Hauled Out', value: `${fmtInt(data.summary.total_hauled_mt)} MT`, color: '#E65100' },
+                  { label: 'At Elevator', value: `${fmtInt(data.summary.total_at_elevator_mt)} MT`, color: '#6A1B9A' },
                   { label: 'Variance', value: `${fmtInt(data.summary.total_variance_mt)} MT`,
                     color: Math.abs(data.summary.total_variance_mt) > data.summary.total_beginning_mt * 0.02 ? '#D32F2F' : '#2E7D32' },
                 ].map(kpi => (
-                  <Grid item xs={6} md={3} key={kpi.label}>
+                  <Grid item xs={6} md key={kpi.label}>
                     <Card sx={{ textAlign: 'center' }}>
                       <CardContent sx={{ py: 1.5 }}>
                         <Typography variant="caption" color="text.secondary">{kpi.label}</Typography>
@@ -177,6 +179,7 @@ export default function Reconciliation() {
 
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                 Variance = Beginning − Ending − Hauled. Positive = unaccounted loss. Negative = unaccounted gain.
+                {' '}LGX inventory and internal transfers shown separately below (wash).
               </Typography>
 
               <Box className={mode === 'dark' ? 'ag-theme-alpine-dark' : 'ag-theme-alpine'} sx={{ height: 400, width: '100%' }}>
@@ -189,6 +192,56 @@ export default function Reconciliation() {
                   getRowId={p => p.data?.commodity}
                 />
               </Box>
+
+              {/* LGX Wash Section */}
+              {data.lgx && data.lgx.rows.length > 0 && (
+                <Card sx={{ mt: 3 }}>
+                  <CardContent>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+                      LGX Terminal (Internal Wash)
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                      Grain transferred to LGX is excluded from farm hauled totals above. These numbers should net to roughly zero.
+                    </Typography>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ borderBottom: '2px solid #ddd' }}>
+                          <th style={{ textAlign: 'left', padding: '6px 8px' }}>Commodity</th>
+                          <th style={{ textAlign: 'right', padding: '6px 8px' }}>LGX Beginning MT</th>
+                          <th style={{ textAlign: 'right', padding: '6px 8px' }}>LGX Ending MT</th>
+                          <th style={{ textAlign: 'right', padding: '6px 8px' }}>Transferred In MT</th>
+                          <th style={{ textAlign: 'right', padding: '6px 8px' }}>LGX Change</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.lgx.rows.map(r => {
+                          const change = r.ending_mt - r.beginning_mt;
+                          return (
+                            <tr key={r.commodity} style={{ borderBottom: '1px solid #eee' }}>
+                              <td style={{ padding: '6px 8px', fontWeight: 600 }}>{r.commodity}</td>
+                              <td style={{ textAlign: 'right', padding: '6px 8px' }}>{fmt(r.beginning_mt)}</td>
+                              <td style={{ textAlign: 'right', padding: '6px 8px' }}>{fmt(r.ending_mt)}</td>
+                              <td style={{ textAlign: 'right', padding: '6px 8px' }}>{fmt(r.transferred_in_mt)}</td>
+                              <td style={{ textAlign: 'right', padding: '6px 8px', color: change > 0 ? '#2E7D32' : change < 0 ? '#D32F2F' : undefined, fontWeight: 600 }}>
+                                {change > 0 ? '+' : ''}{fmt(change)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        <tr style={{ borderTop: '2px solid #ddd', fontWeight: 700 }}>
+                          <td style={{ padding: '6px 8px' }}>TOTAL</td>
+                          <td style={{ textAlign: 'right', padding: '6px 8px' }}>{fmt(data.lgx.total_beginning_mt)}</td>
+                          <td style={{ textAlign: 'right', padding: '6px 8px' }}>{fmt(data.lgx.total_ending_mt)}</td>
+                          <td style={{ textAlign: 'right', padding: '6px 8px' }}>{fmt(data.lgx.total_transferred_in_mt)}</td>
+                          <td style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 700 }}>
+                            {fmt(data.lgx.total_ending_mt - data.lgx.total_beginning_mt)}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </CardContent>
+                </Card>
+              )}
             </>
           )}
         </>

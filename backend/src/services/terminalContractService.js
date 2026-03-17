@@ -42,8 +42,17 @@ export async function getContract(farmId, contractId) {
       counterparty: true,
       commodity: true,
       settlements: {
-        include: { counterparty: { select: { id: true, name: true } } },
+        include: {
+          counterparty: { select: { id: true, name: true } },
+          lines: { orderBy: { line_number: 'asc' } },
+        },
         orderBy: { settlement_date: 'desc' },
+      },
+      transfer_agreements: {
+        include: {
+          counterparty: { select: { id: true, name: true } },
+          commodity: { select: { id: true, name: true, code: true } },
+        },
       },
     },
   });

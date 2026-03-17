@@ -10,6 +10,7 @@ import * as ticketImportService from '../services/terminalTicketImportService.js
 import * as blendService from '../services/terminalBlendService.js';
 import * as sampleService from '../services/terminalSampleService.js';
 import * as dashboardService from '../services/terminalDashboardService.js';
+import { reconcileTransferTickets, createSettlementFromMatches } from '../services/lgxTransferReconciliationService.js';
 import * as contractService from '../services/terminalContractService.js';
 import * as settlementService from '../services/terminalSettlementService.js';
 import * as exportService from '../services/terminalExportService.js';
@@ -486,23 +487,30 @@ router.delete('/:farmId/terminal/contracts/:contractId', authenticate, requireRo
     });
     if (!contract) return res.status(404).json({ error: 'Contract not found' });
 
-    // Block deletion if there are linked settlements or marketing contracts
+    // Block deletion if there are linked settlements — user must delete them first
     if (contract._count.settlements > 0) {
-      return res.status(400).json({ error: `Cannot delete: ${contract._count.settlements} settlement(s) linked to this contract` });
-    }
-    if (contract._count.transfer_agreements > 0) {
-      return res.status(400).json({ error: `Cannot delete: ${contract._count.transfer_agreements} marketing contract(s) linked to this contract` });
+      return res.status(400).json({ error: `Cannot delete: ${contract._count.settlements} settlement(s) linked to this contract. Delete settlements first.` });
     }
 
-    // Unlink any assigned tickets before deleting
-    if (contract._count.assigned_tickets > 0) {
-      await prisma.terminalTicket.updateMany({
-        where: { contract_id: contractId },
-        data: { contract_id: null },
-      });
-    }
+    await prisma.$transaction(async (tx) => {
+      // Cascade delete linked transfer-type MarketingContracts
+      if (contract._count.transfer_agreements > 0) {
+        await tx.marketingContract.deleteMany({
+          where: { linked_terminal_contract_id: contractId, contract_type: 'transfer' },
+        });
+      }
 
-    await prisma.terminalContract.delete({ where: { id: contractId } });
+      // Unlink any assigned tickets before deleting
+      if (contract._count.assigned_tickets > 0) {
+        await tx.terminalTicket.updateMany({
+          where: { contract_id: contractId },
+          data: { contract_id: null },
+        });
+      }
+
+      await tx.terminalContract.delete({ where: { id: contractId } });
+    });
+
     res.json({ success: true });
   } catch (err) { next(err); }
 });
@@ -511,6 +519,33 @@ router.post('/:farmId/terminal/contracts/:contractId/delivery', authenticate, re
   try {
     const data = await contractService.addDelivery(req.params.farmId, req.params.contractId, req.body.mt);
     res.json(data);
+  } catch (err) { next(err); }
+});
+
+// ── Transfer Reconciliation ──────────────────────────────────────────────────
+
+router.post('/:farmId/terminal/contracts/:contractId/reconcile-transfer', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { date_start, date_end } = req.body || {};
+    const result = await reconcileTransferTickets(req.params.farmId, req.params.contractId, { date_start, date_end });
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+router.post('/:farmId/terminal/contracts/:contractId/reconcile-transfer/approve', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { matches, settlement_number, notes } = req.body;
+    if (!Array.isArray(matches) || matches.length === 0) {
+      return res.status(400).json({ error: 'matches array is required' });
+    }
+    const io = req.app.get('io');
+    const result = await createSettlementFromMatches(
+      req.params.farmId,
+      req.params.contractId,
+      matches,
+      { settlement_number, notes, io }
+    );
+    res.json(result);
   } catch (err) { next(err); }
 });
 
@@ -535,7 +570,8 @@ router.get('/:farmId/terminal/settlements', authenticate, async (req, res, next)
 
 router.get('/:farmId/terminal/settlements/:settlementId', authenticate, async (req, res, next) => {
   try {
-    const data = await settlementService.getSettlement(req.params.farmId, req.params.settlementId);
+    const fn = req.query.include === 'paired' ? settlementService.getSettlementWithPairedData : settlementService.getSettlement;
+    const data = await fn(req.params.farmId, req.params.settlementId);
     res.json(data);
   } catch (err) { next(err); }
 });
@@ -551,8 +587,8 @@ router.get('/:farmId/terminal/settlements/:settlementId/eligible-tickets', authe
 // Also expose eligible tickets without a settlement context
 router.get('/:farmId/terminal/eligible-tickets', authenticate, async (req, res, next) => {
   try {
-    const { type = 'transfer' } = req.query;
-    const tickets = await settlementService.getEligibleTickets(req.params.farmId, type);
+    const { type = 'transfer', contract_id } = req.query;
+    const tickets = await settlementService.getEligibleTickets(req.params.farmId, type, { contractId: contract_id });
     res.json({ tickets });
   } catch (err) { next(err); }
 });
@@ -571,6 +607,13 @@ router.put('/:farmId/terminal/settlements/:settlementId', authenticate, requireR
   } catch (err) { next(err); }
 });
 
+router.delete('/:farmId/terminal/settlements/:settlementId', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const data = await settlementService.deleteSettlement(req.params.farmId, req.params.settlementId);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
 router.patch('/:farmId/terminal/settlements/:settlementId/lines/:lineId', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const data = await settlementService.updateSettlementLine(req.params.farmId, req.params.settlementId, req.params.lineId, req.body);
@@ -581,6 +624,13 @@ router.patch('/:farmId/terminal/settlements/:settlementId/lines/:lineId', authen
 router.post('/:farmId/terminal/settlements/:settlementId/apply-pricing', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const data = await settlementService.applyGradePricing(req.params.settlementId);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.post('/:farmId/terminal/settlements/:settlementId/revert-draft', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const data = await settlementService.revertToDraft(req.params.farmId, req.params.settlementId);
     res.json(data);
   } catch (err) { next(err); }
 });

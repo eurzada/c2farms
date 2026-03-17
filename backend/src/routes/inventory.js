@@ -218,17 +218,23 @@ router.get('/:farmId/inventory/count-history', authenticate, async (req, res, ne
         .map(l => ({ name: l.name, mt: l.kg / 1000, bins: l.bins }))
         .sort((a, b) => b.mt - a.mt);
 
-      // Hauled between this and previous period
+      // Hauled between this and previous period — use DeliveryTicket (primary) + legacy Delivery
       let hauledMt = 0;
       if (i > 0) {
         const prevPeriod = periods[i - 1];
-        const deliveries = await prisma.delivery.findMany({
-          where: {
-            farm_id: farmId,
-            delivery_date: { gt: prevPeriod.period_date, lte: period.period_date },
-          },
-        });
-        hauledMt = deliveries.reduce((s, d) => s + (d.mt_delivered || 0), 0);
+        const dateFilter = { gt: prevPeriod.period_date, lte: period.period_date };
+
+        const [ticketAgg, legacyDeliveries] = await Promise.all([
+          prisma.deliveryTicket.aggregate({
+            where: { farm_id: farmId, delivery_date: dateFilter },
+            _sum: { net_weight_mt: true },
+          }),
+          prisma.delivery.findMany({
+            where: { farm_id: farmId, delivery_date: dateFilter },
+          }),
+        ]);
+        hauledMt = (ticketAgg._sum.net_weight_mt || 0)
+          + legacyDeliveries.reduce((s, d) => s + (d.mt_delivered || 0), 0);
       }
 
       // Delta from previous period
@@ -620,7 +626,7 @@ router.post('/:farmId/inventory/import', authenticate, requireRole('admin', 'man
 
 // ─── Bin Grading ─────────────────────────────────────────────────────
 
-// GET all grades (with filters)
+// GET all grades (with filters) — enriched with latest inventory levels from BinCount
 router.get('/:farmId/inventory/grades', authenticate, async (req, res, next) => {
   try {
     const { farmId } = await resolveInventoryFarm(req.params.farmId);
@@ -649,46 +655,96 @@ router.get('/:farmId/inventory/grades', authenticate, async (req, res, next) => 
       orderBy: [{ bin: { location: { name: 'asc' } } }, { bin: { bin_number: 'asc' } }],
     });
 
-    const result = grades.map(g => ({
-      id: g.id,
-      bin_id: g.bin_id,
-      bin_number: g.bin.bin_number,
-      location_id: g.bin.location_id,
-      location_name: g.bin.location.name,
-      location_code: g.bin.location.code,
-      commodity_name: g.bin.commodity?.name || null,
-      commodity_code: g.bin.commodity?.code || null,
-      crop_year: g.crop_year,
-      grade: g.grade,
-      grade_short: g.grade_short,
-      variety: g.variety,
-      grade_reason: g.grade_reason,
-      protein_pct: g.protein_pct,
-      moisture_pct: g.moisture_pct,
-      dockage_pct: g.dockage_pct,
-      test_weight: g.test_weight,
-      hvk_pct: g.hvk_pct,
-      frost: g.frost,
-      inspector_notes: g.inspector_notes,
-      source: g.source,
-      grade_date: g.grade_date,
-      status: g.status,
-    }));
+    // Fetch latest inventory counts for all bins in one query
+    const latestPeriod = await prisma.countPeriod.findFirst({
+      where: { farm_id: farmId },
+      orderBy: { period_date: 'desc' },
+    });
+
+    let binCountMap = {};
+    if (latestPeriod) {
+      const binIds = grades.map(g => g.bin_id);
+      const binCounts = await prisma.binCount.findMany({
+        where: {
+          farm_id: farmId,
+          count_period_id: latestPeriod.id,
+          bin_id: { in: binIds },
+        },
+        include: { commodity: true },
+      });
+      for (const bc of binCounts) {
+        binCountMap[bc.bin_id] = bc;
+      }
+    }
+
+    const result = grades.map(g => {
+      const bc = binCountMap[g.bin_id];
+      return {
+        id: g.id,
+        bin_id: g.bin_id,
+        bin_number: g.bin.bin_number,
+        location_id: g.bin.location_id,
+        location_name: g.bin.location.name,
+        location_code: g.bin.location.code,
+        commodity_name: g.bin.commodity?.name || null,
+        commodity_code: g.bin.commodity?.code || null,
+        crop_year: g.crop_year,
+        grade: g.grade,
+        grade_short: g.grade_short,
+        variety: g.variety,
+        grade_reason: g.grade_reason,
+        protein_pct: g.protein_pct,
+        moisture_pct: g.moisture_pct,
+        dockage_pct: g.dockage_pct,
+        test_weight: g.test_weight,
+        hvk_pct: g.hvk_pct,
+        frost: g.frost,
+        colour: g.colour,
+        falling_number: g.falling_number,
+        fusarium_pct: g.fusarium_pct,
+        bushels: g.bushels,
+        origin: g.origin,
+        quality_json: g.quality_json,
+        inspector_notes: g.inspector_notes,
+        source: g.source,
+        grade_date: g.grade_date,
+        status: g.status,
+        // Latest inventory from BinCount
+        inv_bushels: bc?.bushels ?? null,
+        inv_kg: bc?.kg ?? null,
+        inv_mt: bc ? bc.kg / 1000 : null,
+        inv_crop_year: bc?.crop_year ?? null,
+        inv_commodity: bc?.commodity?.name ?? null,
+        inv_period: latestPeriod?.period_date ?? null,
+      };
+    });
 
     res.json({ grades: result, total: result.length });
   } catch (err) { next(err); }
 });
 
-// GET crop years that have grades
+// GET crop years — union of grade crop years and inventory count crop years
 router.get('/:farmId/inventory/grades/crop-years', authenticate, async (req, res, next) => {
   try {
     const { farmId } = await resolveInventoryFarm(req.params.farmId);
-    const years = await prisma.binGrade.groupBy({
-      by: ['crop_year'],
-      where: { farm_id: farmId },
-      orderBy: { crop_year: 'desc' },
-    });
-    res.json({ crop_years: years.map(y => y.crop_year) });
+    const [gradeYears, countYears] = await Promise.all([
+      prisma.binGrade.groupBy({
+        by: ['crop_year'],
+        where: { farm_id: farmId },
+        orderBy: { crop_year: 'desc' },
+      }),
+      prisma.binCount.groupBy({
+        by: ['crop_year'],
+        where: { farm_id: farmId, crop_year: { not: null } },
+        orderBy: { crop_year: 'desc' },
+      }),
+    ]);
+    const yearSet = new Set([
+      ...gradeYears.map(y => y.crop_year),
+      ...countYears.map(y => y.crop_year),
+    ]);
+    const sorted = [...yearSet].sort((a, b) => b - a);
+    res.json({ crop_years: sorted });
   } catch (err) { next(err); }
 });
 
@@ -733,8 +789,8 @@ router.post('/:farmId/inventory/grades/import', authenticate, requireRole('admin
     const { farmId } = await resolveInventoryFarm(req.params.farmId);
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const { importGradesFromEfu } = await import('../services/gradingImportService.js');
-    const result = await importGradesFromEfu(farmId, req.file.buffer, req.file.originalname);
+    const { importGrades } = await import('../services/gradingImportService.js');
+    const result = await importGrades(farmId, req.file.buffer, req.file.originalname);
     res.json(result);
   } catch (err) { next(err); }
 });
@@ -749,6 +805,50 @@ router.post('/:farmId/inventory/grades/import/confirm', authenticate, requireRol
     const { confirmGradesImport } = await import('../services/gradingImportService.js');
     const result = await confirmGradesImport(farmId, grades, crop_year);
     res.json(result);
+  } catch (err) { next(err); }
+});
+
+// GET bin counts as CSV for a period (for reconciliation)
+router.get('/:farmId/inventory/bin-counts/:periodId/export', authenticate, async (req, res, next) => {
+  try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    const { periodId } = req.params;
+
+    const period = await prisma.countPeriod.findUnique({ where: { id: periodId } });
+    if (!period) return res.status(404).json({ error: 'Period not found' });
+
+    const counts = await prisma.binCount.findMany({
+      where: { farm_id: farmId, count_period_id: periodId },
+      include: {
+        commodity: true,
+        bin: { include: { location: true } },
+      },
+      orderBy: [
+        { bin: { location: { name: 'asc' } } },
+        { bin: { bin_number: 'asc' } },
+      ],
+    });
+
+    const header = 'Location,Bin #,Commodity,Commodity Code,lbs_per_bu,Bushels,Kg,MT,Crop Year,Notes';
+    const rows = counts.map(bc => {
+      const loc = bc.bin.location.name;
+      const binNum = bc.bin.bin_number;
+      const commName = bc.commodity?.name || '';
+      const commCode = bc.commodity?.code || '';
+      const lbsPerBu = bc.commodity?.lbs_per_bu || '';
+      const bushels = bc.bushels || 0;
+      const kg = bc.kg || 0;
+      const mt = kg / 1000;
+      const cropYear = bc.crop_year || '';
+      const notes = (bc.notes || '').replace(/"/g, '""');
+      return `"${loc}","${binNum}","${commName}","${commCode}",${lbsPerBu},${bushels},${kg.toFixed(6)},${mt.toFixed(6)},${cropYear},"${notes}"`;
+    });
+
+    const csv = [header, ...rows].join('\n');
+    const dateStr = period.period_date.toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="bin-counts-${dateStr}.csv"`);
+    res.send(csv);
   } catch (err) { next(err); }
 });
 

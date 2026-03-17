@@ -1,9 +1,15 @@
 import { Card, CardContent, Typography, Box } from '@mui/material';
+import { fmtDollar } from '../../utils/formatting';
 
 export default function InventoryKPICard({ label, value, unit, color }) {
-  const formatted = unit === 'MT'
-    ? `${(value || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} MT`
-    : (value || 0).toLocaleString();
+  let formatted;
+  if (unit === 'MT') {
+    formatted = `${(value || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} MT`;
+  } else if (unit === '$') {
+    formatted = fmtDollar(value || 0, 0);
+  } else {
+    formatted = (value || 0).toLocaleString();
+  }
 
   return (
     <Card sx={{ height: '100%' }}>

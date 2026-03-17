@@ -10,14 +10,19 @@ import LockOpenIcon from '@mui/icons-material/LockOpen';
 import UndoIcon from '@mui/icons-material/Undo';
 import AddIcon from '@mui/icons-material/Add';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
+import DownloadIcon from '@mui/icons-material/Download';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { useFarm } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import { getGridColors } from '../../utils/gridColors';
+import { fmt } from '../../utils/formatting';
 import api from '../../services/api';
 import NewPeriodDialog from '../../components/inventory/NewPeriodDialog';
 import ExcelImportDialog from '../../components/inventory/ExcelImportDialog';
+
+// Non-grain commodity codes (inputs, not marketable grain)
+const NON_GRAIN_CODES = new Set(['FERT', 'SEED']);
 
 function UndoRenderer({ data, context }) {
   if (!data || !context.dirtyBinIds.has(data.id)) return null;
@@ -81,6 +86,45 @@ export default function FarmManagerView() {
   }, [commodities]);
 
   const commodityNames = useMemo(() => ['', ...commodities.map(c => c.name)], [commodities]);
+
+  // Commodity lookups by name
+  const commodityByName = useMemo(() => {
+    const map = {};
+    for (const c of commodities) map[c.name] = { lbs_per_bu: c.lbs_per_bu || 0, code: c.code };
+    return map;
+  }, [commodities]);
+
+  // Aggregate MT by commodity from current rowData, split grain vs other
+  const aggregateSummary = useMemo(() => {
+    const grainByCrop = {};
+    const otherByCrop = {};
+    let grainTotalKg = 0;
+    let otherTotalKg = 0;
+    for (const row of rowData) {
+      if (!row.commodity_name || !row.bushels) continue;
+      const info = commodityByName[row.commodity_name];
+      if (!info || !info.lbs_per_bu) continue;
+      const kg = row.bushels * info.lbs_per_bu * 0.45359237;
+      if (NON_GRAIN_CODES.has(info.code)) {
+        if (!otherByCrop[row.commodity_name]) otherByCrop[row.commodity_name] = 0;
+        otherByCrop[row.commodity_name] += kg;
+        otherTotalKg += kg;
+      } else {
+        if (!grainByCrop[row.commodity_name]) grainByCrop[row.commodity_name] = 0;
+        grainByCrop[row.commodity_name] += kg;
+        grainTotalKg += kg;
+      }
+    }
+    const toItems = (map) => Object.entries(map)
+      .map(([name, kg]) => ({ name, mt: kg / 1000 }))
+      .sort((a, b) => b.mt - a.mt);
+    return {
+      grain: toItems(grainByCrop),
+      grainTotalMt: grainTotalKg / 1000,
+      other: toItems(otherByCrop),
+      otherTotalMt: otherTotalKg / 1000,
+    };
+  }, [rowData, commodityByName]);
 
   // Fetch bins (all locations when selectedLocation is '')
   const fetchBins = useCallback(() => {
@@ -309,6 +353,32 @@ export default function FarmManagerView() {
           Import
         </Button>
 
+        {selectedPeriodId && (
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<DownloadIcon />}
+            onClick={async () => {
+              try {
+                const res = await api.get(
+                  `/api/farms/${currentFarm.id}/inventory/bin-counts/${selectedPeriodId}/export`,
+                  { responseType: 'blob' }
+                );
+                const url = URL.createObjectURL(res.data);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `bin-counts-${selectedPeriodId}.csv`;
+                link.click();
+                URL.revokeObjectURL(url);
+              } catch {
+                setSnack({ open: true, message: 'Export failed', severity: 'error' });
+              }
+            }}
+          >
+            Export CSV
+          </Button>
+        )}
+
         <FormControl size="small" sx={{ minWidth: 200 }}>
           <InputLabel>Location</InputLabel>
           <Select value={selectedLocation} label="Location" onChange={e => setSelectedLocation(e.target.value)}>
@@ -327,6 +397,28 @@ export default function FarmManagerView() {
           <LinearProgress variant="determinate" value={progress} sx={{ height: 8, borderRadius: 4 }} />
         </Box>
       </Stack>
+
+      {/* Aggregate MT summary for quick tie-out */}
+      {aggregateSummary.grain.length > 0 && (
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: aggregateSummary.other.length > 0 ? 0.5 : 1.5, flexWrap: 'wrap', gap: 0.5 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600, mr: 0.5 }}>
+            Grain: {fmt(aggregateSummary.grainTotalMt, 1)} MT
+          </Typography>
+          {aggregateSummary.grain.map(item => (
+            <Chip key={item.name} label={`${item.name}: ${fmt(item.mt, 1)} MT`} size="small" variant="outlined" />
+          ))}
+        </Stack>
+      )}
+      {aggregateSummary.other.length > 0 && (
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5, flexWrap: 'wrap', gap: 0.5 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600, mr: 0.5 }}>
+            Other:  {fmt(aggregateSummary.otherTotalMt, 1)} MT
+          </Typography>
+          {aggregateSummary.other.map(item => (
+            <Chip key={item.name} label={`${item.name}: ${fmt(item.mt, 1)} MT`} size="small" variant="outlined" color="default" />
+          ))}
+        </Stack>
+      )}
 
       <Box className={mode === 'dark' ? 'ag-theme-alpine-dark' : 'ag-theme-alpine'} sx={{ height: 600, width: '100%' }}>
         <AgGridReact

@@ -184,6 +184,230 @@ function matchBin(binField, locationBins) {
   return null;
 }
 
+// Core fields that map to typed BinGrade columns (Grain Index format)
+const GRAIN_INDEX_CORE_FIELDS = new Set([
+  'CROP', 'ORIGIN', 'BIN/FIELD', 'GRADE DATE', 'STATUS', 'VARIETY', 'GRADE',
+  'REASON FOR GRADE', 'INSPECTOR COMMENTS', 'BUSHELS',
+  'PROT %', 'MST %', 'DKG %', 'TEST WEIGHT', 'HVK %', 'FROST (T-M-B)',
+  'COLOUR', 'FN', 'FUS %',
+]);
+
+/**
+ * Detect if a workbook is Grain Index format (single sheet with CROP column)
+ */
+function isGrainIndexFormat(workbook) {
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  if (!sheet) return false;
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
+  for (let i = 0; i < Math.min(rows.length, 5); i++) {
+    if (rows[i]?.some(cell => String(cell).trim().toUpperCase() === 'CROP')) return true;
+  }
+  return false;
+}
+
+/**
+ * Parse the new Grain Index xlsx format
+ */
+export async function importGradesFromGrainIndex(farmId, buffer, filename) {
+  const workbook = XLSX.read(buffer, { type: 'buffer' });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
+
+  // Find header row (row containing 'CROP')
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    if (rows[i]?.some(cell => String(cell).trim().toUpperCase() === 'CROP')) {
+      headerIdx = i;
+      break;
+    }
+  }
+  if (headerIdx < 0) throw new Error('Could not find header row with CROP column');
+
+  // Build column index from header
+  const header = rows[headerIdx].map(h => h ? String(h).trim() : '');
+  const colMap = {};
+  for (let c = 0; c < header.length; c++) {
+    if (header[c]) colMap[header[c].toUpperCase()] = c;
+  }
+
+  const col = (name) => colMap[name] ?? null;
+
+  // Load locations and bins for matching
+  const locations = await prisma.inventoryLocation.findMany({ where: { farm_id: farmId } });
+  const locationMap = {};
+  for (const loc of locations) locationMap[loc.name] = loc;
+
+  const allBins = await prisma.inventoryBin.findMany({
+    where: { farm_id: farmId, is_active: true },
+    include: { location: true, commodity: true },
+  });
+  const binsByLocation = {};
+  for (const bin of allBins) {
+    const locName = bin.location.name;
+    if (!binsByLocation[locName]) binsByLocation[locName] = [];
+    binsByLocation[locName].push(bin);
+  }
+
+  let detectedCropYear = null;
+  const entries = [];
+  const unmatchedEntries = [];
+
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r) continue;
+
+    // Must have a BIN/FIELD value
+    const binFieldCol = col('BIN/FIELD');
+    if (binFieldCol == null || !r[binFieldCol] || !String(r[binFieldCol]).trim()) continue;
+    const binField = String(r[binFieldCol]).trim();
+
+    // CROP → commodity lookup
+    const cropCol = col('CROP');
+    const cropRaw = cropCol != null && r[cropCol] ? String(r[cropCol]).trim().toUpperCase() : '';
+    const sheetConfig = COMMODITY_SHEET_MAP[cropRaw];
+    if (!sheetConfig) continue; // skip unknown crops
+
+    // Parse grade date — may be an actual date or just a year number (e.g. 2025)
+    let gradeDate = null;
+    const gdCol = col('GRADE DATE');
+    if (gdCol != null && r[gdCol]) {
+      if (typeof r[gdCol] === 'number') {
+        // Plain year number (e.g. 2025) vs Excel date serial (typically > 40000)
+        if (r[gdCol] >= 1900 && r[gdCol] <= 2100) {
+          if (!detectedCropYear) detectedCropYear = r[gdCol];
+          // No actual date — just a year
+        } else {
+          const d = XLSX.SSF.parse_date_code(r[gdCol]);
+          if (d) {
+            gradeDate = new Date(d.y, d.m - 1, d.d);
+            if (!detectedCropYear) detectedCropYear = d.y;
+          }
+        }
+      } else {
+        const parsed = new Date(r[gdCol]);
+        if (!isNaN(parsed)) {
+          gradeDate = parsed;
+          if (!detectedCropYear) detectedCropYear = parsed.getFullYear();
+        }
+      }
+    }
+
+    const getStr = (name) => {
+      const c = col(name);
+      return c != null && r[c] ? String(r[c]).trim() : '';
+    };
+    const getFloat = (name) => {
+      const c = col(name);
+      if (c == null || r[c] == null || r[c] === '') return null;
+      const v = parseFloat(r[c]);
+      return isNaN(v) ? null : v;
+    };
+
+    const grade = getStr('GRADE');
+    const variety = getStr('VARIETY');
+    const gradeReason = getStr('REASON FOR GRADE');
+    const inspectorNotes = getStr('INSPECTOR COMMENTS');
+    const status = getStr('STATUS');
+    const origin = getStr('ORIGIN');
+    const colour = getStr('COLOUR');
+
+    const protein_pct = getFloat('PROT %');
+    const moisture_pct = getFloat('MST %');
+    const dockage_pct = getFloat('DKG %');
+    const test_weight = getFloat('TEST WEIGHT');
+    const hvk_pct = getFloat('HVK %');
+    const falling_number = getFloat('FN');
+    const fusarium_pct = getFloat('FUS %');
+    const bushelsVal = getFloat('BUSHELS');
+
+    const frostCol = col('FROST (T-M-B)');
+    const frost = frostCol != null && r[frostCol] ? String(r[frostCol]).trim() : '';
+
+    // Collect remaining columns into quality_json
+    const quality_json = {};
+    for (const [hdr, c] of Object.entries(colMap)) {
+      if (GRAIN_INDEX_CORE_FIELDS.has(hdr)) continue;
+      if (r[c] != null && r[c] !== '') {
+        quality_json[header[c]] = r[c]; // use original case header
+      }
+    }
+
+    // Build grade_short
+    let gradeShort = grade;
+    const gradeNum = grade.match(/No\.?\s*(\d+)\s*(.*)/);
+    if (gradeNum) gradeShort = `${gradeNum[1]} ${gradeNum[2]}`.trim();
+
+    // Infer location and match bin
+    const locationName = inferLocation(binField);
+    const location = locationName ? locationMap[locationName] : null;
+    const locationBins = locationName ? (binsByLocation[locationName] || []) : [];
+    const matchedBin = location ? matchBin(binField, locationBins) : null;
+
+    const entry = {
+      efu_bin_field: binField,
+      sheet: cropRaw,
+      commodity: sheetConfig.commodity,
+      location_name: locationName,
+      location_id: location?.id || null,
+      bin_id: matchedBin?.id || null,
+      bin_number: matchedBin?.bin_number || null,
+      matched: !!matchedBin,
+      grade,
+      grade_short: gradeShort,
+      variety,
+      grade_reason: gradeReason,
+      inspector_notes: inspectorNotes,
+      protein_pct,
+      moisture_pct,
+      dockage_pct,
+      test_weight,
+      hvk_pct,
+      frost: frost || null,
+      colour: colour || null,
+      falling_number,
+      fusarium_pct,
+      bushels: bushelsVal,
+      origin: origin || null,
+      quality_json: Object.keys(quality_json).length > 0 ? quality_json : null,
+      grade_date: gradeDate,
+      source: 'grain_index',
+      status: status?.toLowerCase() === 'available' ? 'available' : status?.toLowerCase() || 'available',
+    };
+
+    if (matchedBin) {
+      entries.push(entry);
+    } else {
+      unmatchedEntries.push(entry);
+    }
+  }
+
+  const now = new Date();
+  const cropYear = detectedCropYear || (now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1);
+
+  log.info(`Grain Index import preview: ${entries.length} matched, ${unmatchedEntries.length} unmatched from ${filename}`);
+
+  return {
+    matched: entries,
+    unmatched: unmatchedEntries,
+    crop_year: cropYear,
+    total: entries.length + unmatchedEntries.length,
+    match_rate: entries.length + unmatchedEntries.length > 0
+      ? Math.round((entries.length / (entries.length + unmatchedEntries.length)) * 100)
+      : 0,
+  };
+}
+
+/**
+ * Auto-detect format and parse grading file
+ */
+export async function importGrades(farmId, buffer, filename) {
+  const workbook = XLSX.read(buffer, { type: 'buffer' });
+  if (isGrainIndexFormat(workbook)) {
+    return importGradesFromGrainIndex(farmId, buffer, filename);
+  }
+  return importGradesFromEfu(farmId, buffer, filename);
+}
+
 /**
  * Parse the EFU .xlsb file and return preview data
  */
@@ -343,45 +567,46 @@ export async function importGradesFromEfu(farmId, buffer, filename) {
  * Confirm and save matched grades to the database
  */
 export async function confirmGradesImport(farmId, grades, cropYear) {
+  // Grading sheet is authoritative — delete all existing grades for this farm, then insert fresh
+  const deleted = await prisma.binGrade.deleteMany({ where: { farm_id: farmId } });
+  log.info(`Cleared ${deleted.count} existing grades for farm ${farmId}`);
+
   let created = 0;
-  let updated = 0;
 
   for (const g of grades) {
     if (!g.bin_id) continue;
 
-    const data = {
-      farm_id: farmId,
-      bin_id: g.bin_id,
-      crop_year: cropYear,
-      grade: g.grade || '',
-      grade_short: g.grade_short || null,
-      variety: g.variety || null,
-      grade_reason: g.grade_reason || null,
-      protein_pct: g.protein_pct,
-      moisture_pct: g.moisture_pct,
-      dockage_pct: g.dockage_pct,
-      test_weight: g.test_weight,
-      hvk_pct: g.hvk_pct,
-      inspector_notes: g.inspector_notes || null,
-      source: g.source || 'efu',
-      grade_date: g.grade_date ? new Date(g.grade_date) : null,
-      status: g.status || 'available',
-    };
-
-    const existing = await prisma.binGrade.findUnique({
-      where: { farm_id_bin_id_crop_year: { farm_id: farmId, bin_id: g.bin_id, crop_year: cropYear } },
+    await prisma.binGrade.create({
+      data: {
+        farm_id: farmId,
+        bin_id: g.bin_id,
+        crop_year: cropYear,
+        grade: g.grade || '',
+        grade_short: g.grade_short || null,
+        variety: g.variety || null,
+        grade_reason: g.grade_reason || null,
+        protein_pct: g.protein_pct,
+        moisture_pct: g.moisture_pct,
+        dockage_pct: g.dockage_pct,
+        test_weight: g.test_weight,
+        hvk_pct: g.hvk_pct,
+        frost: g.frost || null,
+        colour: g.colour || null,
+        falling_number: g.falling_number ?? null,
+        fusarium_pct: g.fusarium_pct ?? null,
+        bushels: g.bushels ?? null,
+        origin: g.origin || null,
+        quality_json: g.quality_json || null,
+        inspector_notes: g.inspector_notes || null,
+        source: g.source || 'efu',
+        grade_date: g.grade_date ? new Date(g.grade_date) : null,
+        status: g.status || 'available',
+      },
     });
-
-    if (existing) {
-      await prisma.binGrade.update({ where: { id: existing.id }, data });
-      updated++;
-    } else {
-      await prisma.binGrade.create({ data });
-      created++;
-    }
+    created++;
   }
 
-  log.info(`EFU import confirmed: ${created} created, ${updated} updated for crop year ${cropYear}`);
+  log.info(`Grading import: ${created} grades created for crop year ${cropYear} (replaced ${deleted.count} previous)`);
 
-  return { created, updated, total: created + updated, crop_year: cropYear };
+  return { created, replaced: deleted.count, total: created, crop_year: cropYear };
 }

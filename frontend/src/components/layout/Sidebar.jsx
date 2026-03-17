@@ -56,8 +56,7 @@ const TERMINAL_ITEMS = [
   { label: 'Incoming', path: '/terminal/incoming', icon: <WarehouseIcon />, module: 'terminal' },
   { label: 'Outgoing', path: '/terminal/outgoing', icon: <LocalShippingIcon />, module: 'terminal' },
   { label: 'Bins', path: '/terminal/bins', icon: <StorageIcon />, module: 'terminal' },
-  { section: 'Operations' },
-  { label: 'Blending', path: '/terminal/blending', icon: <PrecisionManufacturingIcon />, module: 'terminal' },
+  { section: 'Commercial' },
   { label: 'Contracts', path: '/terminal/contracts', icon: <ListAltIcon />, module: 'terminal', roles: ['admin', 'manager'] },
   { label: 'Settlements', path: '/terminal/settlements', icon: <AccountBalanceIcon />, module: 'terminal', roles: ['admin', 'manager'] },
 ];

@@ -1,7 +1,7 @@
 import { Card, CardContent, Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow } from '@mui/material';
 import { fmt } from '../../utils/formatting';
 
-export default function LocationCommodityMatrix({ data }) {
+export default function LocationCommodityMatrix({ data, asAtDate }) {
   if (!data || !data.rows || data.rows.length === 0) return null;
 
   const { commodities, rows, totals, grandTotal } = data;
@@ -13,7 +13,14 @@ export default function LocationCommodityMatrix({ data }) {
   return (
     <Card>
       <CardContent sx={{ pb: 1 }}>
-        <Typography variant="h6" gutterBottom>Inventory by Location</Typography>
+        <Typography variant="h6" gutterBottom>
+          Inventory by Location
+          {asAtDate && (
+            <Typography component="span" variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+              as at {new Date(asAtDate).toLocaleDateString('en-CA', { year: 'numeric', month: 'long' })}
+            </Typography>
+          )}
+        </Typography>
         <TableContainer>
           <Table size="small">
             <TableHead>

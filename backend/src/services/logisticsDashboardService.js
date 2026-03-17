@@ -1,5 +1,5 @@
 import prisma from '../config/database.js';
-import { fiscalToCalendar } from '../utils/fiscalYear.js';
+import { fiscalToCalendar, FISCAL_MONTHS } from '../utils/fiscalYear.js';
 
 /**
  * Normalize raw commodity strings from settlement AI extraction to canonical names.
@@ -97,7 +97,7 @@ export async function getLogisticsDashboard(farmId, { fiscalYear, month } = {}) 
   const ticketDateFilter = dateRange ? { delivery_date: dateRange } : {};
   const settlementDateFilter = dateRange ? { settlement_date: dateRange } : {};
 
-  const [kpis, shippedByCommodity, settledByCommodity, unsettledByContract, pendingSettlements, missingLoads, shippedVsConfirmed] = await Promise.all([
+  const [kpis, shippedByCommodity, settledByCommodity, unsettledByContract, pendingSettlements, missingLoads, shippedVsConfirmed, monthlyShipments] = await Promise.all([
     getKPIs(farmId, ticketDateFilter, settlementDateFilter),
     getShippedByCommodity(farmId, ticketDateFilter),
     getSettledByCommodity(farmId, settlementDateFilter),
@@ -105,6 +105,7 @@ export async function getLogisticsDashboard(farmId, { fiscalYear, month } = {}) 
     getPendingSettlements(farmId, settlementDateFilter),
     getMissingLoads(farmId, ticketDateFilter),
     getShippedVsConfirmed(farmId, ticketDateFilter),
+    getMonthlyShipments(farmId, fiscalYear),
   ]);
 
   // Merge shipped + settled into chart data
@@ -129,6 +130,7 @@ export async function getLogisticsDashboard(farmId, { fiscalYear, month } = {}) 
     unsettled_by_contract: unsettledByContract,
     pending_settlements: pendingSettlements,
     missing_loads: missingLoads,
+    monthly_shipments: monthlyShipments,
   };
 }
 
@@ -483,4 +485,93 @@ export async function getMissingLoadsForSettlement(farmId, settlementId) {
     missing_mt: Math.round(missingTickets.reduce((s, t) => s + (t.net_weight_mt || 0), 0) * 100) / 100,
     missing_tickets: missingTickets.map(t => t.ticket_number),
   };
+}
+
+/**
+ * Monthly shipped (tickets) vs settled (ALL settlement statuses) over the fiscal year.
+ * Returns one row per fiscal month with:
+ *   - shipped_mt / ticket_count from DeliveryTickets by delivery_date
+ *   - settled_mt / settlement_count from SettlementLines (any status) by delivery_date on the line
+ */
+async function getMonthlyShipments(farmId, fiscalYear) {
+  if (!fiscalYear) return [];
+
+  const fy = parseInt(fiscalYear, 10);
+  const fyStart = fiscalToCalendar(fy, 'Nov');
+  const fyEnd = new Date(fy, 10, 1); // Nov 1 of FY year (exclusive)
+
+  const [tickets, settlementLines] = await Promise.all([
+    prisma.deliveryTicket.findMany({
+      where: {
+        farm_id: farmId,
+        delivery_date: { gte: fyStart, lt: fyEnd },
+      },
+      select: { delivery_date: true, net_weight_mt: true },
+    }),
+    // ALL settlement lines regardless of settlement approval status
+    prisma.settlementLine.findMany({
+      where: {
+        settlement: { farm_id: farmId },
+        delivery_date: { gte: fyStart, lt: fyEnd },
+      },
+      select: {
+        delivery_date: true,
+        net_weight_mt: true,
+        settlement: { select: { id: true, status: true } },
+      },
+    }),
+  ]);
+
+  // Helper: date → fiscal month label — use UTC because Prisma @db.Date = midnight UTC
+  function toMonthLabel(date) {
+    const d = new Date(date);
+    const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return names[d.getUTCMonth()];
+  }
+
+  // Build shipped by month
+  const shippedByMonth = {};
+  for (const t of tickets) {
+    const m = toMonthLabel(t.delivery_date);
+    if (!shippedByMonth[m]) shippedByMonth[m] = { mt: 0, count: 0 };
+    shippedByMonth[m].mt += t.net_weight_mt || 0;
+    shippedByMonth[m].count += 1;
+  }
+
+  // Build settled by month — count unique settlements per month
+  const settledByMonth = {};
+  for (const sl of settlementLines) {
+    const m = toMonthLabel(sl.delivery_date);
+    if (!settledByMonth[m]) settledByMonth[m] = { mt: 0, settlement_ids: new Set() };
+    settledByMonth[m].mt += sl.net_weight_mt || 0;
+    settledByMonth[m].settlement_ids.add(sl.settlement.id);
+  }
+
+  // Build rows in fiscal month order (Nov → Oct)
+  const rows = FISCAL_MONTHS.map(month => {
+    const shipped = shippedByMonth[month] || { mt: 0, count: 0 };
+    const settled = settledByMonth[month] || { mt: 0, settlement_ids: new Set() };
+    const shippedMt = Math.round(shipped.mt * 100) / 100;
+    const settledMt = Math.round(settled.mt * 100) / 100;
+    const gap = Math.round((shippedMt - settledMt) * 100) / 100;
+    return {
+      month,
+      shipped_mt: shippedMt,
+      ticket_count: shipped.count,
+      settled_mt: settledMt,
+      settlement_count: settled.settlement_ids.size,
+      gap_mt: gap,
+    };
+  });
+
+  // Totals
+  const totals = {
+    shipped_mt: Math.round(rows.reduce((s, r) => s + r.shipped_mt, 0) * 100) / 100,
+    ticket_count: rows.reduce((s, r) => s + r.ticket_count, 0),
+    settled_mt: Math.round(rows.reduce((s, r) => s + r.settled_mt, 0) * 100) / 100,
+    settlement_count: new Set(settlementLines.map(sl => sl.settlement.id)).size,
+    gap_mt: Math.round(rows.reduce((s, r) => s + r.gap_mt, 0) * 100) / 100,
+  };
+
+  return { rows, totals };
 }

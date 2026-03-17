@@ -186,10 +186,66 @@ export async function finalizeSettlement(farmId, settlementId) {
 }
 
 /**
+ * Reverse the delivered_mt bump on a TerminalContract for a given settlement.
+ * Shared by revertToDraft and deleteSettlement.
+ */
+async function reverseContractDelivery(tx, settlement) {
+  const totalSettledMt = (settlement.lines || []).reduce((s, l) => s + (l.net_weight_mt || 0), 0);
+  if (settlement.contract_id && totalSettledMt > 0) {
+    const contract = await tx.terminalContract.findUnique({
+      where: { id: settlement.contract_id },
+    });
+    if (contract) {
+      const newDelivered = Math.max(0, (contract.delivered_mt || 0) - totalSettledMt);
+      const rawRemaining = contract.contracted_mt - newDelivered;
+      const newRemaining = rawRemaining < 0.5 ? 0 : rawRemaining;
+      const newStatus = newDelivered <= 0 ? 'executed' : 'in_delivery';
+      await tx.terminalContract.update({
+        where: { id: contract.id },
+        data: { delivered_mt: newDelivered, remaining_mt: newRemaining, status: newStatus },
+      });
+      logger.info('Reversed contract delivery totals', {
+        contractId: contract.id, delivered: newDelivered, remaining: newRemaining, status: newStatus,
+      });
+    }
+  }
+}
+
+/**
+ * Revert a finalized settlement back to draft so pricing can be re-applied.
+ * Reverses the delivered_mt bump that finalizeSettlement added to the contract.
+ */
+export async function revertToDraft(farmId, settlementId) {
+  const settlement = await prisma.terminalSettlement.findFirst({
+    where: { id: settlementId, farm_id: farmId },
+    include: { lines: true },
+  });
+  if (!settlement) throw Object.assign(new Error('Settlement not found'), { status: 404 });
+  if (settlement.status === 'draft') {
+    throw Object.assign(new Error('Settlement is already a draft'), { status: 400 });
+  }
+  if (settlement.status === 'pushed') {
+    throw Object.assign(new Error('Cannot revert a pushed settlement — un-push it first'), { status: 400 });
+  }
+
+  return prisma.$transaction(async (tx) => {
+    // Reverse contract delivered_mt that finalize added
+    await reverseContractDelivery(tx, settlement);
+
+    return tx.terminalSettlement.update({
+      where: { id: settlementId },
+      data: { status: 'draft' },
+      include: standardIncludes,
+    });
+  });
+}
+
+/**
  * Push a finalized terminal settlement into the enterprise logistics pipeline
  * as a Settlement record. THE KEY FUNCTION.
  */
-export async function pushToLogistics(farmId, settlementId, io) {
+export async function pushToLogistics(farmId, settlementId, io, options = {}) {
+  const { reconciledPairs } = options; // Optional Map(terminalTicketId → deliveryTicketId)
   // 1. Load and validate
   const terminalSettlement = await prisma.terminalSettlement.findFirst({
     where: { id: settlementId, farm_id: farmId },
@@ -254,7 +310,7 @@ export async function pushToLogistics(farmId, settlementId, io) {
         counterparty_id: lgxCounterparty.id,
         settlement_date: terminalSettlement.settlement_date,
         total_amount: terminalSettlement.net_amount,
-        status: 'pending',
+        status: reconciledPairs ? 'reconciled' : 'pending',
         buyer_format: 'lgx',
         extraction_status: 'completed',
         extraction_json: {
@@ -265,22 +321,42 @@ export async function pushToLogistics(farmId, settlementId, io) {
     });
 
     // 4b. Match terminal ticket numbers → DeliveryTickets for auto-reconciliation
-    const ticketNumbers = terminalSettlement.lines
-      .filter(l => l.ticket?.ticket_number)
-      .map(l => String(l.ticket.ticket_number));
+    // When reconciledPairs is provided, use pre-reconciled mapping instead of ticket_number lookup
+    let dtMap;
+    if (reconciledPairs && reconciledPairs.size > 0) {
+      // Pre-reconciled: map terminal ticket IDs → delivery ticket IDs directly
+      dtMap = new Map();
+      for (const line of terminalSettlement.lines) {
+        if (line.ticket?.id && reconciledPairs.has(line.ticket.id)) {
+          dtMap.set(line.ticket.id, reconciledPairs.get(line.ticket.id));
+        }
+      }
+    } else {
+      // Default: match by ticket_number string
+      const ticketNumbers = terminalSettlement.lines
+        .filter(l => l.ticket?.ticket_number)
+        .map(l => String(l.ticket.ticket_number));
 
-    const deliveryTickets = ticketNumbers.length > 0
-      ? await tx.deliveryTicket.findMany({
-          where: { farm_id: enterpriseFarmId, ticket_number: { in: ticketNumbers } },
-          select: { id: true, ticket_number: true },
-        })
-      : [];
-    const dtMap = new Map(deliveryTickets.map(dt => [dt.ticket_number, dt.id]));
+      const deliveryTickets = ticketNumbers.length > 0
+        ? await tx.deliveryTicket.findMany({
+            where: { farm_id: enterpriseFarmId, ticket_number: { in: ticketNumbers } },
+            select: { id: true, ticket_number: true },
+          })
+        : [];
+      dtMap = new Map(deliveryTickets.map(dt => [dt.ticket_number, dt.id]));
+    }
+
+    const useTicketIdLookup = reconciledPairs && reconciledPairs.size > 0;
 
     // 4c. Create SettlementLine records — auto-matched where possible
     const lineData = terminalSettlement.lines.map(line => {
       const ticketNum = line.ticket?.ticket_number?.toString() || null;
-      const deliveryTicketId = ticketNum ? dtMap.get(ticketNum) || null : null;
+      let deliveryTicketId;
+      if (useTicketIdLookup) {
+        deliveryTicketId = line.ticket?.id ? dtMap.get(line.ticket.id) || null : null;
+      } else {
+        deliveryTicketId = ticketNum ? dtMap.get(ticketNum) || null : null;
+      }
       return {
         settlement_id: settlement.id,
         line_number: line.line_number,
@@ -368,17 +444,37 @@ export async function pushToLogistics(farmId, settlementId, io) {
 /**
  * Get eligible tickets for a new settlement, filtered by type.
  */
-export async function getEligibleTickets(farmId, type = 'transfer') {
+export async function getEligibleTickets(farmId, type = 'transfer', { contractId } = {}) {
   const isC2 = type === 'transfer';
 
+  const where = {
+    farm_id: farmId,
+    direction: 'inbound',
+    is_c2_farms: isC2,
+    status: 'complete',
+    terminal_settlement_lines: { none: {} },
+  };
+
+  // When a contract is selected, filter to tickets assigned to that contract
+  // or matching the contract's commodity (by product string)
+  if (contractId) {
+    const contract = await prisma.terminalContract.findUnique({
+      where: { id: contractId },
+      select: { commodity: { select: { name: true, code: true } } },
+    });
+    if (contract?.commodity) {
+      const commodityName = contract.commodity.name;
+      const commodityCode = contract.commodity.code;
+      // Match tickets assigned to this contract OR with matching product
+      where.OR = [
+        { contract_id: contractId },
+        { product: { contains: commodityCode || commodityName, mode: 'insensitive' } },
+      ];
+    }
+  }
+
   const tickets = await prisma.terminalTicket.findMany({
-    where: {
-      farm_id: farmId,
-      direction: 'inbound',
-      is_c2_farms: isC2,
-      status: 'complete',
-      terminal_settlement_lines: { none: {} },
-    },
+    where,
     select: {
       id: true,
       ticket_number: true,
@@ -390,6 +486,7 @@ export async function getEligibleTickets(farmId, type = 'transfer') {
       moisture_pct: true,
       test_weight: true,
       dockage_pct: true,
+      contract_id: true,
     },
     orderBy: { ticket_number: 'asc' },
   });
@@ -1223,4 +1320,123 @@ export async function generateTransloadingInvoice(farmId, settlementId) {
     pdfDoc.on('error', reject);
     pdfDoc.end();
   });
+}
+
+/**
+ * Delete a terminal settlement, reversing contract delivery totals and
+ * cleaning up linked logistics settlements as needed.
+ */
+export async function deleteSettlement(farmId, settlementId) {
+  const settlement = await prisma.terminalSettlement.findFirst({
+    where: { id: settlementId, farm_id: farmId },
+    include: { lines: true },
+  });
+  if (!settlement) throw Object.assign(new Error('Settlement not found'), { status: 404 });
+
+  return prisma.$transaction(async (tx) => {
+    // For finalized settlements, reverse the contract delivery bump
+    if (settlement.status === 'finalized') {
+      await reverseContractDelivery(tx, settlement);
+    }
+
+    // For pushed settlements, also delete the linked logistics Settlement
+    if (settlement.status === 'pushed' && settlement.pushed_settlement_id) {
+      // For transfer settlements, reverse contract delivery AND delete logistics settlement
+      if (settlement.type === 'transfer' || settlement.type === 'transloading') {
+        await reverseContractDelivery(tx, settlement);
+
+        // Also reverse MarketingContract delivery if applicable
+        if (settlement.contract_id) {
+          const linkedMc = await tx.marketingContract.findFirst({
+            where: { linked_terminal_contract_id: settlement.contract_id },
+          });
+          if (linkedMc) {
+            const totalMt = settlement.lines.reduce((s, l) => s + (l.net_weight_mt || 0), 0);
+            const newDelivered = Math.max(0, (linkedMc.delivered_mt || 0) - totalMt);
+            const rawRemaining = linkedMc.contracted_mt - newDelivered;
+            const newRemaining = rawRemaining < 0.5 ? 0 : rawRemaining;
+            const newStatus = newDelivered <= 0 ? 'executed' : 'in_delivery';
+            await tx.marketingContract.update({
+              where: { id: linkedMc.id },
+              data: { delivered_mt: newDelivered, remaining_mt: newRemaining, status: newStatus },
+            });
+          }
+        }
+      }
+
+      // buyer_settlement pushed settlements: delete logistics settlement, no contract reversal needed
+
+      // Delete logistics Settlement (cascades to SettlementLine via Prisma)
+      await tx.settlement.delete({
+        where: { id: settlement.pushed_settlement_id },
+      });
+    }
+
+    // Delete the terminal settlement (lines cascade via onDelete: Cascade)
+    await tx.terminalSettlement.delete({
+      where: { id: settlementId },
+    });
+
+    logger.info('Deleted terminal settlement', {
+      id: settlementId, type: settlement.type, status: settlement.status,
+    });
+
+    return { success: true };
+  });
+}
+
+/**
+ * Load a single settlement with paired data (transfers, buyer settlement,
+ * linked MarketingContract) based on settlement type.
+ */
+export async function getSettlementWithPairedData(farmId, settlementId) {
+  const settlement = await prisma.terminalSettlement.findFirst({
+    where: { id: settlementId, farm_id: farmId },
+    include: standardIncludes,
+  });
+  if (!settlement) throw Object.assign(new Error('Settlement not found'), { status: 404 });
+
+  // Load paired data based on settlement type
+  if (settlement.contract_id) {
+    if (settlement.type === 'buyer_settlement') {
+      // Load transfer settlements on the same contract
+      const pairedTransfers = await prisma.terminalSettlement.findMany({
+        where: {
+          farm_id: farmId,
+          contract_id: settlement.contract_id,
+          type: { in: ['transfer', 'transloading'] },
+        },
+        include: {
+          counterparty: { select: { id: true, name: true } },
+        },
+        orderBy: { settlement_date: 'asc' },
+      });
+      settlement.paired_transfers = pairedTransfers;
+    } else if (settlement.type === 'transfer' || settlement.type === 'transloading') {
+      // Load any buyer settlement on the same contract
+      const pairedBuyer = await prisma.terminalSettlement.findFirst({
+        where: {
+          farm_id: farmId,
+          contract_id: settlement.contract_id,
+          type: 'buyer_settlement',
+        },
+        include: {
+          counterparty: { select: { id: true, name: true } },
+        },
+      });
+      settlement.paired_buyer = pairedBuyer || null;
+    }
+
+    // Load linked MarketingContract
+    const linkedMc = await prisma.marketingContract.findFirst({
+      where: { linked_terminal_contract_id: settlement.contract_id },
+      include: {
+        counterparty: { select: { id: true, name: true } },
+        commodity: { select: { id: true, name: true, code: true } },
+      },
+    });
+    settlement.linked_marketing_contract = linkedMc || null;
+  }
+
+  return settlement;
 }
