@@ -5,7 +5,7 @@
     "dev": "concurrently -n backend,frontend -c blue,green \"cd backend && npm run dev\" \"cd frontend && npm run dev\"",
     "dev:backend": "cd backend && npm run dev",
     "dev:frontend": "cd frontend && npm run dev",
-    "build": "cd frontend && npm install --include=dev && npm run build && cd ../backend && npm install && npx prisma generate --schema=src/prisma/schema.prisma",
+    "build": "cd frontend && npm install --include=dev && npm run build && cd ../backend && npm install && npx prisma generate --schema=src/prisma/schema.prisma && npx prisma db push --schema=src/prisma/schema.prisma",
     "start": "cd backend && node src/server.js",
     "db:push": "cd backend && npx prisma db push --schema=src/prisma/schema.prisma"
   },
