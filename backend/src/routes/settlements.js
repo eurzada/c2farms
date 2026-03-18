@@ -263,7 +263,10 @@ router.get('/:farmId/settlements/reports/by-farm-unit/excel', authenticate, asyn
 router.get('/:farmId/settlements/reports/enterprise-journal', authenticate, async (req, res, next) => {
   try {
     const fiscalYear = req.query.fiscal_year || new Date().getFullYear();
-    const data = await getEnterpriseJournal(req.params.farmId, fiscalYear);
+    const contractFilter = req.query.contract || null;
+    const periodFilter = req.query.period ? parseInt(req.query.period, 10) : null;
+    const exportedFilter = req.query.exported || null;
+    const data = await getEnterpriseJournal(req.params.farmId, fiscalYear, { contractFilter, periodFilter, exportedFilter });
     res.json(data);
   } catch (err) { next(err); }
 });
@@ -272,7 +275,10 @@ router.get('/:farmId/settlements/reports/enterprise-journal', authenticate, asyn
 router.get('/:farmId/settlements/reports/enterprise-journal/csv', authenticate, async (req, res, next) => {
   try {
     const fiscalYear = req.query.fiscal_year || new Date().getFullYear();
-    const csv = await generateEnterpriseJournalCsv(req.params.farmId, fiscalYear);
+    const contractFilter = req.query.contract || null;
+    const periodFilter = req.query.period ? parseInt(req.query.period, 10) : null;
+    const exportedFilter = req.query.exported || null;
+    const csv = await generateEnterpriseJournalCsv(req.params.farmId, fiscalYear, { contractFilter, periodFilter, exportedFilter });
     const filename = `enterprise-journal-FY${fiscalYear}-${new Date().toISOString().slice(0, 10)}.csv`;
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -284,7 +290,10 @@ router.get('/:farmId/settlements/reports/enterprise-journal/csv', authenticate, 
 router.get('/:farmId/settlements/reports/enterprise-journal/excel', authenticate, async (req, res, next) => {
   try {
     const fiscalYear = req.query.fiscal_year || new Date().getFullYear();
-    const wb = await generateEnterpriseJournalExcel(req.params.farmId, fiscalYear);
+    const contractFilter = req.query.contract || null;
+    const periodFilter = req.query.period ? parseInt(req.query.period, 10) : null;
+    const exportedFilter = req.query.exported || null;
+    const wb = await generateEnterpriseJournalExcel(req.params.farmId, fiscalYear, { contractFilter, periodFilter, exportedFilter });
     const filename = `enterprise-journal-FY${fiscalYear}-${new Date().toISOString().slice(0, 10)}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -297,13 +306,46 @@ router.get('/:farmId/settlements/reports/enterprise-journal/excel', authenticate
 router.get('/:farmId/settlements/reports/enterprise-journal/pdf', authenticate, async (req, res, next) => {
   try {
     const fiscalYear = req.query.fiscal_year || new Date().getFullYear();
-    const docDefinition = await generateEnterpriseJournalPdf(req.params.farmId, fiscalYear);
+    const contractFilter = req.query.contract || null;
+    const periodFilter = req.query.period ? parseInt(req.query.period, 10) : null;
+    const exportedFilter = req.query.exported || null;
+    const docDefinition = await generateEnterpriseJournalPdf(req.params.farmId, fiscalYear, { contractFilter, periodFilter, exportedFilter });
     const pdfDoc = printer.createPdfKitDocument(docDefinition);
     const filename = `enterprise-journal-FY${fiscalYear}-${new Date().toISOString().slice(0, 10)}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     pdfDoc.pipe(res);
     pdfDoc.end();
+  } catch (err) { next(err); }
+});
+
+// POST mark settlements as exported to QB
+router.post('/:farmId/settlements/mark-exported', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids array is required' });
+    }
+    const result = await prisma.settlement.updateMany({
+      where: { id: { in: ids }, farm_id: req.params.farmId },
+      data: { exported_at: new Date() },
+    });
+    res.json({ marked: result.count });
+  } catch (err) { next(err); }
+});
+
+// POST unmark settlements as exported
+router.post('/:farmId/settlements/unmark-exported', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids array is required' });
+    }
+    const result = await prisma.settlement.updateMany({
+      where: { id: { in: ids }, farm_id: req.params.farmId },
+      data: { exported_at: null },
+    });
+    res.json({ unmarked: result.count });
   } catch (err) { next(err); }
 });
 
@@ -344,9 +386,9 @@ router.post('/:farmId/settlements/upload', authenticate, requireRole('admin', 'm
     const { buyer_format } = req.body; // optional: force buyer format
 
     // Extract data from PDF using Claude
-    let extraction, buyerFormat, usage;
+    let extraction, buyerFormat, usage, validation;
     try {
-      ({ extraction, buyerFormat, usage } = await extractSettlementFromPdf(
+      ({ extraction, buyerFormat, usage, validation } = await extractSettlementFromPdf(
         req.file.buffer,
         buyer_format || null,
         req.params.farmId
@@ -398,6 +440,7 @@ router.post('/:farmId/settlements/upload', authenticate, requireRole('admin', 'm
       extraction,
       buyer_format: buyerFormat,
       usage,
+      validation,
     });
   } catch (err) { next(err); }
 });
@@ -414,9 +457,9 @@ router.post('/:farmId/settlements/extract', authenticate, requireRole('admin', '
 
     const { buyer_format } = req.body;
 
-    let extraction, buyerFormat, usage;
+    let extraction, buyerFormat, usage, validation;
     try {
-      ({ extraction, buyerFormat, usage } = await extractSettlementFromPdf(
+      ({ extraction, buyerFormat, usage, validation } = await extractSettlementFromPdf(
         req.file.buffer,
         buyer_format || null,
         req.params.farmId
@@ -435,7 +478,7 @@ router.post('/:farmId/settlements/extract', authenticate, requireRole('admin', '
     }
 
     // Return extraction for review — NOT saved yet
-    res.json({ extraction, buyer_format: buyerFormat, usage });
+    res.json({ extraction, buyer_format: buyerFormat, usage, validation });
   } catch (err) { next(err); }
 });
 
@@ -930,10 +973,18 @@ router.post('/:farmId/settlements/bulk-approve', authenticate, requireRole('admi
       return res.status(400).json({ error: 'ids array is required' });
     }
 
-    const results = { approved: 0, errors: [] };
+    const results = { approved: 0, skipped: 0, errors: [] };
 
     for (const id of ids) {
       try {
+        // Only approve settlements that are reconciled
+        const settlement = await prisma.settlement.findUnique({ where: { id }, select: { status: true } });
+        if (!settlement || !['reconciled'].includes(settlement.status)) {
+          results.skipped++;
+          results.errors.push(`${id}: skipped — status is '${settlement?.status || 'not found'}', must be 'reconciled'`);
+          continue;
+        }
+
         // Dismiss all unresolved lines so approval doesn't block
         await prisma.settlementLine.updateMany({
           where: {

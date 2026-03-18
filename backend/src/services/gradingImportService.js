@@ -332,10 +332,16 @@ export async function importGradesFromGrainIndex(farmId, buffer, filename) {
       }
     }
 
-    // Build grade_short
+    // Build grade_short — e.g. "Wheat, No.1 CWRS" → "#1 CWRS", "TF Wheat, No. 2 CWRS" → "TF #2 CWRS"
     let gradeShort = grade;
-    const gradeNum = grade.match(/No\.?\s*(\d+)\s*(.*)/);
-    if (gradeNum) gradeShort = `${gradeNum[1]} ${gradeNum[2]}`.trim();
+    const gradeNum = grade.match(/^(.*?)No\.?\s*(\d+)\s*(.*)/);
+    if (gradeNum) {
+      const prefix = gradeNum[1].replace(/^.*?,\s*/, '').trim(); // strip "Wheat, " but keep "TF " or "DP "
+      gradeShort = `${prefix ? prefix + ' ' : ''}#${gradeNum[2]} ${gradeNum[3]}`.trim();
+    } else if (grade.includes(',')) {
+      // e.g. "Wheat, CW Feed" → "CW Feed", "CAN Canary Seed" stays as-is
+      gradeShort = grade.split(',').slice(1).join(',').trim() || grade;
+    }
 
     // Infer location and match bin
     const locationName = inferLocation(binField);
@@ -507,13 +513,17 @@ export async function importGradesFromEfu(farmId, buffer, filename) {
       // Match to inventory bin
       const matchedBin = location ? matchBin(binField, locationBins) : null;
 
-      // Build a short grade for display
+      // Build a short grade for display — e.g. "Wheat, No.1 CWRS" → "#1 CWRS", "TF Wheat, No. 2 CWRS" → "TF #2 CWRS"
       let gradeShort = grade;
-      // "Wheat, No.1 CWRS" → "1 CWRS"
-      const gradeNum = grade.match(/No\.?\s*(\d+)\s*(.*)/);
-      if (gradeNum) gradeShort = `${gradeNum[1]} ${gradeNum[2]}`.trim();
+      const gradeNum = grade.match(/^(.*?)No\.?\s*(\d+)\s*(.*)/);
+      if (gradeNum) {
+        const prefix = gradeNum[1].replace(/^.*?,\s*/, '').trim(); // strip "Wheat, " but keep "TF " or "DP "
+        gradeShort = `${prefix ? prefix + ' ' : ''}#${gradeNum[2]} ${gradeNum[3]}`.trim();
+      } else if (grade.includes(',')) {
+        gradeShort = grade.split(',').slice(1).join(',').trim() || grade;
+      }
       // If grade is a reason code (durum), use it directly
-      if (!gradeNum && grade) gradeShort = grade;
+      if (!gradeNum && !grade.includes(',') && grade) gradeShort = grade;
 
       const entry = {
         efu_bin_field: binField,

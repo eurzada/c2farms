@@ -1,5 +1,8 @@
 import prisma from '../config/database.js';
 import { MODELS, PRICING, computeUsage, classifyApiError, getAnthropicClient, parseJsonResponse } from './aiClient.js';
+import createLogger from '../utils/logger.js';
+
+const log = createLogger('settlement');
 
 /**
  * The extraction prompt template for each buyer format.
@@ -647,8 +650,98 @@ function buildExtractionPrompt(buyerFormat, hints = []) {
 }
 
 /**
+ * Validate extracted settlement data for completeness and consistency.
+ * Returns { valid, warnings[] } — warnings are informational, not blocking.
+ */
+function validateExtraction(extraction) {
+  const warnings = [];
+  const lines = extraction.lines || [];
+
+  // 1. Check line count
+  if (lines.length === 0) {
+    warnings.push({ type: 'no_lines', message: 'No ticket lines were extracted from this settlement' });
+  }
+
+  // 2. Cross-check line-level totals vs settlement totals
+  if (lines.length > 0) {
+    const lineGrossSum = lines.reduce((s, l) => s + (l.line_gross || 0), 0);
+    const lineNetSum = lines.reduce((s, l) => s + (l.line_net || 0), 0);
+
+    const expectedGross = extraction.total_gross_amount || extraction.settlement_gross;
+    const expectedNet = extraction.total_net_amount;
+
+    if (expectedGross && lineGrossSum > 0) {
+      const grossDiff = Math.abs(expectedGross - lineGrossSum);
+      const grossPct = expectedGross ? (grossDiff / Math.abs(expectedGross)) * 100 : 0;
+      if (grossPct > 2) {
+        warnings.push({
+          type: 'gross_mismatch',
+          message: `Line gross total ($${lineGrossSum.toFixed(2)}) differs from settlement gross ($${expectedGross.toFixed(2)}) by ${grossPct.toFixed(1)}%`,
+          expected: expectedGross,
+          actual: lineGrossSum,
+          diff_pct: grossPct,
+        });
+      }
+    }
+
+    if (expectedNet && lineNetSum > 0) {
+      const netDiff = Math.abs(expectedNet - lineNetSum);
+      const netPct = expectedNet ? (netDiff / Math.abs(expectedNet)) * 100 : 0;
+      if (netPct > 2) {
+        warnings.push({
+          type: 'net_mismatch',
+          message: `Line net total ($${lineNetSum.toFixed(2)}) differs from settlement net ($${expectedNet.toFixed(2)}) by ${netPct.toFixed(1)}%`,
+          expected: expectedNet,
+          actual: lineNetSum,
+          diff_pct: netPct,
+        });
+      }
+    }
+  }
+
+  // 3. Check for missing critical fields per line
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.ticket_number) {
+      warnings.push({ type: 'missing_ticket', message: `Line ${i + 1}: missing ticket number` });
+    }
+    if (!line.net_weight_mt && !line.gross_weight_mt) {
+      warnings.push({ type: 'missing_weight', message: `Line ${i + 1}: missing weight (net or gross MT)` });
+    }
+  }
+
+  // 4. Check for required top-level fields
+  if (!extraction.settlement_number) {
+    warnings.push({ type: 'missing_settlement_number', message: 'Missing settlement number' });
+  }
+  if (!extraction.settlement_date) {
+    warnings.push({ type: 'missing_date', message: 'Missing settlement date' });
+  }
+  if (!extraction.contract_number && !lines.some(l => l.contract_number)) {
+    warnings.push({ type: 'missing_contract', message: 'Missing contract number (neither at settlement nor line level)' });
+  }
+
+  const _lineGrossSum = lines.reduce((s, l) => s + (l.line_gross || 0), 0);
+  const _lineNetSum = lines.reduce((s, l) => s + (l.line_net || 0), 0);
+  const _lineMtSum = lines.reduce((s, l) => s + (l.net_weight_mt || l.gross_weight_mt || 0), 0);
+
+  return {
+    valid: !warnings.some(w => w.type === 'no_lines'),
+    warnings,
+    line_count: lines.length,
+    summary: {
+      extracted_gross: extraction.total_gross_amount || extraction.settlement_gross || null,
+      extracted_net: extraction.total_net_amount || null,
+      line_gross_sum: _lineGrossSum,
+      line_net_sum: _lineNetSum,
+      line_mt_sum: _lineMtSum,
+    },
+  };
+}
+
+/**
  * Extract settlement data from a PDF buffer using Claude Vision.
- * Returns { extraction, buyerFormat, usage } where usage includes token counts and cost.
+ * Returns { extraction, buyerFormat, usage, validation } where usage includes token counts and cost.
  */
 export async function extractSettlementFromPdf(pdfBuffer, forceBuyerFormat = null, farmId = null) {
   const pdfBase64 = pdfBuffer.toString('base64');
@@ -725,7 +818,16 @@ export async function extractSettlementFromPdf(pdfBuffer, forceBuyerFormat = nul
     );
   }
 
-  return { extraction, buyerFormat, usage: totalUsage };
+  // Validate extraction completeness
+  const validation = validateExtraction(extraction);
+  if (validation.warnings.length > 0) {
+    log.warn('Extraction validation warnings', { buyerFormat, warnings: validation.warnings, summary: validation.summary });
+  }
+
+  // Attach validation to extraction so it persists in extraction_json
+  extraction._validation = validation;
+
+  return { extraction, buyerFormat, usage: totalUsage, validation };
 }
 
 /**

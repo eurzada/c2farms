@@ -725,6 +725,7 @@ model Settlement {
   extraction_json       Json?              // raw Claude extraction output for audit
   usage_json            Json?              // AI token usage and cost tracking
   notes                 String?
+  exported_at           DateTime?          // when settlement was exported to QB
   reconciliation_report Json?
   created_at            DateTime           @default(now())
   updated_at            DateTime           @updatedAt

@@ -111,19 +111,39 @@ function getGross(settlement) {
  * All approved settlements in a fiscal year, grouped by buyer, with deduction breakdown
  * and full pro-rated location allocation (gross, each deduction, net — all split by location MT).
  */
-export async function getEnterpriseJournal(farmId, fiscalYear) {
+export async function getEnterpriseJournal(farmId, fiscalYear, { contractFilter, periodFilter, exportedFilter } = {}) {
   const fy = parseInt(fiscalYear, 10);
   const fyStart = fiscalToCalendar(fy, 'Nov');
   const fyEnd = new Date(fy, 10, 1);
 
-  log.info('Enterprise journal report', { farmId, fiscalYear: fy });
+  log.info('Enterprise journal report', { farmId, fiscalYear: fy, contractFilter, periodFilter, exportedFilter });
+
+  const where = {
+    farm_id: farmId,
+    status: 'approved',
+    settlement_date: { gte: fyStart, lt: fyEnd },
+  };
+
+  // Optional filters
+  if (contractFilter) {
+    where.marketing_contract = { contract_number: contractFilter };
+  }
+  if (periodFilter) {
+    const month = parseInt(periodFilter, 10);
+    // Filter settlement_date to a specific calendar month within the fiscal year
+    const yearForMonth = month >= 11 ? fy - 1 : fy;
+    const monthStart = new Date(yearForMonth, month - 1, 1);
+    const monthEnd = new Date(yearForMonth, month, 1);
+    where.settlement_date = { gte: monthStart, lt: monthEnd };
+  }
+  if (exportedFilter === 'not_exported') {
+    where.exported_at = null;
+  } else if (exportedFilter === 'exported') {
+    where.exported_at = { not: null };
+  }
 
   const settlements = await prisma.settlement.findMany({
-    where: {
-      farm_id: farmId,
-      status: 'approved',
-      settlement_date: { gte: fyStart, lt: fyEnd },
-    },
+    where,
     include: {
       counterparty: { select: { name: true, short_code: true } },
       marketing_contract: {
@@ -275,6 +295,12 @@ export async function getEnterpriseJournal(farmId, fiscalYear) {
 
     const commodity = s.marketing_contract?.commodity?.name || s.extraction_json?.commodity || '';
     const contractNum = s.marketing_contract?.contract_number || s.extraction_json?.contract_number || '';
+    // Determine crop year from extraction or infer from settlement date (Nov-Oct fiscal year)
+    let cropYear = s.extraction_json?.crop_year || null;
+    if (!cropYear && s.settlement_date) {
+      const sd = new Date(s.settlement_date);
+      cropYear = sd.getMonth() >= 10 ? `${sd.getFullYear()}/${String(sd.getFullYear() + 1).slice(2)}` : `${sd.getFullYear() - 1}/${String(sd.getFullYear()).slice(2)}`;
+    }
     const totalMt = round2(matchedMt);
     // For line-priced settlements, compute $/MT from actual line totals
     const actualLineNet = hasLinePricing ? round2(allocLocs.reduce((s, l) => s + l.line_net, 0)) : net;
@@ -288,6 +314,8 @@ export async function getEnterpriseJournal(farmId, fiscalYear) {
       date: s.settlement_date,
       contract_number: contractNum,
       commodity,
+      crop_year: cropYear,
+      exported_at: s.exported_at || null,
       is_transfer: isTransfer,
       is_realization: isRealization,
       realization: realizationData,
@@ -369,10 +397,10 @@ export async function getEnterpriseJournal(farmId, fiscalYear) {
  * Generate QBO-importable CSV for journal entries.
  * Each settlement is split into per-location journal lines with proper debit/credit numbers.
  */
-export async function generateEnterpriseJournalCsv(farmId, fiscalYear) {
-  const data = await getEnterpriseJournal(farmId, fiscalYear);
+export async function generateEnterpriseJournalCsv(farmId, fiscalYear, filters = {}) {
+  const data = await getEnterpriseJournal(farmId, fiscalYear, filters);
 
-  const rows = [['Date', 'Settlement #', 'Buyer', 'Contract #', 'Commodity', 'Location', 'MT', '$/MT', 'Account', 'Debit', 'Credit', 'Memo']];
+  const rows = [['Date', 'Settlement #', 'Buyer', 'Contract #', 'Commodity', 'Crop Year', 'Location', 'MT', '$/MT', 'Account', 'Debit', 'Credit', 'Memo']];
 
   for (const buyer of data.by_buyer) {
     for (const s of buyer.settlements) {
@@ -384,22 +412,24 @@ export async function generateEnterpriseJournalCsv(farmId, fiscalYear) {
       const sMt = s.total_mt || '';
       const sPrice = s.price_per_mt ? s.price_per_mt.toFixed(2) : '';
 
+      const cy = s.crop_year || '';
+
       if (s.location_allocation.length === 0) {
         // No matched locations — write settlement-level entries (fallback)
-        rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, '', sMt, sPrice, `Grain Revenue${transferTag}`, '', s.gross.toFixed(2), memo]);
+        rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, cy, '', sMt, sPrice, `Grain Revenue${transferTag}`, '', s.gross.toFixed(2), memo]);
         for (const d of s.deductions) {
           if (d.amount === 0) continue;
           const account = CATEGORY_QBO_ACCOUNTS[d.category] || 'Other Grain Adjustments';
           if (d.amount < 0) {
-            rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, '', '', '', account, Math.abs(d.amount).toFixed(2), '', `${memo} — ${d.name}`]);
+            rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, cy, '', '', '', account, Math.abs(d.amount).toFixed(2), '', `${memo} — ${d.name}`]);
           } else {
-            rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, '', '', '', account, '', d.amount.toFixed(2), `${memo} — ${d.name}`]);
+            rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, cy, '', '', '', account, '', d.amount.toFixed(2), `${memo} — ${d.name}`]);
           }
           if (d.gst && d.gst !== 0) {
-            rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, '', '', '', 'GST Paid on Purchases', Math.abs(d.gst).toFixed(2), '', `${memo} — GST on ${d.name}`]);
+            rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, cy, '', '', '', 'GST Paid on Purchases', Math.abs(d.gst).toFixed(2), '', `${memo} — GST on ${d.name}`]);
           }
         }
-        rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, '', '', '', 'Accounts Receivable', s.net.toFixed(2), '', memo]);
+        rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, cy, '', '', '', 'Accounts Receivable', s.net.toFixed(2), '', memo]);
       } else {
         // Per-location journal lines
         for (const loc of s.location_allocation) {
@@ -407,24 +437,24 @@ export async function generateEnterpriseJournalCsv(farmId, fiscalYear) {
           const locMemo = `${memo} | ${loc.location} (${loc.mt} MT @ $${locPrice}/MT)`;
 
           // Revenue (credit)
-          rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, loc.location, loc.mt, locPrice, `Grain Revenue${transferTag}`, '', loc.gross.toFixed(2), locMemo]);
+          rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, cy, loc.location, loc.mt, locPrice, `Grain Revenue${transferTag}`, '', loc.gross.toFixed(2), locMemo]);
 
           // Deductions (debit for negative amounts)
           for (const d of loc.deductions) {
             if (d.amount === 0) continue;
             const account = CATEGORY_QBO_ACCOUNTS[d.category] || 'Other Grain Adjustments';
             if (d.amount < 0) {
-              rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, loc.location, '', '', account, Math.abs(d.amount).toFixed(2), '', `${locMemo} — ${d.name}`]);
+              rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, cy, loc.location, '', '', account, Math.abs(d.amount).toFixed(2), '', `${locMemo} — ${d.name}`]);
             } else {
-              rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, loc.location, '', '', account, '', d.amount.toFixed(2), `${locMemo} — ${d.name}`]);
+              rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, cy, loc.location, '', '', account, '', d.amount.toFixed(2), `${locMemo} — ${d.name}`]);
             }
             if (d.gst && d.gst !== 0) {
-              rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, loc.location, '', '', 'GST Paid on Purchases', Math.abs(d.gst).toFixed(2), '', `${locMemo} — GST on ${d.name}`]);
+              rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, cy, loc.location, '', '', 'GST Paid on Purchases', Math.abs(d.gst).toFixed(2), '', `${locMemo} — GST on ${d.name}`]);
             }
           }
 
           // A/R (debit)
-          rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, loc.location, '', '', 'Accounts Receivable', loc.net.toFixed(2), '', locMemo]);
+          rows.push([date, s.settlement_number, buyer.buyer, s.contract_number, s.commodity, cy, loc.location, '', '', 'Accounts Receivable', loc.net.toFixed(2), '', locMemo]);
         }
       }
 
@@ -442,8 +472,8 @@ export async function generateEnterpriseJournalCsv(farmId, fiscalYear) {
 /**
  * Generate Excel workbook for Enterprise Settlement Journal.
  */
-export async function generateEnterpriseJournalExcel(farmId, fiscalYear) {
-  const data = await getEnterpriseJournal(farmId, fiscalYear);
+export async function generateEnterpriseJournalExcel(farmId, fiscalYear, filters = {}) {
+  const data = await getEnterpriseJournal(farmId, fiscalYear, filters);
   const wb = new ExcelJS.Workbook();
 
   // --- Summary sheet ---
@@ -484,6 +514,7 @@ export async function generateEnterpriseJournalExcel(farmId, fiscalYear) {
     { header: 'Buyer', key: 'buyer', width: 20 },
     { header: 'Contract #', key: 'contract_number', width: 16 },
     { header: 'Commodity', key: 'commodity', width: 14 },
+    { header: 'Crop Year', key: 'crop_year', width: 12 },
     { header: 'Location', key: 'location', width: 16 },
     { header: 'MT', key: 'mt', width: 10 },
     { header: 'Share %', key: 'share', width: 10 },
@@ -504,6 +535,7 @@ export async function generateEnterpriseJournalExcel(farmId, fiscalYear) {
           buyer: buyer.buyer,
           contract_number: s.contract_number,
           commodity: s.commodity,
+          crop_year: s.crop_year || '',
           location: loc.location,
           mt: loc.mt,
           share: loc.share,
@@ -588,6 +620,7 @@ export async function generateEnterpriseJournalExcel(farmId, fiscalYear) {
     { header: 'Buyer', key: 'buyer', width: 20 },
     { header: 'Contract #', key: 'contract', width: 16 },
     { header: 'Commodity', key: 'commodity', width: 14 },
+    { header: 'Crop Year', key: 'crop_year', width: 12 },
     { header: 'Location', key: 'location', width: 16 },
     { header: 'Account', key: 'account', width: 25 },
     { header: 'Debit', key: 'debit', width: 14 },
@@ -601,44 +634,45 @@ export async function generateEnterpriseJournalExcel(farmId, fiscalYear) {
       const date = s.date ? new Date(s.date).toISOString().slice(0, 10) : '';
       const memo = s.is_realization ? `LGX Realization Margin - Contract #${s.contract_number}` : `Settlement #${s.settlement_number}`;
       const transferTag = s.is_transfer ? ' [Transfer]' : s.is_realization ? ' [LGX Margin]' : '';
+      const cy = s.crop_year || '';
 
       if (s.location_allocation.length === 0) {
         // Fallback: settlement-level entries
-        qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, contract: s.contract_number, commodity: s.commodity, account: `Grain Revenue${transferTag}`, credit: s.gross, memo });
+        qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, contract: s.contract_number, commodity: s.commodity, crop_year: cy, account: `Grain Revenue${transferTag}`, credit: s.gross, memo });
         for (const d of s.deductions) {
           if (d.amount === 0) continue;
           const account = CATEGORY_QBO_ACCOUNTS[d.category] || 'Other Grain Adjustments';
           if (d.amount < 0) {
-            qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, contract: s.contract_number, commodity: s.commodity, account, debit: Math.abs(d.amount), memo: d.name });
+            qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, contract: s.contract_number, commodity: s.commodity, crop_year: cy, account, debit: Math.abs(d.amount), memo: d.name });
           } else {
-            qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, contract: s.contract_number, commodity: s.commodity, account, credit: d.amount, memo: d.name });
+            qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, contract: s.contract_number, commodity: s.commodity, crop_year: cy, account, credit: d.amount, memo: d.name });
           }
           if (d.gst && d.gst !== 0) {
-            qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, account: 'GST Paid on Purchases', debit: Math.abs(d.gst), memo: `GST on ${d.name}` });
+            qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, crop_year: cy, account: 'GST Paid on Purchases', debit: Math.abs(d.gst), memo: `GST on ${d.name}` });
           }
         }
-        qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, contract: s.contract_number, commodity: s.commodity, account: 'Accounts Receivable', debit: s.net, memo });
+        qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, contract: s.contract_number, commodity: s.commodity, crop_year: cy, account: 'Accounts Receivable', debit: s.net, memo });
       } else {
         // Per-location journal lines
         for (const loc of s.location_allocation) {
           const locMemo = `${memo} | ${loc.location} (${loc.mt} MT)`;
 
-          qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, contract: s.contract_number, commodity: s.commodity, location: loc.location, account: `Grain Revenue${transferTag}`, credit: loc.gross, memo: locMemo });
+          qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, contract: s.contract_number, commodity: s.commodity, crop_year: cy, location: loc.location, account: `Grain Revenue${transferTag}`, credit: loc.gross, memo: locMemo });
 
           for (const d of loc.deductions) {
             if (d.amount === 0) continue;
             const account = CATEGORY_QBO_ACCOUNTS[d.category] || 'Other Grain Adjustments';
             if (d.amount < 0) {
-              qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, contract: s.contract_number, commodity: s.commodity, location: loc.location, account, debit: Math.abs(d.amount), memo: `${d.name} | ${loc.location}` });
+              qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, contract: s.contract_number, commodity: s.commodity, crop_year: cy, location: loc.location, account, debit: Math.abs(d.amount), memo: `${d.name} | ${loc.location}` });
             } else {
-              qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, contract: s.contract_number, commodity: s.commodity, location: loc.location, account, credit: d.amount, memo: `${d.name} | ${loc.location}` });
+              qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, contract: s.contract_number, commodity: s.commodity, crop_year: cy, location: loc.location, account, credit: d.amount, memo: `${d.name} | ${loc.location}` });
             }
             if (d.gst && d.gst !== 0) {
-              qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, location: loc.location, account: 'GST Paid on Purchases', debit: Math.abs(d.gst), memo: `GST on ${d.name} | ${loc.location}` });
+              qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, crop_year: cy, location: loc.location, account: 'GST Paid on Purchases', debit: Math.abs(d.gst), memo: `GST on ${d.name} | ${loc.location}` });
             }
           }
 
-          qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, contract: s.contract_number, commodity: s.commodity, location: loc.location, account: 'Accounts Receivable', debit: loc.net, memo: locMemo });
+          qboSheet.addRow({ date, settlement: s.settlement_number, buyer: buyer.buyer, contract: s.contract_number, commodity: s.commodity, crop_year: cy, location: loc.location, account: 'Accounts Receivable', debit: loc.net, memo: locMemo });
         }
       }
 
@@ -655,8 +689,8 @@ export async function generateEnterpriseJournalExcel(farmId, fiscalYear) {
 /**
  * Generate PDF doc definition for pdfmake.
  */
-export async function generateEnterpriseJournalPdf(farmId, fiscalYear) {
-  const data = await getEnterpriseJournal(farmId, fiscalYear);
+export async function generateEnterpriseJournalPdf(farmId, fiscalYear, filters = {}) {
+  const data = await getEnterpriseJournal(farmId, fiscalYear, filters);
 
   const fmtD = (v) => v != null ? `$${Number(v).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
   const fmtN = (v) => v != null ? Number(v).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';

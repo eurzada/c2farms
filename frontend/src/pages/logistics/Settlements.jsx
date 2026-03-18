@@ -5,6 +5,7 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions, IconButton, Tooltip,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper,
   Alert, Divider, Snackbar, Card, CardContent, Collapse,
+  Select, FormControl, InputLabel,
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
@@ -105,6 +106,9 @@ export default function Settlements() {
   const [journalOpen, setJournalOpen] = useState(false);
   const [journalData, setJournalData] = useState(null);
   const [journalLoading, setJournalLoading] = useState(false);
+  const [journalContractFilter, setJournalContractFilter] = useState('');
+  const [journalPeriodFilter, setJournalPeriodFilter] = useState('');
+  const [journalExportedFilter, setJournalExportedFilter] = useState('');
   const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
   const fetchData = useCallback(() => {
@@ -201,9 +205,9 @@ export default function Settlements() {
 
   const handleBulkApprove = async () => {
     const selectedRows = gridRef.current?.api?.getSelectedRows() || [];
-    const approvable = selectedRows.filter(s => s.status !== 'approved');
+    const approvable = selectedRows.filter(s => s.status === 'reconciled');
     if (approvable.length === 0) {
-      setSnack({ open: true, message: 'All selected settlements are already approved', severity: 'info' });
+      setSnack({ open: true, message: 'No reconciled settlements selected — only reconciled settlements can be approved', severity: 'info' });
       return;
     }
     const ok = await confirm({
@@ -398,7 +402,11 @@ export default function Settlements() {
     setJournalLoading(true);
     try {
       const fy = fiscalYearFilter || new Date().getFullYear();
-      const res = await api.get(`/api/farms/${currentFarm.id}/settlements/reports/enterprise-journal?fiscal_year=${fy}`);
+      const params = new URLSearchParams({ fiscal_year: fy });
+      if (journalContractFilter) params.append('contract', journalContractFilter);
+      if (journalPeriodFilter) params.append('period', journalPeriodFilter);
+      if (journalExportedFilter) params.append('exported', journalExportedFilter);
+      const res = await api.get(`/api/farms/${currentFarm.id}/settlements/reports/enterprise-journal?${params}`);
       setJournalData(res.data);
     } catch (err) {
       setSnack({ open: true, message: extractErrorMessage(err, 'Failed to load enterprise journal'), severity: 'error' });
@@ -416,8 +424,12 @@ export default function Settlements() {
         : format === 'excel' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         : 'application/pdf';
       const endpoint = format === 'csv' ? 'csv' : format === 'excel' ? 'excel' : 'pdf';
+      const params = new URLSearchParams({ fiscal_year: fy });
+      if (journalContractFilter) params.append('contract', journalContractFilter);
+      if (journalPeriodFilter) params.append('period', journalPeriodFilter);
+      if (journalExportedFilter) params.append('exported', journalExportedFilter);
       const res = await api.get(
-        `/api/farms/${currentFarm.id}/settlements/reports/enterprise-journal/${endpoint}?fiscal_year=${fy}`,
+        `/api/farms/${currentFarm.id}/settlements/reports/enterprise-journal/${endpoint}?${params}`,
         { responseType: 'blob' }
       );
       const blob = new Blob([res.data], { type: mime });
@@ -1731,6 +1743,27 @@ export default function Settlements() {
           </Box>
           {journalData && (
             <Stack direction="row" spacing={1}>
+              {isAdmin && (
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="success"
+                  startIcon={<CheckCircleOutlineIcon />}
+                  onClick={async () => {
+                    const ids = journalData.by_buyer.flatMap(b => b.settlements.map(s => s.id));
+                    if (ids.length === 0) return;
+                    try {
+                      await api.post(`/api/farms/${currentFarm.id}/settlements/mark-exported`, { ids });
+                      setSnack({ open: true, message: `Marked ${ids.length} settlement(s) as exported`, severity: 'success' });
+                      handleEnterpriseJournal();
+                    } catch (err) {
+                      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to mark exported'), severity: 'error' });
+                    }
+                  }}
+                >
+                  Mark Exported
+                </Button>
+              )}
               <Button size="small" variant="outlined" startIcon={<DownloadIcon />} onClick={() => downloadJournal('csv')}>
                 CSV (QBO)
               </Button>
@@ -1744,6 +1777,38 @@ export default function Settlements() {
           )}
         </DialogTitle>
         <DialogContent dividers>
+          {/* Filters */}
+          <Stack direction="row" spacing={2} sx={{ mb: 2 }} alignItems="center">
+            <FormControl size="small" sx={{ minWidth: 160 }}>
+              <InputLabel>Contract</InputLabel>
+              <Select value={journalContractFilter} onChange={(e) => setJournalContractFilter(e.target.value)} label="Contract">
+                <MenuItem value="">All Contracts</MenuItem>
+                {contractsList.map(c => (
+                  <MenuItem key={c.id} value={c.contract_number}>{c.contract_number} — {c.counterparty?.name || ''}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 120 }}>
+              <InputLabel>Period</InputLabel>
+              <Select value={journalPeriodFilter} onChange={(e) => setJournalPeriodFilter(e.target.value)} label="Period">
+                <MenuItem value="">All Months</MenuItem>
+                {[11, 12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(m => (
+                  <MenuItem key={m} value={String(m)}>{new Date(2025, m - 1).toLocaleString('en-CA', { month: 'short' })}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 140 }}>
+              <InputLabel>QB Export</InputLabel>
+              <Select value={journalExportedFilter} onChange={(e) => setJournalExportedFilter(e.target.value)} label="QB Export">
+                <MenuItem value="">All</MenuItem>
+                <MenuItem value="not_exported">Not Exported</MenuItem>
+                <MenuItem value="exported">Already Exported</MenuItem>
+              </Select>
+            </FormControl>
+            <Button size="small" variant="contained" onClick={handleEnterpriseJournal} disabled={journalLoading}>
+              Apply
+            </Button>
+          </Stack>
           {journalLoading && (
             <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
               <CircularProgress />
@@ -1848,6 +1913,7 @@ export default function Settlements() {
                             <TableCell>Date</TableCell>
                             <TableCell>Contract</TableCell>
                             <TableCell>Commodity</TableCell>
+                            <TableCell>Crop Year</TableCell>
                             <TableCell>Location</TableCell>
                             <TableCell align="right">MT</TableCell>
                             <TableCell align="right">Share</TableCell>
@@ -1862,11 +1928,12 @@ export default function Settlements() {
                             const allocs = s.location_allocation || [];
                             if (allocs.length === 0) {
                               return (
-                                <TableRow key={s.id} hover>
-                                  <TableCell>{s.settlement_number}{s.is_transfer ? ' [T]' : ''}</TableCell>
+                                <TableRow key={s.id} hover sx={s.exported_at ? { opacity: 0.6 } : {}}>
+                                  <TableCell>{s.settlement_number}{s.is_transfer ? ' [T]' : ''}{s.exported_at ? ' \u2713' : ''}</TableCell>
                                   <TableCell>{s.date ? new Date(s.date).toLocaleDateString() : '–'}</TableCell>
                                   <TableCell>{s.contract_number || '–'}</TableCell>
                                   <TableCell>{s.commodity || '–'}</TableCell>
+                                  <TableCell>{s.crop_year || '–'}</TableCell>
                                   <TableCell sx={{ color: 'text.secondary', fontStyle: 'italic' }}>Unmatched</TableCell>
                                   <TableCell align="right">{s.total_mt ? fmt(s.total_mt) : '–'}</TableCell>
                                   <TableCell />
@@ -1878,11 +1945,12 @@ export default function Settlements() {
                               );
                             }
                             return allocs.map((loc, i) => (
-                              <TableRow key={`${s.id}-${loc.location}`} hover>
-                                <TableCell>{i === 0 ? `${s.settlement_number}${s.is_transfer ? ' [T]' : ''}` : ''}</TableCell>
+                              <TableRow key={`${s.id}-${loc.location}`} hover sx={s.exported_at ? { opacity: 0.6 } : {}}>
+                                <TableCell>{i === 0 ? `${s.settlement_number}${s.is_transfer ? ' [T]' : ''}${s.exported_at ? ' \u2713' : ''}` : ''}</TableCell>
                                 <TableCell>{i === 0 ? (s.date ? new Date(s.date).toLocaleDateString() : '–') : ''}</TableCell>
                                 <TableCell>{i === 0 ? (s.contract_number || '–') : ''}</TableCell>
                                 <TableCell>{i === 0 ? (s.commodity || '–') : ''}</TableCell>
+                                <TableCell>{i === 0 ? (s.crop_year || '–') : ''}</TableCell>
                                 <TableCell>
                                   <Chip label={loc.location} size="small" variant="outlined" icon={<LocationOnIcon />} />
                                 </TableCell>
@@ -1896,7 +1964,7 @@ export default function Settlements() {
                             ));
                           })}
                           <TableRow sx={{ bgcolor: 'action.hover' }}>
-                            <TableCell colSpan={5} sx={{ fontWeight: 700 }}>Subtotal — {buyer.buyer}</TableCell>
+                            <TableCell colSpan={6} sx={{ fontWeight: 700 }}>Subtotal — {buyer.buyer}</TableCell>
                             <TableCell align="right" sx={{ fontWeight: 700 }}>{fmt(buyer.subtotal_mt)}</TableCell>
                             <TableCell />
                             <TableCell align="right" sx={{ fontWeight: 700 }}>{fmtDollar(buyer.subtotal_gross)}</TableCell>
