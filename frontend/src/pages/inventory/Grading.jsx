@@ -16,6 +16,7 @@ import { useThemeMode } from '../../contexts/ThemeContext';
 import { getGridColors } from '../../utils/gridColors';
 import api from '../../services/api';
 import { extractErrorMessage } from '../../utils/errorHelpers';
+import GradingExportButtons from '../../components/inventory/GradingExportButtons';
 
 export default function Grading() {
   const { currentFarm, isEnterprise } = useFarm();
@@ -211,13 +212,16 @@ export default function Grading() {
     <Box>
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
         <Typography variant="h5" sx={{ fontWeight: 600 }}>Bin Grading</Typography>
-        <Button
-          variant="contained"
-          startIcon={<UploadFileIcon />}
-          onClick={() => setImportOpen(true)}
-        >
-          Import Grading Sheet
-        </Button>
+        <Stack direction="row" spacing={2} alignItems="center">
+          {currentFarm && <GradingExportButtons farmId={currentFarm.id} filters={filters} />}
+          <Button
+            variant="contained"
+            startIcon={<UploadFileIcon />}
+            onClick={() => setImportOpen(true)}
+          >
+            Import Grading Sheet
+          </Button>
+        </Stack>
       </Stack>
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}

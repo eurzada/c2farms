@@ -24,6 +24,7 @@ import contractRoutes from './routes/contracts.js';
 import reconciliationRoutes from './routes/reconciliation.js';
 import inventoryDashboardRoutes from './routes/inventoryDashboard.js';
 import inventoryExportsRoutes from './routes/inventoryExports.js';
+import gradingExportsRoutes from './routes/gradingExports.js';
 import marketingRoutes from './routes/marketing.js';
 import counterpartyRoutes from './routes/counterparties.js';
 import cashFlowRoutes from './routes/cashFlowEntries.js';
@@ -106,7 +107,7 @@ app.use('/api/farms', operationalDataRoutes);
 
 // Agronomy module
 app.use('/api/agronomy', agronomyGeneralRouter);
-app.use('/api/farms/:farmId/agronomy', requireModule('agronomy'));
+app.use('/api/farms/:farmId/agronomy', authenticate, requireModule('agronomy'));
 app.use('/api/farms', agronomyRoutes);
 
 // Labour planning module
@@ -121,31 +122,32 @@ app.use('/api/farms', aiRoutes);
 app.use('/api/admin', universalSettingsRoutes);
 
 // Inventory module
-app.use('/api/farms/:farmId/inventory', requireModule('inventory'));
+app.use('/api/farms/:farmId/inventory', authenticate, requireModule('inventory'));
 app.use('/api/farms', inventoryRoutes);
 app.use('/api/farms', contractRoutes);
 app.use('/api/farms', reconciliationRoutes);
 app.use('/api/farms', inventoryDashboardRoutes);
 app.use('/api/farms', inventoryExportsRoutes);
+app.use('/api/farms', gradingExportsRoutes);
 
 // Marketing module
-app.use('/api/farms/:farmId/marketing', requireModule('marketing'));
+app.use('/api/farms/:farmId/marketing', authenticate, requireModule('marketing'));
 app.use('/api/farms', marketingRoutes);
 app.use('/api/farms', counterpartyRoutes);
 app.use('/api/farms', cashFlowRoutes);
 app.use('/api/farms', priceAlertRoutes);
 
 // Logistics module
-app.use('/api/farms/:farmId/tickets', requireModule('logistics'));
-app.use('/api/farms/:farmId/settlements', requireModule('logistics'));
-app.use('/api/farms/:farmId/logistics', requireModule('logistics'));
+app.use('/api/farms/:farmId/tickets', authenticate, requireModule('logistics'));
+app.use('/api/farms/:farmId/settlements', authenticate, requireModule('logistics'));
+app.use('/api/farms/:farmId/logistics', authenticate, requireModule('logistics'));
 app.use('/api/farms', ticketRoutes);
 app.use('/api/farms', settlementRoutes);
 app.use('/api/farms', mobileTicketRoutes);
 app.use('/api/farms', logisticsDashboardRoutes);
 
 // Terminal operations module (LGX)
-app.use('/api/farms/:farmId/terminal', requireModule('terminal'));
+app.use('/api/farms/:farmId/terminal', authenticate, requireModule('terminal'));
 app.use('/api/farms', terminalRoutes);
 
 // Serve frontend static files in production
