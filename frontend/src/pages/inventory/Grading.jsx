@@ -179,6 +179,8 @@ export default function Grading() {
   ], [qualityColDefs]);
 
   const defaultColDef = useMemo(() => ({
+    headerClass: 'ag-header-wrap',
+    autoHeaderHeight: true,
     sortable: true,
     resizable: true,
     filter: true,
@@ -297,7 +299,11 @@ export default function Grading() {
         className={mode === 'dark' ? 'ag-theme-alpine-dark' : 'ag-theme-alpine'}
         sx={{
           height: 600, width: '100%',
-          '& .grading-small-header .ag-header-cell-text': { fontSize: '0.7rem' },
+          '& .ag-header-wrap .ag-header-cell-label': {
+            whiteSpace: 'normal',
+            lineHeight: 1.2,
+          },
+          '& .ag-header-cell-text': { fontSize: '0.75rem' },
         }}
       >
         <AgGridReact
