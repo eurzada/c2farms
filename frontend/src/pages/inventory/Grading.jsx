@@ -93,6 +93,7 @@ export default function Grading() {
   const qualityColDefs = useMemo(() => qualityKeys.map(key => ({
     field: `quality_json.${key}`,
     headerName: key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+    width: 80,
     valueGetter: p => p.data?.quality_json?.[key] ?? null,
     valueFormatter: p => {
       if (p.value == null) return '—';
@@ -136,9 +137,9 @@ export default function Grading() {
   }, [grades]);
 
   const columnDefs = useMemo(() => [
-    { field: 'location_name', headerName: 'Location' },
+    { field: 'location_name', headerName: 'Location', width: 95, pinned: 'left' },
     {
-      field: 'bin_number', headerName: 'Bin #',
+      field: 'bin_number', headerName: 'Bin', width: 60, pinned: 'left',
       comparator: (a, b) => {
         const numA = parseInt(a, 10);
         const numB = parseInt(b, 10);
@@ -149,56 +150,27 @@ export default function Grading() {
       },
       sort: 'asc',
     },
-    { field: 'commodity_name', headerName: 'Commodity' },
-    {
-      field: 'inv_crop_year', headerName: 'Crop Year',
-      valueFormatter: p => p.value != null ? String(p.value) : '—',
-    },
-    {
-      field: 'inv_bushels', headerName: 'Inv Bu',
-      valueFormatter: p => p.value != null ? Math.round(p.value).toLocaleString() : '—',
-    },
-    {
-      field: 'inv_mt', headerName: 'Inv MT',
-      valueFormatter: p => p.value != null ? p.value.toFixed(1) : '—',
-    },
-    { field: 'grade', headerName: 'Grade', editable: true },
-    { field: 'variety', headerName: 'Variety', editable: true },
-    { field: 'grade_reason', headerName: 'Reason', editable: true },
-    {
-      field: 'protein_pct', headerName: 'Protein %', editable: true,
-      valueFormatter: p => p.value != null ? p.value.toFixed(2) : '—',
-    },
-    {
-      field: 'moisture_pct', headerName: 'Mst %', editable: true,
-      valueFormatter: p => p.value != null ? p.value.toFixed(2) : '—',
-    },
-    {
-      field: 'dockage_pct', headerName: 'Dkg %', editable: true,
-      valueFormatter: p => p.value != null ? p.value.toFixed(2) : '—',
-    },
-    {
-      field: 'test_weight', headerName: 'TWT', editable: true,
-      valueFormatter: p => p.value != null ? p.value.toFixed(1) : '—',
-    },
-    { field: 'frost', headerName: 'Frost', editable: true },
-    { field: 'origin', headerName: 'Origin' },
-    { field: 'colour', headerName: 'Colour', editable: true },
-    {
-      field: 'falling_number', headerName: 'FN', editable: true,
-      valueFormatter: p => p.value != null ? p.value.toFixed(0) : '—',
-    },
-    {
-      field: 'fusarium_pct', headerName: 'FUS %', editable: true,
-      valueFormatter: p => p.value != null ? p.value.toFixed(2) : '—',
-    },
-    {
-      field: 'bushels', headerName: 'Grade Bu',
-      valueFormatter: p => p.value != null ? p.value.toLocaleString() : '—',
-    },
+    { field: 'commodity_name', headerName: 'Commodity', width: 90 },
+    { field: 'inv_crop_year', headerName: 'CY', width: 55, valueFormatter: p => p.value != null ? String(p.value) : '—' },
+    { field: 'inv_bushels', headerName: 'Bu', width: 75, valueFormatter: p => p.value != null ? Math.round(p.value).toLocaleString() : '—' },
+    { field: 'inv_mt', headerName: 'MT', width: 65, valueFormatter: p => p.value != null ? p.value.toFixed(1) : '—' },
+    { field: 'grade', headerName: 'Grade', width: 140, editable: true },
+    { field: 'grade_short', headerName: 'Grd#', width: 55 },
+    { field: 'variety', headerName: 'Variety', width: 80, editable: true },
+    { field: 'grade_reason', headerName: 'Reason', width: 80, editable: true },
+    { field: 'protein_pct', headerName: 'Prot%', width: 65, editable: true, valueFormatter: p => p.value != null ? p.value.toFixed(2) : '—' },
+    { field: 'moisture_pct', headerName: 'Mst%', width: 60, editable: true, valueFormatter: p => p.value != null ? p.value.toFixed(2) : '—' },
+    { field: 'dockage_pct', headerName: 'Dkg%', width: 60, editable: true, valueFormatter: p => p.value != null ? p.value.toFixed(2) : '—' },
+    { field: 'test_weight', headerName: 'TWT', width: 60, editable: true, valueFormatter: p => p.value != null ? p.value.toFixed(1) : '—' },
+    { field: 'frost', headerName: 'Frost', width: 55, editable: true },
+    { field: 'origin', headerName: 'Origin', width: 60 },
+    { field: 'colour', headerName: 'Colour', width: 60, editable: true },
+    { field: 'falling_number', headerName: 'FN', width: 55, editable: true, valueFormatter: p => p.value != null ? p.value.toFixed(0) : '—' },
+    { field: 'fusarium_pct', headerName: 'FUS%', width: 60, editable: true, valueFormatter: p => p.value != null ? p.value.toFixed(2) : '—' },
+    { field: 'bushels', headerName: 'Grd Bu', width: 70, valueFormatter: p => p.value != null ? p.value.toLocaleString() : '—' },
     ...qualityColDefs,
     {
-      field: 'status', headerName: 'Status',
+      field: 'status', headerName: 'Status', width: 85,
       cellRenderer: ({ value }) => {
         const colorMap = { available: 'success', shipped: 'info', emptied: 'default' };
         return <Chip label={value || 'available'} color={colorMap[value] || 'default'} size="small" variant="outlined" />;
