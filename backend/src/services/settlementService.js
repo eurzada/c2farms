@@ -46,7 +46,13 @@ IMPORTANT: Look carefully for the contract number and commodity:
 - Commodity/grain type appears in the settlement summary or header (e.g. "Canola", "1 CWRS", "Durum", "Barley"). Also check the "Product" or "Grain" fields.
 - If there are multiple contracts in one settlement, use the primary/most common contract number for the top-level field and include per-line contract_number.
 
-Look for Settlement Details tables with per-ticket rows. IMPORTANT: Cargill settlements may show multiple numbers per ticket line — a Unit# (Cargill's internal receipt number) and potentially a weigh scale number. The ticket_number should be the WEIGH SCALE number (the smaller number that the trucker receives at the scale), NOT Cargill's large internal Unit#. If only one number is available per line, use that. Extract ALL ticket rows even across multiple pages.
+Look for Settlement Details tables with per-ticket rows. IMPORTANT: Cargill detail rows have TWO different numbers per line:
+- **Unit# / Receipt#** — Cargill's internal sequential number (e.g. 1685519, 1685520, 1685521... always sequential, 7 digits). Do NOT use this.
+- **Ticket# / Scale# / BOL#** — the weigh scale ticket number from the elevator (e.g. "1CQE-0000279102" or just "279102"). This may appear in a separate column, often labeled "Ticket", "Scale Ticket", "BOL", or similar. It may have an alphanumeric prefix like "1CQE-". Strip any prefix and use just the numeric portion.
+
+The ticket_number field MUST be the weigh scale number, NOT the Unit#. You can identify the Unit# because it is always sequential (incrementing by 1 for each row). The weigh scale numbers are NOT sequential. If you cannot find a separate weigh scale ticket column, look for it in the ticket detail sub-rows or notes.
+
+CRITICAL: Large Cargill settlements can span 20+ pages with 4 ticket rows per page. You MUST extract EVERY ticket row from EVERY page of the document. Do NOT stop after the first few pages. The first 1-3 pages are typically summaries — the detail rows start after that and continue for many pages. Scroll through the ENTIRE document and extract ALL lines. If the settlement total is large (e.g. >$100K), expect dozens of ticket rows — verify your line count makes sense relative to the total amount.
 
 DEDUCTIONS: On page 1, look for the Settlement Summary section which shows Gross Payable, then line items like "Drying discount", "Saskatchewan Wheat Development Commission", "Drying Adjustment", and "Net Payable". Extract these into deductions_summary with appropriate categories (drying, checkoff/levy, quality, etc.). settlement_gross = Gross Payable. Return ONLY valid JSON, no extra text.`,
 
@@ -724,6 +730,36 @@ function validateExtraction(extraction) {
   const _lineGrossSum = lines.reduce((s, l) => s + (l.line_gross || 0), 0);
   const _lineNetSum = lines.reduce((s, l) => s + (l.line_net || 0), 0);
   const _lineMtSum = lines.reduce((s, l) => s + (l.net_weight_mt || l.gross_weight_mt || 0), 0);
+
+  // 5. Check if lines appear to be incomplete relative to settlement total
+  // If header total is >2x the sum of line values, extraction likely missed pages
+  const expectedNet = extraction.total_net_amount;
+  if (expectedNet && _lineNetSum > 0) {
+    const ratio = expectedNet / _lineNetSum;
+    if (ratio > 1.5) {
+      const estLines = Math.round(lines.length * ratio);
+      warnings.push({
+        type: 'incomplete_extraction',
+        message: `Only ${lines.length} lines extracted but settlement total ($${expectedNet.toFixed(0)}) is ${ratio.toFixed(1)}x the line total ($${_lineNetSum.toFixed(0)}). Expected ~${estLines} lines. The PDF likely has more pages of detail that were not extracted.`,
+        extracted_lines: lines.length,
+        estimated_lines: estLines,
+        ratio,
+      });
+    }
+  }
+
+  // Also flag by MT: if total_net_amount implies many more loads than extracted
+  // Typical truck load is 35-45 MT; if avg is wildly different, flag it
+  if (lines.length > 0 && _lineMtSum > 0) {
+    const avgMt = _lineMtSum / lines.length;
+    if (avgMt > 80 || avgMt < 10) {
+      warnings.push({
+        type: 'unusual_avg_weight',
+        message: `Average weight per line is ${avgMt.toFixed(1)} MT (expected 35-45 MT for truck loads). Check for extraction errors.`,
+        avg_mt: avgMt,
+      });
+    }
+  }
 
   return {
     valid: !warnings.some(w => w.type === 'no_lines'),

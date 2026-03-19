@@ -67,7 +67,29 @@ router.get('/:farmId/settlements', authenticate, async (req, res, next) => {
       }),
     ]);
 
-    res.json({ settlements, total, total_mt: mtAgg._sum.net_weight_mt || 0 });
+    // Enrich each settlement with total_mt and avg_mt_per_line from its lines
+    const settlementIds = settlements.map(s => s.id);
+    const lineAggs = settlementIds.length > 0 ? await prisma.settlementLine.groupBy({
+      by: ['settlement_id'],
+      where: { settlement_id: { in: settlementIds } },
+      _sum: { net_weight_mt: true },
+      _count: true,
+    }) : [];
+    const aggMap = Object.fromEntries(lineAggs.map(a => [a.settlement_id, {
+      total_mt: a._sum.net_weight_mt || 0,
+      line_count: a._count,
+    }]));
+
+    const enriched = settlements.map(s => {
+      const agg = aggMap[s.id] || { total_mt: 0, line_count: 0 };
+      return {
+        ...s,
+        total_mt: Math.round(agg.total_mt * 100) / 100,
+        avg_mt_per_line: agg.line_count > 0 ? Math.round((agg.total_mt / agg.line_count) * 100) / 100 : 0,
+      };
+    });
+
+    res.json({ settlements: enriched, total, total_mt: mtAgg._sum.net_weight_mt || 0 });
   } catch (err) { next(err); }
 });
 

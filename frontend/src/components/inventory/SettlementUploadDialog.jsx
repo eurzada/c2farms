@@ -290,7 +290,7 @@ export default function SettlementUploadDialog({ open, onClose, farmId, onUpload
   const hasResult = step === 'saved' || !!batchResult;
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="lg" fullWidth>
+    <Dialog open={open} onClose={loading || saving ? undefined : handleClose} maxWidth="lg" fullWidth>
       <DialogTitle>
         {step === 'upload' && 'Upload Settlement Document'}
         {step === 'review' && 'Review & Correct Extraction'}

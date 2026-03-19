@@ -615,10 +615,18 @@ export default function Settlements() {
       valueGetter: p => p.data.marketing_contract?.commodity?.name || p.data.extraction_json?.commodity || '',
     },
     {
+      field: 'total_mt', headerName: 'Total MT', minWidth: 90, flex: 0.8,
+      valueFormatter: p => p.value ? fmt(p.value) : '—',
+    },
+    {
       field: 'total_amount', headerName: 'Amount', minWidth: 100, flex: 1,
       valueFormatter: p => p.value ? fmtDollar(p.value) : '',
     },
     { field: '_count.lines', headerName: 'Lines', minWidth: 60, flex: 0.5 },
+    {
+      field: 'avg_mt_per_line', headerName: 'Avg MT/Load', minWidth: 95, flex: 0.8,
+      valueFormatter: p => p.value ? fmt(p.value) : '—',
+    },
     {
       field: 'status', headerName: 'Status', minWidth: 100, flex: 0.9,
       cellRenderer: p => (

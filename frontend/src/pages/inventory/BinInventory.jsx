@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { AgGridReact } from 'ag-grid-react';
-import { Box, Stack, FormControl, InputLabel, Select, MenuItem, Typography, Chip } from '@mui/material';
+import { Box, Stack, FormControl, InputLabel, Select, MenuItem, Typography, Chip, Snackbar, Alert } from '@mui/material';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { useFarm } from '../../contexts/FarmContext';
@@ -8,6 +8,8 @@ import { useThemeMode } from '../../contexts/ThemeContext';
 import { getGridColors } from '../../utils/gridColors';
 import api from '../../services/api';
 import InventoryExportButtons from '../../components/inventory/InventoryExportButtons';
+
+const PURPOSE_OPTIONS = ['market', 'seed', 'feed', 'reserved', 'consumption'];
 
 function StatusCell({ value }) {
   const colorMap = { active: 'success', empty: 'default', committed: 'warning', transit: 'info' };
@@ -24,6 +26,7 @@ export default function BinInventory() {
   const [locations, setLocations] = useState([]);
   const [commodities, setCommodities] = useState([]);
   const [filters, setFilters] = useState({ location: '', commodity: '', status: '' });
+  const [snack, setSnack] = useState({ open: false, message: '', severity: 'success' });
 
   useEffect(() => {
     if (!currentFarm) return;
@@ -67,7 +70,10 @@ export default function BinInventory() {
     { field: 'status', headerName: 'Status', minWidth: 90, flex: 0.8, cellRenderer: StatusCell },
     { field: 'notes', headerName: 'Notes', minWidth: 120, flex: 1.5 },
     {
-      field: 'purpose', headerName: 'Purpose', minWidth: 110, flex: 0.9,
+      field: 'purpose', headerName: 'Purpose', minWidth: 120, flex: 0.9,
+      editable: true,
+      cellEditor: 'agSelectCellEditor',
+      cellEditorParams: { values: PURPOSE_OPTIONS },
       cellRenderer: ({ value }) => {
         const colorMap = { market: 'success', seed: 'info', feed: 'warning', reserved: 'error', consumption: 'default' };
         const label = (value || 'market').charAt(0).toUpperCase() + (value || 'market').slice(1);
@@ -75,6 +81,25 @@ export default function BinInventory() {
       },
     },
   ], []);
+
+  const handleCellEdit = useCallback(async (params) => {
+    const { data, colDef, newValue } = params;
+    if (colDef.field !== 'purpose') return;
+    try {
+      await api.put(`/api/farms/${currentFarm.id}/inventory/bins/${data.id}`, { purpose: newValue });
+      setSnack({ open: true, message: `Bin ${data.bin_number} set to "${newValue}"`, severity: 'success' });
+    } catch {
+      setSnack({ open: true, message: 'Failed to update bin purpose', severity: 'error' });
+      // Reload to revert
+      const params2 = new URLSearchParams();
+      if (isEnterprise) params2.set('enterprise', 'true');
+      if (filters.location) params2.set('location', filters.location);
+      if (filters.commodity) params2.set('commodity', filters.commodity);
+      if (filters.status) params2.set('status', filters.status);
+      api.get(`/api/farms/${currentFarm.id}/inventory/bins?${params2}`)
+        .then(res => setBins(res.data.bins || []));
+    }
+  }, [currentFarm, isEnterprise, filters]);
 
   const defaultColDef = useMemo(() => ({
     sortable: true,
@@ -124,7 +149,9 @@ export default function BinInventory() {
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           animateRows
+          singleClickEdit
           getRowId={p => p.data?.id}
+          onCellValueChanged={handleCellEdit}
           getRowStyle={params => {
             if (params.data?.purpose && params.data.purpose !== 'market') {
               return { backgroundColor: mode === 'dark' ? 'rgba(255,152,0,0.08)' : 'rgba(255,152,0,0.06)' };
@@ -134,6 +161,9 @@ export default function BinInventory() {
         />
       </Box>
 
+      <Snackbar open={snack.open} autoHideDuration={3000} onClose={() => setSnack(s => ({ ...s, open: false }))} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+        <Alert severity={snack.severity} onClose={() => setSnack(s => ({ ...s, open: false }))}>{snack.message}</Alert>
+      </Snackbar>
     </Box>
   );
 }
