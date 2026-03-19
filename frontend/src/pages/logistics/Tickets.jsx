@@ -51,7 +51,8 @@ export default function Tickets() {
   const [unmatchedReportOpen, setUnmatchedReportOpen] = useState(false);
   const [colAnchor, setColAnchor] = useState(null);
   const [hiddenCols, setHiddenCols] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('c2_tickets_hidden_cols')) || {}; } catch { return {}; }
+    const defaults = { gross_weight_mt: true, tare_weight_mt: true, dockage_pct: true };
+    try { return { ...defaults, ...JSON.parse(localStorage.getItem('c2_tickets_hidden_cols')) }; } catch { return defaults; }
   });
   const [editTicket, setEditTicket] = useState(null);
   const [exportAnchor, setExportAnchor] = useState(null);
@@ -243,7 +244,10 @@ export default function Tickets() {
     { field: 'delivery_date', headerName: 'Date' },
     { field: 'crop_year', headerName: 'Crop Yr' },
     { field: 'commodity.name', headerName: 'Crop' },
+    { field: 'gross_weight_mt', headerName: 'Gross MT' },
+    { field: 'tare_weight_mt', headerName: 'Tare MT' },
     { field: 'net_weight_mt', headerName: 'Net MT' },
+    { field: 'dockage_pct', headerName: 'Dockage%' },
     { field: 'location.name', headerName: 'Location' },
     { field: 'bin_label', headerName: 'Bin/Bag' },
     { field: 'buyer_name', headerName: 'Buyer' },
@@ -306,9 +310,23 @@ export default function Tickets() {
     },
     !hiddenCols['crop_year'] && { field: 'crop_year', headerName: 'Crop Yr', width: 75 },
     !hiddenCols['commodity.name'] && { field: 'commodity.name', headerName: 'Crop', width: 100 },
+    !hiddenCols['gross_weight_mt'] && {
+      field: 'gross_weight_mt', headerName: 'Gross MT', width: 85,
+      valueGetter: p => p.data?.gross_weight_kg ? p.data.gross_weight_kg / 1000 : null,
+      valueFormatter: p => p.value?.toFixed(2) ?? '',
+    },
+    !hiddenCols['tare_weight_mt'] && {
+      field: 'tare_weight_mt', headerName: 'Tare MT', width: 80,
+      valueGetter: p => p.data?.tare_weight_kg ? p.data.tare_weight_kg / 1000 : null,
+      valueFormatter: p => p.value?.toFixed(2) ?? '',
+    },
     !hiddenCols['net_weight_mt'] && {
       field: 'net_weight_mt', headerName: 'Net MT', width: 85,
       valueFormatter: p => p.value?.toFixed(2),
+    },
+    !hiddenCols['dockage_pct'] && {
+      field: 'dockage_pct', headerName: 'Dockage%', width: 80,
+      valueFormatter: p => p.value != null ? p.value.toFixed(2) + '%' : '',
     },
     !hiddenCols['location.name'] && { field: 'location.name', headerName: 'Location', width: 100 },
     !hiddenCols['bin_label'] && { field: 'bin_label', headerName: 'Bin/Bag', width: 100 },
