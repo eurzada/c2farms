@@ -73,8 +73,16 @@ export default function Reconciliation() {
     { field: 'commodity', headerName: 'Commodity', width: 150 },
     { field: 'beginning_mt', headerName: 'Beginning MT', width: 140, valueFormatter: p => fmt(p.value) },
     { field: 'ending_mt', headerName: 'Ending MT', width: 130, valueFormatter: p => fmt(p.value) },
-    { field: 'hauled_mt', headerName: 'Hauled MT', width: 130, valueFormatter: p => fmt(p.value) },
-    { field: 'at_elevator_mt', headerName: 'At Elevator', width: 130, valueFormatter: p => fmt(p.value) },
+    {
+      headerName: 'Shipped MT', width: 140,
+      valueGetter: p => (p.data?.hauled_mt || 0) + (p.data?.at_elevator_mt || 0),
+      valueFormatter: p => fmt(p.value),
+      tooltipValueGetter: p => {
+        const h = p.data?.hauled_mt || 0;
+        const e = p.data?.at_elevator_mt || 0;
+        return `Hauled: ${fmt(h)} MT  |  At Elevator: ${fmt(e)} MT`;
+      },
+    },
     { field: 'variance_mt', headerName: 'Variance MT', width: 130, valueFormatter: p => fmt(p.value) },
     { field: 'variance_pct', headerName: 'Variance %', width: 120, valueFormatter: p => `${(p.value || 0).toFixed(1)}%` },
     { field: 'flag', headerName: 'Flag', width: 80, cellRenderer: FlagCell },
@@ -189,6 +197,7 @@ export default function Reconciliation() {
                   columnDefs={columnDefs}
                   defaultColDef={defaultColDef}
                   animateRows
+                  tooltipShowDelay={300}
                   getRowId={p => p.data?.commodity}
                 />
               </Box>

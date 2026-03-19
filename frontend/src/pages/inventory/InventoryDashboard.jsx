@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Box, Typography, Grid, Card, CardContent, Alert, CircularProgress } from '@mui/material';
+import { Box, Typography, Grid, Card, CardContent, Alert, CircularProgress, FormControlLabel, Switch } from '@mui/material';
 import { useFarm } from '../../contexts/FarmContext';
 import api from '../../services/api';
 import InventoryKPICard from '../../components/inventory/InventoryKPICard';
@@ -17,6 +17,13 @@ export default function InventoryDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [simplified, setSimplified] = useState(() => localStorage.getItem('c2_inv_dash_simplified') === 'true');
+
+  const handleSimplifiedToggle = (e) => {
+    const val = e.target.checked;
+    setSimplified(val);
+    localStorage.setItem('c2_inv_dash_simplified', String(val));
+  };
 
   useEffect(() => {
     if (!currentFarm) return;
@@ -42,9 +49,15 @@ export default function InventoryDashboard() {
 
   return (
     <Box>
-      <Typography variant="h5" sx={{ mb: 3, fontWeight: 600 }}>
-        {isEnterprise ? 'Inventory Management' : `${currentFarm.name} Inventory`}
-      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
+        <Typography variant="h5" sx={{ fontWeight: 600 }}>
+          {isEnterprise ? 'Inventory Management' : `${currentFarm.name} Inventory`}
+        </Typography>
+        <FormControlLabel
+          control={<Switch checked={simplified} onChange={handleSimplifiedToggle} size="small" />}
+          label="Simplified View"
+        />
+      </Box>
 
       {/* Location × Commodity Matrix — top of page, enterprise only */}
       {isEnterprise && locationCommodityMatrix && (
@@ -80,8 +93,8 @@ export default function InventoryDashboard() {
         </Grid>
       </Grid>
 
-      {/* Alerts */}
-      {alerts.length > 0 && <AlertsPanel alerts={alerts} />}
+      {/* Alerts — hidden in simplified view */}
+      {!simplified && alerts.length > 0 && <AlertsPanel alerts={alerts} />}
 
       <Grid container spacing={3}>
         {/* Monthly Reconciliation Summary — enterprise only */}
@@ -91,35 +104,39 @@ export default function InventoryDashboard() {
           </Grid>
         )}
 
-        {/* Available-to-Sell Table */}
-        {available_to_sell?.length > 0 && (
-          <Grid item xs={12}>
-            <AvailableToSellTable data={available_to_sell} />
-          </Grid>
+        {!simplified && (
+          <>
+            {/* Available-to-Sell Table */}
+            {available_to_sell?.length > 0 && (
+              <Grid item xs={12}>
+                <AvailableToSellTable data={available_to_sell} />
+              </Grid>
+            )}
+
+            {/* Crop Inventory + Farm Status side by side */}
+            <Grid item xs={12} md={7}>
+              <CropInventoryTable crops={cropInventory} />
+            </Grid>
+            <Grid item xs={12} md={5}>
+              <FarmStatusPanel statuses={farmStatus} />
+              {conversionHealth && (
+                <Box sx={{ mt: 3 }}>
+                  <ConversionHealthCard data={conversionHealth} />
+                </Box>
+              )}
+            </Grid>
+
+            {/* Drawdown Chart */}
+            <Grid item xs={12}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>Monthly Inventory Drawdown</Typography>
+                  <DrawdownChart data={drawdown} />
+                </CardContent>
+              </Card>
+            </Grid>
+          </>
         )}
-
-        {/* Crop Inventory + Farm Status side by side */}
-        <Grid item xs={12} md={7}>
-          <CropInventoryTable crops={cropInventory} />
-        </Grid>
-        <Grid item xs={12} md={5}>
-          <FarmStatusPanel statuses={farmStatus} />
-          {conversionHealth && (
-            <Box sx={{ mt: 3 }}>
-              <ConversionHealthCard data={conversionHealth} />
-            </Box>
-          )}
-        </Grid>
-
-        {/* Drawdown Chart */}
-        <Grid item xs={12}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>Monthly Inventory Drawdown</Typography>
-              <DrawdownChart data={drawdown} />
-            </CardContent>
-          </Card>
-        </Grid>
       </Grid>
     </Box>
   );

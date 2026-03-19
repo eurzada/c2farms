@@ -103,6 +103,7 @@ router.get('/:farmId/inventory/bins', authenticate, async (req, res, next) => {
         kg: latestCount?.kg || 0,
         crop_year: latestCount?.crop_year || null,
         notes: latestCount?.notes || bin.notes || null,
+        purpose: bin.purpose,
         period_date: latestCount?.count_period?.period_date || null,
         status: latestCount?.bushels > 0 ? 'active' : 'empty',
       };
@@ -141,7 +142,7 @@ router.post('/:farmId/inventory/bins', authenticate, requireRole('admin', 'manag
 router.put('/:farmId/inventory/bins/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId } = await resolveInventoryFarm(req.params.farmId);
-    const { bin_type, capacity_bu, commodity_id, notes, is_active } = req.body;
+    const { bin_type, capacity_bu, commodity_id, notes, is_active, purpose } = req.body;
     const oldBin = await prisma.inventoryBin.findFirst({ where: { id: req.params.id, farm_id: farmId } });
     if (!oldBin) return res.status(404).json({ error: 'Bin not found' });
     const bin = await prisma.inventoryBin.update({
@@ -152,10 +153,11 @@ router.put('/:farmId/inventory/bins/:id', authenticate, requireRole('admin', 'ma
         ...(commodity_id !== undefined && { commodity_id }),
         ...(notes !== undefined && { notes }),
         ...(is_active !== undefined && { is_active }),
+        ...(purpose !== undefined && { purpose }),
       },
     });
     if (oldBin) {
-      const changes = diffChanges(oldBin, bin, ['bin_type', 'capacity_bu', 'commodity_id', 'notes', 'is_active']);
+      const changes = diffChanges(oldBin, bin, ['bin_type', 'capacity_bu', 'commodity_id', 'notes', 'is_active', 'purpose']);
       if (changes) logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'InventoryBin', entityId: bin.id, action: 'update', changes });
     }
     res.json({ bin });
@@ -260,6 +262,91 @@ router.get('/:farmId/inventory/count-history', authenticate, async (req, res, ne
 
     // Return in reverse chronological order (newest first)
     res.json({ periods: history.reverse() });
+  } catch (err) { next(err); }
+});
+
+// GET count history cross-tab matrix
+router.get('/:farmId/inventory/count-history/matrix', authenticate, async (req, res, next) => {
+  try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    const { from_period, to_period } = req.query;
+
+    // Get all periods
+    const periods = await prisma.countPeriod.findMany({
+      where: { farm_id: farmId },
+      orderBy: { period_date: 'desc' },
+    });
+
+    if (periods.length === 0) return res.json({ matrix: [], periods: [] });
+
+    // Determine range
+    const selectedPeriods = periods.filter(p => {
+      if (from_period && to_period) {
+        return p.period_date >= new Date(from_period) && p.period_date <= new Date(to_period);
+      }
+      return true; // return all if no range specified
+    }).slice(0, 12); // max 12 periods
+
+    // Get counts for all selected periods
+    const periodIds = selectedPeriods.map(p => p.id);
+    const allCounts = await prisma.binCount.findMany({
+      where: { farm_id: farmId, count_period_id: { in: periodIds } },
+      include: {
+        commodity: true,
+        bin: { include: { location: true } },
+        count_period: true,
+      },
+    });
+
+    // Build cross-tab: rows = location x commodity, columns = periods
+    // Key: `${locationName}|${commodityName}`
+    const rowMap = {};
+    for (const bc of allCounts) {
+      if (!bc.commodity || bc.commodity.code === 'FERT') continue;
+      const locName = bc.bin?.location?.name || 'Unknown';
+      const comName = bc.commodity.name;
+      const key = `${locName}|${comName}`;
+      const periodDate = bc.count_period.period_date.toISOString().slice(0, 10);
+
+      if (!rowMap[key]) {
+        rowMap[key] = {
+          location: locName,
+          commodity: comName,
+          commodity_code: bc.commodity.code,
+          periods: {},
+        };
+      }
+      // Aggregate MT for this location x commodity x period
+      const mt = (bc.kg || 0) / 1000;
+      rowMap[key].periods[periodDate] = (rowMap[key].periods[periodDate] || 0) + mt;
+    }
+
+    // Sort rows by location then commodity
+    const matrix = Object.values(rowMap).sort((a, b) => {
+      const locCmp = a.location.localeCompare(b.location);
+      return locCmp !== 0 ? locCmp : a.commodity.localeCompare(b.commodity);
+    });
+
+    // Add deltas (month-over-month)
+    const periodDates = selectedPeriods.map(p => p.period_date.toISOString().slice(0, 10)).reverse(); // oldest first
+    for (const row of matrix) {
+      row.deltas = {};
+      for (let i = 1; i < periodDates.length; i++) {
+        const curr = row.periods[periodDates[i]] || 0;
+        const prev = row.periods[periodDates[i - 1]] || 0;
+        row.deltas[periodDates[i]] = Math.round((curr - prev) * 10) / 10;
+      }
+    }
+
+    res.json({
+      matrix,
+      periods: selectedPeriods.map(p => ({
+        id: p.id,
+        period_date: p.period_date,
+        crop_year: p.crop_year,
+        status: p.status,
+      })),
+    });
   } catch (err) { next(err); }
 });
 
@@ -509,7 +596,7 @@ router.post('/:farmId/inventory/count-periods/:id/copy-from/:sourcePeriodId', au
       bushels: c.bushels,
       kg: c.kg,
       crop_year: c.crop_year,
-      notes: null,
+      notes: c.notes,
     }));
     const result = await prisma.binCount.createMany({ data });
 
@@ -621,6 +708,103 @@ router.post('/:farmId/inventory/import', authenticate, requireRole('admin', 'man
     }
 
     res.json({ ...result, changes });
+  } catch (err) { next(err); }
+});
+
+// ─── Inventory Withdrawals ─────────────────────────────────────────
+
+// GET withdrawals for a farm (with optional filters)
+router.get('/:farmId/inventory/withdrawals', authenticate, async (req, res, next) => {
+  try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    const { bin_id, reason, from_date, to_date } = req.query;
+    const where = { farm_id: farmId };
+    if (bin_id) where.bin_id = bin_id;
+    if (reason) where.reason = reason;
+    if (from_date || to_date) {
+      where.withdrawal_date = {};
+      if (from_date) where.withdrawal_date.gte = new Date(from_date);
+      if (to_date) where.withdrawal_date.lte = new Date(to_date);
+    }
+    const withdrawals = await prisma.inventoryWithdrawal.findMany({
+      where,
+      include: {
+        bin: { include: { location: true } },
+        commodity: true,
+      },
+      orderBy: { withdrawal_date: 'desc' },
+    });
+    res.json({ withdrawals });
+  } catch (err) { next(err); }
+});
+
+// POST create withdrawal
+router.post('/:farmId/inventory/withdrawals', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    const { bin_id, commodity_id, bushels, reason, withdrawal_date, notes } = req.body;
+    if (!bin_id || !bushels || !reason || !withdrawal_date) {
+      return res.status(400).json({ error: 'bin_id, bushels, reason, and withdrawal_date are required' });
+    }
+
+    // Look up commodity for kg conversion
+    let kg = 0;
+    if (commodity_id) {
+      const commodity = await prisma.commodity.findFirst({ where: { id: commodity_id, farm_id: farmId } });
+      const lbsPerBu = commodity?.lbs_per_bu || 60;
+      kg = convertBuToKg(parseFloat(bushels), lbsPerBu);
+    } else {
+      // Try to get commodity from the bin
+      const bin = await prisma.inventoryBin.findFirst({ where: { id: bin_id, farm_id: farmId }, include: { commodity: true } });
+      const lbsPerBu = bin?.commodity?.lbs_per_bu || 60;
+      kg = convertBuToKg(parseFloat(bushels), lbsPerBu);
+    }
+
+    const withdrawal = await prisma.inventoryWithdrawal.create({
+      data: {
+        farm_id: farmId,
+        bin_id,
+        commodity_id: commodity_id || null,
+        bushels: parseFloat(bushels),
+        kg,
+        reason,
+        withdrawal_date: new Date(withdrawal_date),
+        notes: notes || null,
+        created_by: req.userId,
+      },
+      include: { bin: { include: { location: true } }, commodity: true },
+    });
+
+    logAudit({
+      farmId, userId: req.userId,
+      entityType: 'InventoryWithdrawal', entityId: withdrawal.id,
+      action: 'create',
+      changes: { bin_id, bushels: parseFloat(bushels), kg, reason, withdrawal_date },
+    });
+
+    res.status(201).json({ withdrawal });
+  } catch (err) { next(err); }
+});
+
+// DELETE withdrawal
+router.delete('/:farmId/inventory/withdrawals/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { farmId } = await resolveInventoryFarm(req.params.farmId);
+    const existing = await prisma.inventoryWithdrawal.findFirst({
+      where: { id: req.params.id, farm_id: farmId },
+    });
+    if (!existing) return res.status(404).json({ error: 'Withdrawal not found' });
+
+    await prisma.inventoryWithdrawal.delete({ where: { id: req.params.id } });
+
+    logAudit({
+      farmId, userId: req.userId,
+      entityType: 'InventoryWithdrawal', entityId: req.params.id,
+      action: 'delete',
+      changes: { bin_id: existing.bin_id, bushels: existing.bushels, reason: existing.reason },
+    });
+
+    res.json({ success: true });
   } catch (err) { next(err); }
 });
 

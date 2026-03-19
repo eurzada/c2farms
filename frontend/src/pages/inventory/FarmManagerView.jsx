@@ -3,8 +3,10 @@ import { AgGridReact } from 'ag-grid-react';
 import {
   Box, Typography, Stack, FormControl, InputLabel, Select, MenuItem,
   Button, LinearProgress, Alert, Snackbar, IconButton, Chip, Tooltip,
+  Dialog, DialogTitle, DialogContent, DialogActions, TextField,
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
+import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline';
 import LockIcon from '@mui/icons-material/Lock';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import UndoIcon from '@mui/icons-material/Undo';
@@ -51,6 +53,12 @@ export default function FarmManagerView() {
   const [snack, setSnack] = useState({ open: false, message: '', severity: 'info' });
   const [newPeriodOpen, setNewPeriodOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [withdrawalOpen, setWithdrawalOpen] = useState(false);
+  const [withdrawalForm, setWithdrawalForm] = useState({
+    bin_id: '', bushels: '', reason: 'seed',
+    withdrawal_date: new Date().toISOString().slice(0, 10), notes: '',
+  });
+  const [withdrawalSaving, setWithdrawalSaving] = useState(false);
 
   // Fetch locations, commodities, periods on mount
   useEffect(() => {
@@ -147,10 +155,12 @@ export default function FarmManagerView() {
           commodity_name: b.commodity_name || '',
           bushels: b.bushels || 0,
           crop_year: b.crop_year || null,
+          notes: b.notes || '',
+          purpose: b.purpose || 'market',
         }));
         setRowData(rows);
         const snapshot = {};
-        for (const r of rows) snapshot[r.id] = { ...r };
+        for (const r of rows) snapshot[r.id] = { ...r, notes: r.notes };
         setLastCounts(snapshot);
         setDirtyBinIds(new Set());
       });
@@ -175,7 +185,7 @@ export default function FarmManagerView() {
     if (!last) return;
     setRowData(prev => prev.map(row =>
       row.id === binId
-        ? { ...row, commodity_id: last.commodity_id, commodity_name: last.commodity_name, bushels: last.bushels, crop_year: last.crop_year }
+        ? { ...row, commodity_id: last.commodity_id, commodity_name: last.commodity_name, bushels: last.bushels, crop_year: last.crop_year, notes: last.notes }
         : row
     ));
     setDirtyBinIds(prev => {
@@ -227,6 +237,20 @@ export default function FarmManagerView() {
       editable,
       valueParser: p => p.newValue ? parseInt(p.newValue) : null,
     },
+    {
+      field: 'notes', headerName: 'Notes', width: 180,
+      editable,
+    },
+    {
+      field: 'purpose', headerName: 'Purpose', width: 110,
+      cellRenderer: p => {
+        const val = p.value || 'market';
+        if (val === 'market') return null;
+        const colorMap = { seed: 'info', feed: 'warning', reserved: 'error', consumption: 'default' };
+        const label = val.charAt(0).toUpperCase() + val.slice(1);
+        return <Chip label={label} color={colorMap[val] || 'default'} size="small" variant="outlined" />;
+      },
+    },
     ...(editable ? [{
       headerName: '', width: 60,
       cellRenderer: UndoRenderer,
@@ -269,7 +293,7 @@ export default function FarmManagerView() {
         commodity_id: r.commodity_id || null,
         bushels: parseFloat(r.bushels) || 0,
         crop_year: r.crop_year ? parseInt(r.crop_year) : null,
-        notes: null,
+        notes: r.notes || null,
       }));
 
       await api.post(`/api/farms/${currentFarm.id}/inventory/bin-counts/${period.id}`, { counts: countsArray });
@@ -294,6 +318,35 @@ export default function FarmManagerView() {
       setSnack({ open: true, message: newStatus === 'closed' ? 'Period locked.' : 'Period unlocked.', severity: 'success' });
     } catch (err) {
       setSnack({ open: true, message: err.response?.data?.error || 'Failed to update period', severity: 'error' });
+    }
+  };
+
+  // Withdrawal dialog helpers
+  const selectedWithdrawalBin = useMemo(
+    () => rowData.find(r => r.id === withdrawalForm.bin_id) || null,
+    [rowData, withdrawalForm.bin_id]
+  );
+
+  const handleWithdrawalSubmit = async () => {
+    if (!currentFarm || !withdrawalForm.bin_id || !withdrawalForm.bushels || !withdrawalForm.reason || !withdrawalForm.withdrawal_date) return;
+    setWithdrawalSaving(true);
+    try {
+      await api.post(`/api/farms/${currentFarm.id}/inventory/withdrawals`, {
+        bin_id: withdrawalForm.bin_id,
+        commodity_id: selectedWithdrawalBin?.commodity_id || null,
+        bushels: parseFloat(withdrawalForm.bushels),
+        reason: withdrawalForm.reason,
+        withdrawal_date: withdrawalForm.withdrawal_date,
+        notes: withdrawalForm.notes || null,
+      });
+      setSnack({ open: true, message: 'Withdrawal recorded', severity: 'success' });
+      setWithdrawalOpen(false);
+      setWithdrawalForm({ bin_id: '', bushels: '', reason: 'seed', withdrawal_date: new Date().toISOString().slice(0, 10), notes: '' });
+      fetchBins();
+    } catch (err) {
+      setSnack({ open: true, message: err.response?.data?.error || 'Failed to record withdrawal', severity: 'error' });
+    } finally {
+      setWithdrawalSaving(false);
     }
   };
 
@@ -351,6 +404,10 @@ export default function FarmManagerView() {
 
         <Button variant="outlined" size="small" startIcon={<UploadFileIcon />} onClick={() => setImportOpen(true)}>
           Import
+        </Button>
+
+        <Button variant="outlined" size="small" color="warning" startIcon={<RemoveCircleOutlineIcon />} onClick={() => setWithdrawalOpen(true)}>
+          Record Withdrawal
         </Button>
 
         {selectedPeriodId && (
@@ -430,6 +487,12 @@ export default function FarmManagerView() {
           getRowId={p => p.data?.id}
           context={{ onUndo, dirtyBinIds }}
           onCellValueChanged={onCellValueChanged}
+          getRowStyle={params => {
+            if (params.data?.purpose && params.data.purpose !== 'market') {
+              return { backgroundColor: mode === 'dark' ? 'rgba(255,152,0,0.08)' : 'rgba(255,152,0,0.06)' };
+            }
+            return null;
+          }}
           singleClickEdit
           enterNavigatesAfterEdit
           stopEditingWhenCellsLoseFocus
@@ -476,6 +539,81 @@ export default function FarmManagerView() {
           }}
         />
       )}
+
+      {/* Withdrawal Dialog */}
+      <Dialog open={withdrawalOpen} onClose={() => setWithdrawalOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Record Inventory Withdrawal</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <FormControl fullWidth size="small">
+              <InputLabel>Bin</InputLabel>
+              <Select
+                value={withdrawalForm.bin_id}
+                label="Bin"
+                onChange={e => setWithdrawalForm(f => ({ ...f, bin_id: e.target.value }))}
+              >
+                {rowData.filter(r => r.bushels > 0).map(r => (
+                  <MenuItem key={r.id} value={r.id}>
+                    {r.location_name} - {r.bin_number} ({r.commodity_name || 'No commodity'}, {r.bushels.toLocaleString()} bu)
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            {selectedWithdrawalBin && (
+              <TextField
+                size="small" label="Commodity" value={selectedWithdrawalBin.commodity_name || 'N/A'}
+                InputProps={{ readOnly: true }} fullWidth
+              />
+            )}
+
+            <TextField
+              size="small" label="Bushels" type="number" fullWidth
+              value={withdrawalForm.bushels}
+              onChange={e => setWithdrawalForm(f => ({ ...f, bushels: e.target.value }))}
+              inputProps={{ min: 0, step: 1 }}
+            />
+
+            <FormControl fullWidth size="small">
+              <InputLabel>Reason</InputLabel>
+              <Select
+                value={withdrawalForm.reason}
+                label="Reason"
+                onChange={e => setWithdrawalForm(f => ({ ...f, reason: e.target.value }))}
+              >
+                <MenuItem value="seed">Own Seed</MenuItem>
+                <MenuItem value="feed">Feed Use</MenuItem>
+                <MenuItem value="loss">Loss / Spoilage</MenuItem>
+                <MenuItem value="consumption">Consumption</MenuItem>
+                <MenuItem value="transfer">Internal Transfer</MenuItem>
+              </Select>
+            </FormControl>
+
+            <TextField
+              size="small" label="Date" type="date" fullWidth
+              value={withdrawalForm.withdrawal_date}
+              onChange={e => setWithdrawalForm(f => ({ ...f, withdrawal_date: e.target.value }))}
+              InputLabelProps={{ shrink: true }}
+            />
+
+            <TextField
+              size="small" label="Notes" fullWidth multiline rows={2}
+              value={withdrawalForm.notes}
+              onChange={e => setWithdrawalForm(f => ({ ...f, notes: e.target.value }))}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setWithdrawalOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained" color="warning"
+            onClick={handleWithdrawalSubmit}
+            disabled={withdrawalSaving || !withdrawalForm.bin_id || !withdrawalForm.bushels}
+          >
+            {withdrawalSaving ? 'Saving...' : 'Record Withdrawal'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar open={snack.open} autoHideDuration={4000} onClose={() => setSnack(s => ({ ...s, open: false }))}>
         <Alert severity={snack.severity} onClose={() => setSnack(s => ({ ...s, open: false }))}>{snack.message}</Alert>

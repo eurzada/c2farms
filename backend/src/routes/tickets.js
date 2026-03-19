@@ -81,7 +81,7 @@ router.get('/:farmId/tickets/stats/summary', authenticate, async (req, res, next
     const farmId = req.params.farmId;
     const { fiscal_year } = req.query;
     const baseWhere = { farm_id: farmId, ...(fiscal_year ? fiscalYearDateFilter(fiscal_year) : {}) };
-    const [total, settled, unsettled, matched, byCounterparty] = await Promise.all([
+    const [total, settled, unsettled, matched, byCounterparty, byCounterpartyCommodity] = await Promise.all([
       prisma.deliveryTicket.count({ where: baseWhere }),
       prisma.deliveryTicket.count({ where: { ...baseWhere, settled: true } }),
       prisma.deliveryTicket.count({ where: { ...baseWhere, settled: false } }),
@@ -92,16 +92,45 @@ router.get('/:farmId/tickets/stats/summary', authenticate, async (req, res, next
         _count: true,
         _sum: { net_weight_mt: true },
       }),
+      prisma.deliveryTicket.groupBy({
+        by: ['counterparty_id', 'commodity_id'],
+        where: baseWhere,
+        _count: true,
+        _sum: { net_weight_mt: true },
+      }),
     ]);
 
     const counterpartyIds = byCounterparty.map(g => g.counterparty_id).filter(Boolean);
-    const counterparties = counterpartyIds.length > 0
-      ? await prisma.counterparty.findMany({
-            where: { id: { in: counterpartyIds } },
-            select: { id: true, name: true },
-          })
-      : [];
+    const commodityIds = [...new Set(byCounterpartyCommodity.map(g => g.commodity_id).filter(Boolean))];
+    const [counterparties, commodities] = await Promise.all([
+      counterpartyIds.length > 0
+        ? prisma.counterparty.findMany({
+              where: { id: { in: counterpartyIds } },
+              select: { id: true, name: true },
+            })
+        : [],
+      commodityIds.length > 0
+        ? prisma.commodity.findMany({
+              where: { id: { in: commodityIds } },
+              select: { id: true, name: true },
+            })
+        : [],
+    ]);
     const cpMap = Object.fromEntries(counterparties.map(cp => [cp.id, cp.name]));
+    const commMap = Object.fromEntries(commodities.map(c => [c.id, c.name]));
+
+    // Build per-commodity breakdown keyed by counterparty_id
+    const cpCommodityMap = {};
+    for (const g of byCounterpartyCommodity) {
+      const cpId = g.counterparty_id;
+      if (!cpCommodityMap[cpId]) cpCommodityMap[cpId] = [];
+      cpCommodityMap[cpId].push({
+        commodity_id: g.commodity_id,
+        commodity_name: commMap[g.commodity_id] || 'Unknown',
+        count: g._count,
+        total_mt: g._sum.net_weight_mt || 0,
+      });
+    }
 
     res.json({
       total,
@@ -113,8 +142,48 @@ router.get('/:farmId/tickets/stats/summary', authenticate, async (req, res, next
         counterparty_name: cpMap[g.counterparty_id] || 'Unknown',
         count: g._count,
         total_mt: g._sum.net_weight_mt || 0,
+        by_commodity: (cpCommodityMap[g.counterparty_id] || []).sort((a, b) => b.total_mt - a.total_mt),
       })),
     });
+  } catch (err) { next(err); }
+});
+
+// GET export as Excel
+router.get('/:farmId/tickets/export/excel', authenticate, async (req, res, next) => {
+  try {
+    const { generateTicketExcel } = await import('../services/ticketExportService.js');
+    const workbook = await generateTicketExcel(req.params.farmId, req.query);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="tickets-${new Date().toISOString().slice(0,10)}.xlsx"`);
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) { next(err); }
+});
+
+// GET export as PDF
+router.get('/:farmId/tickets/export/pdf', authenticate, async (req, res, next) => {
+  try {
+    const { generateTicketPdf } = await import('../services/ticketExportService.js');
+    const { getFontPaths } = await import('../utils/fontPaths.js');
+    const PdfPrinter = (await import('pdfmake')).default;
+    const printer = new PdfPrinter({ Roboto: getFontPaths() });
+    const docDef = await generateTicketPdf(req.params.farmId, req.query);
+    const doc = printer.createPdfKitDocument(docDef);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="tickets-${new Date().toISOString().slice(0,10)}.pdf"`);
+    doc.pipe(res);
+    doc.end();
+  } catch (err) { next(err); }
+});
+
+// GET export as CSV
+router.get('/:farmId/tickets/export/csv', authenticate, async (req, res, next) => {
+  try {
+    const { generateTicketCsv } = await import('../services/ticketExportService.js');
+    const csv = await generateTicketCsv(req.params.farmId, req.query);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="tickets-${new Date().toISOString().slice(0,10)}.csv"`);
+    res.send(csv);
   } catch (err) { next(err); }
 });
 

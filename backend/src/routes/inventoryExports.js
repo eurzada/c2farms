@@ -4,6 +4,9 @@ import { authenticate } from '../middleware/auth.js';
 import {
   generateInventoryExcel, generateInventoryPdf, generateInventoryCsv,
 } from '../services/inventoryExportService.js';
+import {
+  generateCountHistoryExcel, generateCountHistoryPdf, generateCountHistoryCsv,
+} from '../services/countHistoryExportService.js';
 import { getFontPaths } from '../utils/fontPaths.js';
 
 const router = Router();
@@ -45,6 +48,38 @@ router.post('/:farmId/inventory/export/csv/:type', authenticate, async (req, res
     const csv = await generateInventoryCsv(req.params.farmId, type);
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename=inventory-${type}.csv`);
+    res.send(csv);
+  } catch (err) { next(err); }
+});
+
+// ─── Count History Matrix Exports ─────────────────────────────────────
+
+router.get('/:farmId/inventory/count-history/export/excel', authenticate, async (req, res, next) => {
+  try {
+    const workbook = await generateCountHistoryExcel(req.params.farmId, req.query);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="count-history-${new Date().toISOString().slice(0,10)}.xlsx"`);
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) { next(err); }
+});
+
+router.get('/:farmId/inventory/count-history/export/pdf', authenticate, async (req, res, next) => {
+  try {
+    const docDef = await generateCountHistoryPdf(req.params.farmId, req.query);
+    const pdfDoc = printer.createPdfKitDocument(docDef);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="count-history-${new Date().toISOString().slice(0,10)}.pdf"`);
+    pdfDoc.pipe(res);
+    pdfDoc.end();
+  } catch (err) { next(err); }
+});
+
+router.get('/:farmId/inventory/count-history/export/csv', authenticate, async (req, res, next) => {
+  try {
+    const csv = await generateCountHistoryCsv(req.params.farmId, req.query);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="count-history-${new Date().toISOString().slice(0,10)}.csv"`);
     res.send(csv);
   } catch (err) { next(err); }
 });

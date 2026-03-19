@@ -78,10 +78,67 @@ export default function Grading() {
     }
   }, [currentFarm, loadGrades]);
 
+  // Extract unique quality_json keys across all grades
+  const qualityKeys = useMemo(() => {
+    const keys = new Set();
+    for (const g of grades) {
+      if (g.quality_json && typeof g.quality_json === 'object') {
+        Object.keys(g.quality_json).forEach(k => keys.add(k));
+      }
+    }
+    return [...keys].sort();
+  }, [grades]);
+
+  // Dynamic column defs from quality_json keys
+  const qualityColDefs = useMemo(() => qualityKeys.map(key => ({
+    field: `quality_json.${key}`,
+    headerName: key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+    valueGetter: p => p.data?.quality_json?.[key] ?? null,
+    valueFormatter: p => {
+      if (p.value == null) return '—';
+      return typeof p.value === 'number' ? p.value.toFixed(2) : String(p.value);
+    },
+  })), [qualityKeys]);
+
+  // Location names for summary table
+  const locationNames = useMemo(() => {
+    const locs = new Set(grades.map(g => g.location_name).filter(Boolean));
+    return [...locs].sort();
+  }, [grades]);
+
+  // Grade summary grouped by commodity x grade
+  const gradeSummary = useMemo(() => {
+    const groups = {};
+    for (const g of grades) {
+      const key = `${g.commodity_name || 'Unknown'}|${g.grade_short || g.grade || 'Ungraded'}`;
+      if (!groups[key]) {
+        groups[key] = {
+          commodity: g.commodity_name || 'Unknown',
+          grade: g.grade_short || g.grade || 'Ungraded',
+          total_mt: 0,
+          bin_count: 0,
+          by_location: {},
+          proteins: [],
+        };
+      }
+      groups[key].total_mt += g.inv_mt || 0;
+      groups[key].bin_count++;
+      const loc = g.location_name || 'Unknown';
+      groups[key].by_location[loc] = (groups[key].by_location[loc] || 0) + (g.inv_mt || 0);
+      if (g.protein_pct != null) groups[key].proteins.push(g.protein_pct);
+    }
+    return Object.values(groups)
+      .map(g => ({
+        ...g,
+        avg_protein: g.proteins.length > 0 ? g.proteins.reduce((s, v) => s + v, 0) / g.proteins.length : null,
+      }))
+      .sort((a, b) => a.commodity.localeCompare(b.commodity) || a.grade.localeCompare(b.grade));
+  }, [grades]);
+
   const columnDefs = useMemo(() => [
-    { field: 'location_name', headerName: 'Location', minWidth: 110, flex: 1 },
+    { field: 'location_name', headerName: 'Location' },
     {
-      field: 'bin_number', headerName: 'Bin #', minWidth: 80, flex: 0.7,
+      field: 'bin_number', headerName: 'Bin #',
       comparator: (a, b) => {
         const numA = parseInt(a, 10);
         const numB = parseInt(b, 10);
@@ -92,66 +149,68 @@ export default function Grading() {
       },
       sort: 'asc',
     },
-    { field: 'commodity_name', headerName: 'Commodity', minWidth: 110, flex: 1 },
+    { field: 'commodity_name', headerName: 'Commodity' },
     {
-      field: 'inv_crop_year', headerName: 'Crop Year', minWidth: 90, flex: 0.6,
+      field: 'inv_crop_year', headerName: 'Crop Year',
       valueFormatter: p => p.value != null ? String(p.value) : '—',
     },
     {
-      field: 'inv_bushels', headerName: 'Inv Bu', minWidth: 90, flex: 0.7,
+      field: 'inv_bushels', headerName: 'Inv Bu',
       valueFormatter: p => p.value != null ? Math.round(p.value).toLocaleString() : '—',
     },
     {
-      field: 'inv_mt', headerName: 'Inv MT', minWidth: 80, flex: 0.6,
+      field: 'inv_mt', headerName: 'Inv MT',
       valueFormatter: p => p.value != null ? p.value.toFixed(1) : '—',
     },
-    { field: 'grade', headerName: 'Grade', minWidth: 180, flex: 1.5, editable: true },
-    { field: 'variety', headerName: 'Variety', minWidth: 90, flex: 0.7, editable: true },
-    { field: 'grade_reason', headerName: 'Reason', minWidth: 100, flex: 0.8, editable: true },
+    { field: 'grade', headerName: 'Grade', editable: true },
+    { field: 'variety', headerName: 'Variety', editable: true },
+    { field: 'grade_reason', headerName: 'Reason', editable: true },
     {
-      field: 'protein_pct', headerName: 'Protein %', minWidth: 85, flex: 0.6, editable: true,
+      field: 'protein_pct', headerName: 'Protein %', editable: true,
       valueFormatter: p => p.value != null ? p.value.toFixed(2) : '—',
     },
     {
-      field: 'moisture_pct', headerName: 'Mst %', minWidth: 75, flex: 0.5, editable: true,
+      field: 'moisture_pct', headerName: 'Mst %', editable: true,
       valueFormatter: p => p.value != null ? p.value.toFixed(2) : '—',
     },
     {
-      field: 'dockage_pct', headerName: 'Dkg %', minWidth: 75, flex: 0.5, editable: true,
+      field: 'dockage_pct', headerName: 'Dkg %', editable: true,
       valueFormatter: p => p.value != null ? p.value.toFixed(2) : '—',
     },
     {
-      field: 'test_weight', headerName: 'TWT', minWidth: 70, flex: 0.5, editable: true,
+      field: 'test_weight', headerName: 'TWT', editable: true,
       valueFormatter: p => p.value != null ? p.value.toFixed(1) : '—',
     },
-    { field: 'frost', headerName: 'Frost', minWidth: 70, flex: 0.5, editable: true },
-    { field: 'origin', headerName: 'Origin', minWidth: 70, flex: 0.4, hide: true },
-    { field: 'colour', headerName: 'Colour', minWidth: 70, flex: 0.4, hide: true, editable: true },
+    { field: 'frost', headerName: 'Frost', editable: true },
+    { field: 'origin', headerName: 'Origin' },
+    { field: 'colour', headerName: 'Colour', editable: true },
     {
-      field: 'falling_number', headerName: 'FN', minWidth: 65, flex: 0.4, hide: true, editable: true,
+      field: 'falling_number', headerName: 'FN', editable: true,
       valueFormatter: p => p.value != null ? p.value.toFixed(0) : '—',
     },
     {
-      field: 'fusarium_pct', headerName: 'FUS %', minWidth: 70, flex: 0.4, hide: true, editable: true,
+      field: 'fusarium_pct', headerName: 'FUS %', editable: true,
       valueFormatter: p => p.value != null ? p.value.toFixed(2) : '—',
     },
     {
-      field: 'bushels', headerName: 'Grade Bu', minWidth: 80, flex: 0.5, hide: true,
+      field: 'bushels', headerName: 'Grade Bu',
       valueFormatter: p => p.value != null ? p.value.toLocaleString() : '—',
     },
+    ...qualityColDefs,
     {
-      field: 'status', headerName: 'Status', minWidth: 90, flex: 0.6,
+      field: 'status', headerName: 'Status',
       cellRenderer: ({ value }) => {
         const colorMap = { available: 'success', shipped: 'info', emptied: 'default' };
         return <Chip label={value || 'available'} color={colorMap[value] || 'default'} size="small" variant="outlined" />;
       },
     },
-  ], []);
+  ], [qualityColDefs]);
 
   const defaultColDef = useMemo(() => ({
     sortable: true,
     resizable: true,
     filter: true,
+    headerClass: 'grading-small-header',
   }), []);
 
   // Summary stats
@@ -262,7 +321,13 @@ export default function Grading() {
       </Stack>
 
       {/* ag-Grid */}
-      <Box className={mode === 'dark' ? 'ag-theme-alpine-dark' : 'ag-theme-alpine'} sx={{ height: 600, width: '100%' }}>
+      <Box
+        className={mode === 'dark' ? 'ag-theme-alpine-dark' : 'ag-theme-alpine'}
+        sx={{
+          height: 600, width: '100%',
+          '& .grading-small-header .ag-header-cell-text': { fontSize: '0.7rem' },
+        }}
+      >
         <AgGridReact
           ref={gridRef}
           rowData={grades}
@@ -271,8 +336,48 @@ export default function Grading() {
           animateRows
           getRowId={p => p.data?.id}
           onCellValueChanged={handleCellEdit}
+          onFirstDataRendered={({ api }) => api.autoSizeAllColumns()}
         />
       </Box>
+
+      {/* Summary by Grade */}
+      {gradeSummary.length > 0 && (
+        <Box sx={{ mt: 3 }}>
+          <Typography variant="h6" sx={{ mb: 1 }}>Summary by Grade</Typography>
+          <TableContainer component={Paper} variant="outlined">
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Commodity</TableCell>
+                  <TableCell>Grade</TableCell>
+                  <TableCell align="right">Bins</TableCell>
+                  <TableCell align="right">Total MT</TableCell>
+                  <TableCell align="right">Avg Protein</TableCell>
+                  {locationNames.map(loc => (
+                    <TableCell key={loc} align="right">{loc}</TableCell>
+                  ))}
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {gradeSummary.map((row, i) => (
+                  <TableRow key={i} hover>
+                    <TableCell>{row.commodity}</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>{row.grade}</TableCell>
+                    <TableCell align="right">{row.bin_count}</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 600 }}>{row.total_mt.toFixed(1)}</TableCell>
+                    <TableCell align="right">{row.avg_protein != null ? row.avg_protein.toFixed(2) + '%' : '—'}</TableCell>
+                    {locationNames.map(loc => (
+                      <TableCell key={loc} align="right">
+                        {row.by_location[loc] ? row.by_location[loc].toFixed(1) : '—'}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Box>
+      )}
 
       {/* Import Dialog */}
       <Dialog open={importOpen} onClose={() => { setImportOpen(false); setImportPreview(null); }} maxWidth="lg" fullWidth>

@@ -150,6 +150,9 @@ app.use('/api/farms', logisticsDashboardRoutes);
 app.use('/api/farms/:farmId/terminal', authenticate, requireModule('terminal'));
 app.use('/api/farms', terminalRoutes);
 
+// Serve uploaded files (contract documents, etc.)
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
 // Serve frontend static files in production
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const frontendDist = path.join(__dirname, '../../frontend/dist');

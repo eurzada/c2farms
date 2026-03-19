@@ -4,7 +4,6 @@ import {
   Box, Typography, Paper, Stack, Chip, Tooltip,
 } from '@mui/material';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Tooltip as ChartTooltip, Legend } from 'chart.js';
-import { Bar } from 'react-chartjs-2';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { useFarm } from '../../contexts/FarmContext';
@@ -21,12 +20,14 @@ export default function MarketingDashboard() {
   const { currentFarm } = useFarm();
   const { mode } = useThemeMode();
   const gridRef = useRef();
+  const fulfillmentGridRef = useRef();
   const matrixGridRef = useRef();
   const matrixApiRef = useRef();
   const matrixContainerRef = useRef();
   const unsettledGridRef = useRef();
 
   const [data, setData] = useState(null);
+  const [fulfillment, setFulfillment] = useState([]);
   const [matrixData, setMatrixData] = useState(null);
   const [unsettledData, setUnsettledData] = useState(null);
 
@@ -36,6 +37,9 @@ export default function MarketingDashboard() {
     if (!currentFarm) return;
     api.get(`/api/farms/${currentFarm.id}/marketing/dashboard`)
       .then(res => setData(res.data));
+    api.get(`/api/farms/${currentFarm.id}/marketing/contract-fulfillment`)
+      .then(res => setFulfillment(res.data.contracts || []))
+      .catch(() => setFulfillment([]));
   }, [currentFarm]);
 
   // Fetch commitment matrix & delivered-unsettled (all years)
@@ -53,7 +57,6 @@ export default function MarketingDashboard() {
 
   const kpis = data?.kpis || {};
   const positionGrid = data?.positionGrid || [];
-  const chartData = data?.chartData || [];
   const dashboardMatrix = data?.commitmentMatrix;
 
   // Use matrix from dashboard when present, else from separate API
@@ -88,6 +91,37 @@ export default function MarketingDashboard() {
   ], []);
 
   const defaultColDef = useMemo(() => ({ sortable: true, resizable: true }), []);
+
+  // ─── Contract Fulfillment columns ───
+  const fulfillmentColDefs = useMemo(() => [
+    { field: 'contract_number', headerName: 'Contract #', width: 110, pinned: 'left' },
+    { field: 'buyer', headerName: 'Buyer', width: 120 },
+    { field: 'commodity', headerName: 'Crop', width: 100 },
+    { field: 'grade', headerName: 'Grade', width: 80 },
+    { field: 'contracted_mt', headerName: 'Contracted MT', width: 110, type: 'rightAligned', valueFormatter: p => fmt(p.value) },
+    { field: 'hauled_mt', headerName: 'Hauled MT', width: 100, type: 'rightAligned', valueFormatter: p => fmt(p.value) },
+    { field: 'remaining_mt', headerName: 'Remaining MT', width: 110, type: 'rightAligned', valueFormatter: p => fmt(p.value),
+      cellStyle: p => p.value > 0 ? { color: '#e65100', fontWeight: 600 } : { color: '#2e7d32' },
+    },
+    {
+      field: 'pct_complete', headerName: 'Progress', width: 120,
+      cellRenderer: p => {
+        const pct = Math.min(100, p.value || 0);
+        const color = pct >= 100 ? '#2e7d32' : pct >= 50 ? '#1976d2' : '#e65100';
+        return (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+            <Box sx={{ flex: 1, bgcolor: 'action.hover', borderRadius: 1, height: 8 }}>
+              <Box sx={{ width: `${pct}%`, bgcolor: color, borderRadius: 1, height: 8 }} />
+            </Box>
+            <Typography variant="caption" sx={{ minWidth: 35 }}>{pct.toFixed(0)}%</Typography>
+          </Box>
+        );
+      },
+    },
+    { field: 'delivery_end', headerName: 'Delivery End', width: 110, valueFormatter: p => p.value ? new Date(p.value).toLocaleDateString('en-CA') : '\u2014' },
+    { field: 'elevator_site', headerName: 'Delivery Point', width: 120 },
+    { field: 'price_per_bu', headerName: '$/bu', width: 76, type: 'rightAligned', valueFormatter: p => p.value ? `$${p.value.toFixed(2)}` : '\u2014' },
+  ], []);
 
   // ─── Commitment Matrix: crops as columns, buyers as rows ───
   const matrixColDefs = useMemo(() => {
@@ -125,6 +159,13 @@ export default function MarketingDashboard() {
         minWidth: 140,
         pinned: 'left',
         cellStyle: p => (p.data?._rowType ? { fontWeight: 700 } : { fontWeight: 600 }),
+      },
+      {
+        field: 'earliest_delivery_end',
+        headerName: 'Next Delivery',
+        width: 110,
+        valueFormatter: p => p.value ? new Date(p.value).toLocaleDateString('en-CA') : '',
+        sort: 'asc',
       },
       ...cropCols,
       {
@@ -194,25 +235,6 @@ export default function MarketingDashboard() {
   }, [unsettledData]);
 
   // Chart
-  const barChartData = useMemo(() => ({
-    labels: chartData.map(r => r.commodity),
-    datasets: [
-      { label: 'Committed (MT)', data: chartData.map(r => r.committed), backgroundColor: '#1976d2' },
-      { label: 'Available (MT)', data: chartData.map(r => r.available), backgroundColor: '#66bb6a' },
-    ],
-  }), [chartData]);
-
-  const barChartOptions = {
-    indexAxis: 'y',
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: { legend: { position: 'bottom' } },
-    scales: {
-      x: { stacked: true, title: { display: true, text: 'Metric Tonnes' } },
-      y: { stacked: true },
-    },
-  };
-
   const mat = effectiveMatrixData || matrixData;
 
   // Resize commitment matrix columns when container or window changes
@@ -275,26 +297,23 @@ export default function MarketingDashboard() {
         ))}
       </Stack>
 
-      {/* Position Grid */}
-      <Typography variant="h6" sx={{ mb: 1 }}>Position by Commodity</Typography>
-      <Box className={agTheme} sx={{ height: 350, width: '100%', minWidth: 0, mb: 3 }}>
-        <AgGridReact
-          ref={gridRef}
-          rowData={positionGrid}
-          columnDefs={columnDefs}
-          defaultColDef={defaultColDef}
-          animateRows
-          getRowId={p => p.data?.commodity_id}
-          onGridReady={({ api }) => api.sizeColumnsToFit()}
-          onFirstDataRendered={({ api }) => api.sizeColumnsToFit()}
-        />
-      </Box>
-
-      {/* Chart */}
-      <Typography variant="h6" sx={{ mb: 1 }}>Committed vs Available</Typography>
-      <Paper variant="outlined" sx={{ p: 2, height: 300, mb: 3 }}>
-        <Bar data={barChartData} options={barChartOptions} />
-      </Paper>
+      {/* Contract Fulfillment */}
+      {fulfillment.length > 0 && (
+        <>
+          <Typography variant="h6" sx={{ mb: 1 }}>Contract Fulfillment</Typography>
+          <Box className={agTheme} sx={{ height: Math.min(400, 56 + fulfillment.length * 42), width: '100%', minWidth: 0, mb: 3 }}>
+            <AgGridReact
+              ref={fulfillmentGridRef}
+              rowData={fulfillment}
+              columnDefs={fulfillmentColDefs}
+              defaultColDef={defaultColDef}
+              animateRows
+              getRowId={p => p.data?.id}
+              onGridReady={({ api }) => api.sizeColumnsToFit()}
+            />
+          </Box>
+        </>
+      )}
 
       {/* ─── Commitment Matrix ─── */}
       <Typography variant="h6" sx={{ mb: 1 }}>Commitments by Buyer</Typography>
@@ -326,7 +345,7 @@ export default function MarketingDashboard() {
       {unsettledData?.contracts?.length > 0 && (
         <>
           <Typography variant="h6" sx={{ mb: 1 }}>Delivered — Awaiting Settlement</Typography>
-          <Box className={agTheme} sx={{ height: unsettledHeight, width: '100%', minWidth: 0 }}>
+          <Box className={agTheme} sx={{ height: unsettledHeight, width: '100%', minWidth: 0, mb: 3 }}>
             <AgGridReact
               ref={unsettledGridRef}
               rowData={unsettledData.contracts}
@@ -341,6 +360,21 @@ export default function MarketingDashboard() {
           </Box>
         </>
       )}
+
+      {/* Position Grid */}
+      <Typography variant="h6" sx={{ mb: 1 }}>Position by Commodity</Typography>
+      <Box className={agTheme} sx={{ height: 350, width: '100%', minWidth: 0 }}>
+        <AgGridReact
+          ref={gridRef}
+          rowData={positionGrid}
+          columnDefs={columnDefs}
+          defaultColDef={defaultColDef}
+          animateRows
+          getRowId={p => p.data?.commodity_id}
+          onGridReady={({ api }) => api.sizeColumnsToFit()}
+          onFirstDataRendered={({ api }) => api.sizeColumnsToFit()}
+        />
+      </Box>
     </Box>
   );
 }

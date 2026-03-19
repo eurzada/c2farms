@@ -292,6 +292,7 @@ model Commodity {
   terminal_contracts      TerminalContract[]
   terminal_settlement_lines TerminalSettlementLine[]
   aliases CommodityAlias[]
+  withdrawals InventoryWithdrawal[]
 
   @@unique([farm_id, code])
   @@map("commodities")
@@ -335,6 +336,7 @@ model InventoryBin {
   capacity_bu Float?
   commodity_id String?
   notes       String?
+  purpose     String            @default("market") // market, seed, feed, reserved, consumption
   is_active   Boolean           @default(true)
   created_at  DateTime          @default(now())
   updated_at  DateTime          @updatedAt
@@ -342,10 +344,32 @@ model InventoryBin {
   commodity   Commodity?        @relation(fields: [commodity_id], references: [id])
   bin_counts  BinCount[]
   delivery_tickets DeliveryTicket[]
+  withdrawals InventoryWithdrawal[]
 
   @@unique([farm_id, location_id, bin_number])
   @@map("inventory_bins")
   bin_grades      BinGrade[]
+}
+
+model InventoryWithdrawal {
+  id              String    @id @default(uuid())
+  farm_id         String
+  bin_id          String
+  commodity_id    String?
+  bushels         Float
+  kg              Float
+  reason          String    // seed, feed, loss, consumption, transfer
+  withdrawal_date DateTime  @db.Date
+  notes           String?
+  created_by      String?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  bin             InventoryBin @relation(fields: [bin_id], references: [id])
+  commodity       Commodity?   @relation(fields: [commodity_id], references: [id])
+
+  @@index([farm_id, bin_id])
+  @@index([farm_id, withdrawal_date])
+  @@map("inventory_withdrawals")
 }
 
 model BinGrade {
@@ -546,6 +570,7 @@ model MarketingContract {
   contract_value            Float?
   cop_per_mt                Float?
   notes                     String?
+  contract_document_url     String?      // S3 URL for uploaded contract PDF
   grade_prices_json         Json?        // for transfer: [{ grade: "Durum #1", price_per_mt: 288 }, ...]
   blend_requirement_json    Json?        // for transfer: [{ grade: "Durum #1", mt: 800 }, ...]
   blend_mix_updated_at      DateTime?
@@ -663,6 +688,7 @@ model DeliveryTicket {
   tare_weight_kg        Float?
   net_weight_kg         Float
   net_weight_mt         Float              // computed: net_weight_kg / 1000
+  tare_weight_mt        Float?             // computed: tare_weight_kg / 1000
   dockage_pct           Float?
   moisture_pct          Float?
   grade                 String?

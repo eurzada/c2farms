@@ -18,6 +18,7 @@ import {
   buToMtFactor,
   getTerminalContractsForTransfer,
   createTransferAgreementFromTerminal,
+  getContractFulfillment,
 } from '../services/marketingService.js';
 import { broadcastMarketingEvent } from '../socket/handler.js';
 import multer from 'multer';
@@ -43,6 +44,13 @@ router.get('/:farmId/marketing/dashboard', authenticate, async (req, res, next) 
   try {
     const data = await getMarketingDashboard(req.params.farmId);
     res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/:farmId/marketing/contract-fulfillment', authenticate, async (req, res, next) => {
+  try {
+    const data = await getContractFulfillment(req.params.farmId);
+    res.json({ contracts: data });
   } catch (err) { next(err); }
 });
 
@@ -438,6 +446,71 @@ router.delete('/:farmId/marketing/contracts', authenticate, requireRole('admin')
       changes: { cancelled: result.count, requested: ids.length },
     });
     res.json({ cancelled: result.count });
+  } catch (err) { next(err); }
+});
+
+// ─── Contract Document Upload/Download ───────────────────────────────
+
+// Upload contract document
+router.post('/:farmId/marketing/contracts/:contractId/document', authenticate, requireRole('admin', 'manager'), upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const contract = await prisma.marketingContract.findFirst({
+      where: { id: req.params.contractId, farm_id: req.params.farmId },
+    });
+    if (!contract) return res.status(404).json({ error: 'Contract not found' });
+
+    // Save file to uploads/contracts/
+    const fs = await import('fs');
+    const path = await import('path');
+    const uploadDir = path.join(process.cwd(), 'uploads', 'contracts');
+    await fs.promises.mkdir(uploadDir, { recursive: true });
+
+    const ext = path.extname(req.file.originalname) || '.pdf';
+    const filename = `${contract.id}${ext}`;
+    const filepath = path.join(uploadDir, filename);
+    await fs.promises.writeFile(filepath, req.file.buffer);
+
+    const documentUrl = `/uploads/contracts/${filename}`;
+
+    await prisma.marketingContract.update({
+      where: { id: contract.id },
+      data: { contract_document_url: documentUrl },
+    });
+
+    logAudit({
+      farmId: req.params.farmId, userId: req.userId,
+      entityType: 'MarketingContract', entityId: contract.id,
+      action: 'upload_document',
+      changes: { contract_document_url: documentUrl },
+    });
+
+    res.json({ document_url: documentUrl });
+  } catch (err) { next(err); }
+});
+
+// Delete contract document
+router.delete('/:farmId/marketing/contracts/:contractId/document', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const contract = await prisma.marketingContract.findFirst({
+      where: { id: req.params.contractId, farm_id: req.params.farmId },
+    });
+    if (!contract) return res.status(404).json({ error: 'Contract not found' });
+
+    if (contract.contract_document_url) {
+      const fs = await import('fs');
+      const path = await import('path');
+      const filepath = path.join(process.cwd(), contract.contract_document_url);
+      try { await fs.promises.unlink(filepath); } catch { /* file may not exist */ }
+    }
+
+    await prisma.marketingContract.update({
+      where: { id: contract.id },
+      data: { contract_document_url: null },
+    });
+
+    res.json({ success: true });
   } catch (err) { next(err); }
 });
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
-  Box, Typography, Button, Stack, Chip, TextField, MenuItem,
+  Box, Typography, Button, Stack, Chip, TextField, MenuItem, Menu, ListItemIcon, ListItemText,
   Dialog, DialogTitle, DialogContent, DialogActions, IconButton, Snackbar, Alert, Tooltip,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper,
   Popover, FormControlLabel, Checkbox, FormGroup,
@@ -15,6 +15,9 @@ import SummarizeIcon from '@mui/icons-material/Summarize';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DownloadIcon from '@mui/icons-material/Download';
 import ViewColumnIcon from '@mui/icons-material/ViewColumn';
+import TableChartIcon from '@mui/icons-material/TableChart';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import TextSnippetIcon from '@mui/icons-material/TextSnippet';
 import InputAdornment from '@mui/material/InputAdornment';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
@@ -37,12 +40,13 @@ export default function Tickets() {
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
-  const [settledFilter, setSettledFilter] = useState('false');
+  const [settledFilter, setSettledFilter] = useState('');
   const [matchFilter, setMatchFilter] = useState('');
   const [fiscalYearFilter, setFiscalYearFilter] = useState('2026');
   const [photoUrl, setPhotoUrl] = useState(null);
   const [selectedCount, setSelectedCount] = useState(0);
   const [searchText, setSearchText] = useState('');
+  const [activeCounterpartyId, setActiveCounterpartyId] = useState(null);
   const [snack, setSnack] = useState({ open: false, message: '', severity: 'error' });
   const [unmatchedReportOpen, setUnmatchedReportOpen] = useState(false);
   const [colAnchor, setColAnchor] = useState(null);
@@ -50,6 +54,7 @@ export default function Tickets() {
     try { return JSON.parse(localStorage.getItem('c2_tickets_hidden_cols')) || {}; } catch { return {}; }
   });
   const [editTicket, setEditTicket] = useState(null);
+  const [exportAnchor, setExportAnchor] = useState(null);
   const { confirm, dialogProps } = useConfirmDialog();
 
   // Listen for real-time mobile ticket uploads
@@ -148,6 +153,29 @@ export default function Tickets() {
     const count = gridRef.current?.api?.getSelectedRows()?.length || 0;
     setSelectedCount(count);
   }, []);
+
+  const handleExport = async (format) => {
+    setExportAnchor(null);
+    try {
+      const params = new URLSearchParams();
+      if (fiscalYearFilter) params.append('fiscal_year', fiscalYearFilter);
+      if (settledFilter) params.append('settled', settledFilter);
+      if (matchFilter) params.append('matched', matchFilter);
+
+      const ext = { excel: 'xlsx', pdf: 'pdf', csv: 'csv' }[format];
+      const res = await api.get(`/api/farms/${currentFarm.id}/tickets/export/${format}`, {
+        params, responseType: 'blob',
+      });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `tickets-${new Date().toISOString().slice(0, 10)}.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Export failed'), severity: 'error' });
+    }
+  };
 
   // Build unmatched tickets report grouped by contract #
   const unmatchedReport = useMemo(() => {
@@ -252,11 +280,15 @@ export default function Tickets() {
         : null,
     },
     canEdit && {
-      headerName: '', width: 44, sortable: false, filter: false, resizable: false,
+      colId: 'edit', headerName: '', width: 52, sortable: false, filter: false, resizable: false,
       cellRenderer: p => (
-        <IconButton size="small" onClick={() => setEditTicket(p.data)} sx={{ p: 0.5 }}>
-          <EditIcon fontSize="small" />
-        </IconButton>
+        <Tooltip title="Edit ticket">
+          <span
+            role="button"
+            onClick={() => setEditTicket(p.data)}
+            style={{ cursor: 'pointer', fontSize: 16, lineHeight: '32px', textAlign: 'center', display: 'block', overflow: 'visible' }}
+          >&#9998;</span>
+        </Tooltip>
       ),
     },
     !hiddenCols['ticket_number'] && { field: 'ticket_number', headerName: 'Ticket #', width: 100 },
@@ -405,6 +437,23 @@ export default function Tickets() {
               Not Reconciled ({unmatchedTotal.tickets})
             </Button>
           )}
+          <Button variant="outlined" startIcon={<DownloadIcon />} onClick={(e) => setExportAnchor(e.currentTarget)}>
+            Export
+          </Button>
+          <Menu anchorEl={exportAnchor} open={Boolean(exportAnchor)} onClose={() => setExportAnchor(null)}>
+            <MenuItem onClick={() => handleExport('excel')}>
+              <ListItemIcon><TableChartIcon fontSize="small" /></ListItemIcon>
+              <ListItemText>Excel (.xlsx)</ListItemText>
+            </MenuItem>
+            <MenuItem onClick={() => handleExport('pdf')}>
+              <ListItemIcon><PictureAsPdfIcon fontSize="small" /></ListItemIcon>
+              <ListItemText>PDF</ListItemText>
+            </MenuItem>
+            <MenuItem onClick={() => handleExport('csv')}>
+              <ListItemIcon><TextSnippetIcon fontSize="small" /></ListItemIcon>
+              <ListItemText>CSV</ListItemText>
+            </MenuItem>
+          </Menu>
           {canEdit && (
             <Button variant="contained" startIcon={<FileUploadIcon />} onClick={() => setImportOpen(true)}>
               Import CSV
@@ -429,15 +478,29 @@ export default function Tickets() {
       />
 
       {stats?.by_counterparty?.length > 0 && (
-        <Stack direction="row" spacing={1} sx={{ mb: 2 }} flexWrap="wrap">
-          {stats.by_counterparty.map(cp => (
-            <Chip
-              key={cp.counterparty_id}
-              label={`${cp.counterparty_name}: ${cp.count} tickets (${cp.total_mt.toFixed(0)} MT)`}
-              size="small"
-              variant="outlined"
-            />
-          ))}
+        <Stack direction="row" spacing={1} sx={{ mb: 2 }} flexWrap="wrap" useFlexGap>
+          {stats.by_counterparty.map(cp => {
+            const commodities = cp.by_commodity || [];
+            const breakdown = commodities.length === 1
+              ? `${commodities[0].total_mt.toFixed(0)} MT ${commodities[0].commodity_name}`
+              : commodities.map(c => `${c.total_mt.toFixed(0)} MT ${c.commodity_name}`).join(' \u00b7 ')
+                + ` (${cp.total_mt.toFixed(0)} MT total)`;
+            const label = `${cp.counterparty_name}: ${breakdown}`;
+            const isActive = activeCounterpartyId === cp.counterparty_id;
+            return (
+              <Chip
+                key={cp.counterparty_id}
+                label={label}
+                size="small"
+                variant={isActive ? 'filled' : 'outlined'}
+                color={isActive ? 'primary' : 'default'}
+                onClick={() => {
+                  setActiveCounterpartyId(isActive ? null : cp.counterparty_id);
+                }}
+                sx={{ cursor: 'pointer' }}
+              />
+            );
+          })}
         </Stack>
       )}
 
@@ -447,7 +510,7 @@ export default function Tickets() {
       >
         <AgGridReact
           ref={gridRef}
-          rowData={tickets}
+          rowData={activeCounterpartyId ? tickets.filter(t => t.counterparty_id === activeCounterpartyId) : tickets}
           columnDefs={columnDefs}
           defaultColDef={{ sortable: true, resizable: true, filter: true }}
           animateRows

@@ -1,300 +1,296 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Box,
   Typography,
-  Card,
-  CardContent,
-  Chip,
-  Grid,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   Alert,
   CircularProgress,
   Tooltip,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Button,
+  Menu,
 } from '@mui/material';
-import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
-import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
-import RemoveIcon from '@mui/icons-material/Remove';
+import DownloadIcon from '@mui/icons-material/Download';
+import TableChartIcon from '@mui/icons-material/TableChart';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import TextSnippetIcon from '@mui/icons-material/TextSnippet';
+import { extractErrorMessage } from '../../utils/errorHelpers';
+import { AgGridReact } from 'ag-grid-react';
+import { useThemeMode } from '../../contexts/ThemeContext';
 import { useFarm } from '../../contexts/FarmContext';
 import api from '../../services/api';
+import 'ag-grid-community/styles/ag-grid.css';
+import 'ag-grid-community/styles/ag-theme-alpine.css';
 
 const fmt = (v) => v != null ? Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 }) : '—';
 
-// Muted palette derived from C2 Farms brand teal/charcoal
-const COMMODITY_COLORS = [
-  '#008CB2', // C2 teal
-  '#006E8C', // C2 teal dark
-  '#4DB8D4', // C2 teal light
-  '#6d6e70', // C2 charcoal light
-  '#414042', // C2 charcoal
-  '#7BA7B8', // muted steel teal
-  '#95B0A4', // sage
-  '#A8B5C0', // slate
-  '#8C9EA8', // dusty teal
-  '#B0BEC5', // blue grey
-  '#90A4AE', // blue grey mid
-  '#78909C', // blue grey dark
-];
+// ─── Matrix View ──────────────────────────────────────────────────────
 
-function DeltaDisplay({ delta_mt, isFirst }) {
-  if (isFirst || delta_mt == null) {
-    return (
-      <Typography variant="body2" sx={{ color: 'text.disabled', fontStyle: 'italic' }}>
-        Baseline
-      </Typography>
-    );
-  }
-
-  const isPositive = delta_mt >= 0;
-  const color = isPositive ? 'success.main' : 'error.main';
-  const Icon = delta_mt > 0 ? ArrowUpwardIcon : delta_mt < 0 ? ArrowDownwardIcon : RemoveIcon;
-
-  return (
-    <Stack direction="row" alignItems="center" spacing={0.5}>
-      <Icon sx={{ fontSize: 16, color }} />
-      <Typography variant="body1" sx={{ fontWeight: 600, color }}>
-        {delta_mt > 0 ? '+' : ''}{fmt(delta_mt)}
-      </Typography>
-      <Typography variant="caption" sx={{ color: 'text.secondary' }}>MT</Typography>
-    </Stack>
-  );
+function formatPeriodLabel(dateStr) {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('en-CA', { year: 'numeric', month: 'short', timeZone: 'UTC' });
 }
 
-function CommodityBar({ commodities, total_mt }) {
-  if (!commodities || commodities.length === 0 || !total_mt) return null;
-
-  return (
-    <Box>
-      {/* Stacked bar */}
-      <Box sx={{ display: 'flex', height: 8, borderRadius: 1, overflow: 'hidden', mb: 1 }}>
-        {commodities.map((c, i) => {
-          const share = (c.mt / total_mt) * 100;
-          if (share < 0.5) return null;
-          return (
-            <Tooltip key={c.name} title={`${c.name}: ${fmt(c.mt)} MT (${share.toFixed(1)}%)`} arrow>
-              <Box
-                sx={{
-                  width: `${share}%`,
-                  bgcolor: COMMODITY_COLORS[i % COMMODITY_COLORS.length],
-                  transition: 'width 0.3s',
-                }}
-              />
-            </Tooltip>
-          );
-        })}
-      </Box>
-      {/* Legend */}
-      <Stack direction="row" flexWrap="wrap" gap={1.5}>
-        {commodities.map((c, i) => {
-          const share = total_mt > 0 ? (c.mt / total_mt) * 100 : 0;
-          return (
-            <Stack key={c.name} direction="row" alignItems="center" spacing={0.5}>
-              <Box
-                sx={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: '50%',
-                  bgcolor: COMMODITY_COLORS[i % COMMODITY_COLORS.length],
-                  flexShrink: 0,
-                }}
-              />
-              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                {c.name}
-              </Typography>
-              <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.primary' }}>
-                {fmt(c.mt)}
-              </Typography>
-              <Typography variant="caption" sx={{ color: 'text.disabled' }}>
-                ({share.toFixed(0)}%)
-              </Typography>
-            </Stack>
-          );
-        })}
-      </Stack>
-    </Box>
-  );
-}
-
-function LocationBreakdown({ locations }) {
-  if (!locations || locations.length === 0) return null;
-
-  return (
-    <TableContainer>
-      <Table size="small">
-        <TableHead>
-          <TableRow>
-            <TableCell sx={{ fontWeight: 600, py: 0.5, color: 'text.secondary', fontSize: '0.75rem' }}>Location</TableCell>
-            <TableCell align="right" sx={{ fontWeight: 600, py: 0.5, color: 'text.secondary', fontSize: '0.75rem' }}>MT</TableCell>
-            <TableCell align="right" sx={{ fontWeight: 600, py: 0.5, color: 'text.secondary', fontSize: '0.75rem' }}>Bins</TableCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {locations.map((loc) => (
-            <TableRow key={loc.name} sx={{ '&:last-child td': { borderBottom: 0 } }}>
-              <TableCell sx={{ py: 0.5, fontSize: '0.8rem' }}>{loc.name}</TableCell>
-              <TableCell align="right" sx={{ py: 0.5, fontWeight: 500, fontSize: '0.8rem' }}>
-                {fmt(loc.mt)}
-              </TableCell>
-              <TableCell align="right" sx={{ py: 0.5, fontSize: '0.8rem', color: 'text.secondary' }}>{loc.bins}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </TableContainer>
-  );
-}
-
-function PeriodCard({ period, isFirst }) {
-  const periodDate = new Date(period.period_date);
-  const dateLabel = periodDate.toLocaleDateString('en-CA', {
-    year: 'numeric',
-    month: 'long',
-  });
-
-  return (
-    <Card
-      variant="outlined"
-      sx={{
-        borderLeft: 3,
-        borderColor: period.status === 'open' ? 'primary.main' : 'grey.300',
-      }}
-    >
-      <CardContent sx={{ p: { xs: 2, md: 2.5 }, '&:last-child': { pb: 2 } }}>
-        {/* Header */}
-        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
-          <Stack direction="row" alignItems="baseline" spacing={1.5}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-              {dateLabel}
-            </Typography>
-            <Typography variant="caption" sx={{ color: 'text.disabled' }}>
-              CY {period.crop_year}
-            </Typography>
-          </Stack>
-          {period.status === 'open' && (
-            <Chip
-              label="Open"
-              size="small"
-              variant="outlined"
-              color="primary"
-              sx={{ height: 22, fontSize: '0.7rem' }}
-            />
-          )}
-        </Stack>
-
-        {/* KPI Row */}
-        <Stack
-          direction="row"
-          spacing={3}
-          divider={<Box sx={{ borderLeft: 1, borderColor: 'divider' }} />}
-          sx={{ mb: 2 }}
-        >
-          <Box>
-            <Typography variant="caption" sx={{ color: 'text.secondary' }}>Inventory</Typography>
-            <Typography variant="body1" sx={{ fontWeight: 700, color: 'primary.main' }}>
-              {fmt(period.total_mt)} <Typography component="span" variant="caption" sx={{ color: 'text.secondary', fontWeight: 400 }}>MT</Typography>
-            </Typography>
-          </Box>
-          <Box>
-            <Typography variant="caption" sx={{ color: 'text.secondary' }}>Delta</Typography>
-            <DeltaDisplay delta_mt={period.delta_mt} isFirst={isFirst} />
-          </Box>
-          <Box>
-            <Typography variant="caption" sx={{ color: 'text.secondary' }}>Hauled</Typography>
-            <Typography variant="body1" sx={{ fontWeight: 600 }}>
-              {period.hauled_mt != null ? fmt(period.hauled_mt) : '—'} <Typography component="span" variant="caption" sx={{ color: 'text.secondary', fontWeight: 400 }}>MT</Typography>
-            </Typography>
-          </Box>
-          <Box>
-            <Typography variant="caption" sx={{ color: 'text.secondary' }}>Bins</Typography>
-            <Typography variant="body1" sx={{ fontWeight: 600 }}>
-              {period.occupied_bins}<Typography component="span" sx={{ color: 'text.disabled' }}> / {period.bin_count}</Typography>
-            </Typography>
-          </Box>
-          <Box>
-            <Typography variant="caption" sx={{ color: 'text.secondary' }}>Locations</Typography>
-            <Typography variant="body1" sx={{ fontWeight: 600 }}>
-              {period.location_count}
-            </Typography>
-          </Box>
-        </Stack>
-
-        {/* Commodity bar + Location table side by side */}
-        <Grid container spacing={2}>
-          <Grid item xs={12} md={7}>
-            <CommodityBar commodities={period.commodities} total_mt={period.total_mt} />
-          </Grid>
-          <Grid item xs={12} md={5}>
-            <LocationBreakdown locations={period.locations} />
-          </Grid>
-        </Grid>
-      </CardContent>
-    </Card>
-  );
-}
-
-export default function CountHistory() {
-  const { currentFarm } = useFarm();
-  const [periods, setPeriods] = useState([]);
+function MatrixView({ farmId }) {
+  const { mode } = useThemeMode();
+  const [matrixData, setMatrixData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [fromPeriod, setFromPeriod] = useState('');
+  const [toPeriod, setToPeriod] = useState('');
+  const [availablePeriods, setAvailablePeriods] = useState([]);
+  const [exportAnchor, setExportAnchor] = useState(null);
+  const [snack, setSnack] = useState('');
 
+  const handleExport = async (format) => {
+    setExportAnchor(null);
+    try {
+      const params = new URLSearchParams();
+      if (fromPeriod) params.set('from_period', fromPeriod);
+      if (toPeriod) params.set('to_period', toPeriod);
+      const ext = { excel: 'xlsx', pdf: 'pdf', csv: 'csv' }[format];
+      const res = await api.get(`/api/farms/${farmId}/inventory/count-history/export/${format}`, {
+        params, responseType: 'blob',
+      });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `count-history-${new Date().toISOString().slice(0, 10)}.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setSnack(extractErrorMessage(err, 'Export failed'));
+    }
+  };
+
+  // Fetch available periods for selector
   useEffect(() => {
-    if (!currentFarm) return;
+    if (!farmId) return;
+    api.get(`/api/farms/${farmId}/inventory/count-periods`)
+      .then(res => {
+        const sorted = (res.data.periods || []).sort(
+          (a, b) => new Date(a.period_date) - new Date(b.period_date)
+        );
+        setAvailablePeriods(sorted);
+      })
+      .catch(() => {});
+  }, [farmId]);
+
+  // Fetch matrix data
+  useEffect(() => {
+    if (!farmId) return;
     setLoading(true);
-    api
-      .get(`/api/farms/${currentFarm.id}/inventory/count-history`)
-      .then((res) => {
-        setPeriods(res.data.periods || []);
+    const params = new URLSearchParams();
+    if (fromPeriod) params.set('from_period', fromPeriod);
+    if (toPeriod) params.set('to_period', toPeriod);
+    const qs = params.toString() ? `?${params}` : '';
+    api.get(`/api/farms/${farmId}/inventory/count-history/matrix${qs}`)
+      .then(res => {
+        setMatrixData(res.data);
         setError('');
       })
-      .catch(() => setError('Failed to load count history'))
+      .catch(() => setError('Failed to load matrix data'))
       .finally(() => setLoading(false));
-  }, [currentFarm]);
+  }, [farmId, fromPeriod, toPeriod]);
+
+  // Build period date list sorted oldest-first
+  const periodDates = useMemo(() => {
+    if (!matrixData?.periods) return [];
+    return matrixData.periods
+      .map(p => new Date(p.period_date).toISOString().slice(0, 10))
+      .sort();
+  }, [matrixData]);
+
+  // Build column defs
+  const columnDefs = useMemo(() => {
+    const cols = [
+      {
+        headerName: 'Location',
+        field: 'location',
+        pinned: 'left',
+        width: 140,
+        sortable: true,
+        filter: true,
+        rowSpan: (params) => {
+          // Not using row spanning — keep simple
+          return 1;
+        },
+      },
+      {
+        headerName: 'Commodity',
+        field: 'commodity',
+        pinned: 'left',
+        width: 130,
+        sortable: true,
+        filter: true,
+      },
+    ];
+
+    for (const pd of periodDates) {
+      cols.push({
+        headerName: formatPeriodLabel(pd),
+        field: `period_${pd}`,
+        width: 120,
+        type: 'numericColumn',
+        valueFormatter: (params) => {
+          if (params.value == null) return '—';
+          return Number(params.value).toLocaleString(undefined, { maximumFractionDigits: 1 });
+        },
+        cellStyle: (params) => {
+          if (params.node?.rowPinned) return { fontWeight: 700 };
+          const delta = params.data?.[`delta_${pd}`];
+          if (delta == null || delta === 0) return null;
+          if (delta > 0) return { backgroundColor: 'rgba(46, 125, 50, 0.08)' };
+          return { backgroundColor: 'rgba(211, 47, 47, 0.08)' };
+        },
+        tooltipValueGetter: (params) => {
+          const delta = params.data?.[`delta_${pd}`];
+          if (delta == null) return null;
+          const sign = delta > 0 ? '+' : '';
+          return `Delta: ${sign}${Number(delta).toLocaleString(undefined, { maximumFractionDigits: 1 })} MT`;
+        },
+      });
+    }
+
+    return cols;
+  }, [periodDates]);
+
+  // Build row data
+  const rowData = useMemo(() => {
+    if (!matrixData?.matrix) return [];
+    return matrixData.matrix.map(row => {
+      const r = {
+        location: row.location,
+        commodity: row.commodity,
+        commodity_code: row.commodity_code,
+      };
+      for (const pd of periodDates) {
+        const val = row.periods[pd];
+        r[`period_${pd}`] = val != null ? Math.round(val * 10) / 10 : null;
+        const delta = row.deltas?.[pd];
+        r[`delta_${pd}`] = delta != null ? delta : null;
+      }
+      return r;
+    });
+  }, [matrixData, periodDates]);
+
+  // Pinned bottom row — totals
+  const pinnedBottomRowData = useMemo(() => {
+    if (!rowData.length || !periodDates.length) return [];
+    const totals = { location: 'Total', commodity: '' };
+    for (const pd of periodDates) {
+      let sum = 0;
+      for (const row of rowData) {
+        sum += row[`period_${pd}`] || 0;
+      }
+      totals[`period_${pd}`] = Math.round(sum * 10) / 10;
+    }
+    return [totals];
+  }, [rowData, periodDates]);
+
+  const defaultColDef = useMemo(() => ({
+    resizable: true,
+    suppressMovable: true,
+  }), []);
+
+  const onGridReady = useCallback((params) => {
+    params.api.sizeColumnsToFit();
+  }, []);
 
   if (loading) {
-    return (
-      <Box sx={{ p: 4, textAlign: 'center' }}>
-        <CircularProgress />
-      </Box>
-    );
+    return <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress /></Box>;
   }
 
   if (error) {
     return <Alert severity="error" sx={{ m: 2 }}>{error}</Alert>;
   }
 
-  if (periods.length === 0) {
-    return (
-      <Box sx={{ p: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>Count History</Typography>
-        <Alert severity="info">No count periods found.</Alert>
-      </Box>
-    );
+  if (!matrixData?.matrix?.length) {
+    return <Alert severity="info" sx={{ m: 2 }}>No count data found for the selected period range.</Alert>;
   }
+
+  const gridTheme = mode === 'dark' ? 'ag-theme-alpine-dark' : 'ag-theme-alpine';
+
+  return (
+    <Box>
+      {/* Period range selector */}
+      <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
+        <FormControl size="small" sx={{ minWidth: 160 }}>
+          <InputLabel>From Period</InputLabel>
+          <Select
+            value={fromPeriod}
+            label="From Period"
+            onChange={e => setFromPeriod(e.target.value)}
+          >
+            <MenuItem value="">All</MenuItem>
+            {availablePeriods.map(p => {
+              const d = new Date(p.period_date).toISOString().slice(0, 10);
+              return <MenuItem key={p.id} value={d}>{formatPeriodLabel(d)}</MenuItem>;
+            })}
+          </Select>
+        </FormControl>
+        <FormControl size="small" sx={{ minWidth: 160 }}>
+          <InputLabel>To Period</InputLabel>
+          <Select
+            value={toPeriod}
+            label="To Period"
+            onChange={e => setToPeriod(e.target.value)}
+          >
+            <MenuItem value="">All</MenuItem>
+            {availablePeriods.map(p => {
+              const d = new Date(p.period_date).toISOString().slice(0, 10);
+              return <MenuItem key={p.id} value={d}>{formatPeriodLabel(d)}</MenuItem>;
+            })}
+          </Select>
+        </FormControl>
+        <Typography variant="body2" sx={{ color: 'text.secondary', alignSelf: 'center', flex: 1 }}>
+          {matrixData.matrix.length} rows across {periodDates.length} period{periodDates.length !== 1 ? 's' : ''}
+        </Typography>
+        <Button size="small" variant="outlined" startIcon={<DownloadIcon />} onClick={e => setExportAnchor(e.currentTarget)}>
+          Export
+        </Button>
+        <Menu anchorEl={exportAnchor} open={Boolean(exportAnchor)} onClose={() => setExportAnchor(null)}>
+          <MenuItem onClick={() => handleExport('excel')}><TableChartIcon fontSize="small" sx={{ mr: 1 }} />Excel</MenuItem>
+          <MenuItem onClick={() => handleExport('pdf')}><PictureAsPdfIcon fontSize="small" sx={{ mr: 1 }} />PDF</MenuItem>
+          <MenuItem onClick={() => handleExport('csv')}><TextSnippetIcon fontSize="small" sx={{ mr: 1 }} />CSV</MenuItem>
+        </Menu>
+      </Stack>
+
+      {/* ag-Grid */}
+      <Box className={gridTheme} sx={{ height: Math.min(600, 56 + rowData.length * 42 + 42), width: '100%' }}>
+        <AgGridReact
+          columnDefs={columnDefs}
+          rowData={rowData}
+          defaultColDef={defaultColDef}
+          pinnedBottomRowData={pinnedBottomRowData}
+          tooltipShowDelay={300}
+          onGridReady={onGridReady}
+          suppressCellFocus
+          domLayout="normal"
+        />
+      </Box>
+    </Box>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────
+
+export default function CountHistory() {
+  const { currentFarm } = useFarm();
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
       <Typography variant="h5" sx={{ mb: 0.5, fontWeight: 700 }}>
         Count History
       </Typography>
-      <Typography variant="body2" sx={{ mb: 3, color: 'text.secondary' }}>
-        Timeline of inventory count periods showing position changes and delivery activity.
+      <Typography variant="body2" sx={{ mb: 2, color: 'text.secondary' }}>
+        Inventory count periods — location by commodity matrix with month-over-month deltas.
       </Typography>
 
-      <Stack spacing={2}>
-        {periods.map((period, idx) => (
-          <PeriodCard
-            key={period.id}
-            period={period}
-            isFirst={idx === periods.length - 1}
-          />
-        ))}
-      </Stack>
+      <MatrixView farmId={currentFarm?.id} />
     </Box>
   );
 }

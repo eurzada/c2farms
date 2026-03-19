@@ -36,7 +36,7 @@ export async function getAvailableToSell(farmId) {
 
   // Get inventory by commodity from latest period
   const binCounts = await prisma.binCount.findMany({
-    where: { farm_id: farmId, count_period_id: latestPeriod.id },
+    where: { farm_id: farmId, count_period_id: latestPeriod.id, bin: { purpose: 'market' } },
     include: { commodity: true },
   });
 
@@ -209,7 +209,7 @@ export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
 
   // Get hauled tonnage between the two periods from DeliveryTicket (Traction Ag imports)
   // and legacy Delivery records (old inventory contracts)
-  const [deliveryTickets, legacyDeliveries, settlementLines] = await Promise.all([
+  const [deliveryTickets, legacyDeliveries, withdrawals, settlementLines] = await Promise.all([
     prisma.deliveryTicket.findMany({
       where: {
         farm_id: farmId,
@@ -232,6 +232,17 @@ export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
         contract: { include: { commodity: true } },
         marketing_contract: { include: { commodity: true } },
       },
+    }),
+    // Withdrawals between periods (seed, feed, loss, consumption, transfer)
+    prisma.inventoryWithdrawal.findMany({
+      where: {
+        farm_id: farmId,
+        withdrawal_date: {
+          gt: fromPeriod.period_date,
+          lte: toPeriod.period_date,
+        },
+      },
+      include: { commodity: true },
     }),
     // Settlement lines for the period — "at elevator" tonnage
     // Match logistics dashboard: filter by line-level delivery_date, include all statuses
@@ -273,6 +284,14 @@ export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
     }
   }
 
+  // Aggregate tare weight by commodity (informational — for insurance/dockage tracking)
+  const tareByCommodity = {};
+  for (const dt of deliveryTickets) {
+    if (!dt.commodity || !dt.tare_weight_kg) continue;
+    const name = dt.commodity.name;
+    tareByCommodity[name] = (tareByCommodity[name] || 0) + dt.tare_weight_kg;
+  }
+
   // Legacy Delivery records (old inventory contract deliveries)
   for (const d of legacyDeliveries) {
     const commodity = d.contract?.commodity || d.marketing_contract?.commodity;
@@ -294,6 +313,13 @@ export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
     atElevatorByCommodity[name] = (atElevatorByCommodity[name] || 0) + sl.net_weight_mt;
   }
 
+  // Withdrawals by commodity (seed, feed, loss, consumption, transfer)
+  const withdrawalsByCommodity = {};
+  for (const w of withdrawals) {
+    const name = w.commodity?.name || 'Unknown';
+    withdrawalsByCommodity[name] = (withdrawalsByCommodity[name] || 0) + w.kg;
+  }
+
   // All commodity names — only include inventory commodities + hauled, not raw settlement names
   const allCommodities = new Set([
     ...Object.keys(fromAgg), ...Object.keys(toAgg), ...Object.keys(hauledByCommodity),
@@ -309,11 +335,13 @@ export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
     const beginKg = fromAgg[name] || 0;
     const endKg = toAgg[name] || 0;
     const hauledKg = hauledByCommodity[name] || 0;
+    const withdrawalKg = withdrawalsByCommodity[name] || 0;
     const atElevatorMt = atElevatorByCommodity[name] || 0;
-    const varianceKg = beginKg - endKg - hauledKg;
+    const varianceKg = beginKg - endKg - hauledKg - withdrawalKg;
     const beginMt = convertKgToMt(beginKg);
     const endMt = convertKgToMt(endKg);
     const hauledMt = convertKgToMt(hauledKg);
+    const withdrawalMt = convertKgToMt(withdrawalKg);
     const varianceMt = convertKgToMt(varianceKg);
     const variancePct = beginMt > 0 ? (varianceMt / beginMt) * 100 : 0;
 
@@ -321,12 +349,17 @@ export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
     if (Math.abs(variancePct) > 5) flag = 'error';
     else if (Math.abs(variancePct) > 2) flag = 'warning';
 
+    const reconciled_mt = atElevatorMt > 0 ? atElevatorMt : hauledMt;
+
     rows.push({
       commodity: name,
       beginning_mt: beginMt,
       ending_mt: endMt,
       hauled_mt: hauledMt,
+      tare_mt: convertKgToMt(tareByCommodity[name] || 0),
+      withdrawal_mt: withdrawalMt,
       at_elevator_mt: atElevatorMt,
+      reconciled_mt,
       variance_mt: varianceMt,
       variance_pct: variancePct,
       flag,
@@ -364,7 +397,10 @@ export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
       total_beginning_mt: rows.reduce((s, r) => s + r.beginning_mt, 0),
       total_ending_mt: rows.reduce((s, r) => s + r.ending_mt, 0),
       total_hauled_mt: rows.reduce((s, r) => s + r.hauled_mt, 0),
+      total_tare_mt: rows.reduce((s, r) => s + r.tare_mt, 0),
+      total_withdrawal_mt: rows.reduce((s, r) => s + r.withdrawal_mt, 0),
       total_at_elevator_mt: rows.reduce((s, r) => s + r.at_elevator_mt, 0),
+      total_reconciled_mt: rows.reduce((s, r) => s + r.reconciled_mt, 0),
       total_variance_mt: rows.reduce((s, r) => s + r.variance_mt, 0),
     },
   };

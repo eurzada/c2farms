@@ -15,6 +15,8 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import SettingsIcon from '@mui/icons-material/Settings';
 import ViewColumnIcon from '@mui/icons-material/ViewColumn';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import DescriptionIcon from '@mui/icons-material/Description';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { useFarm } from '../../contexts/FarmContext';
@@ -350,6 +352,44 @@ export default function MarketingContracts() {
     { field: 'pricing_status', headerName: 'Pricing', width: 110, cellRenderer: p => <Chip label={p.value?.replace('_', ' ')} size="small" variant="outlined" sx={{ fontSize: 11 }} />, hide: isHidden('pricing_status') },
     { field: 'notes', headerName: 'Notes', width: 150, flex: 1, hide: isHidden('notes') },
     {
+      headerName: 'Doc', width: 70, sortable: false, filter: false,
+      cellRenderer: p => {
+        if (!p.data) return null;
+        if (p.data.contract_document_url) {
+          return (
+            <Tooltip title="View contract document">
+              <IconButton size="small" href={p.data.contract_document_url} target="_blank">
+                <DescriptionIcon fontSize="small" color="primary" />
+              </IconButton>
+            </Tooltip>
+          );
+        }
+        if (!canEdit) return null;
+        const handleUpload = async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          const formData = new FormData();
+          formData.append('file', file);
+          try {
+            await api.post(`/api/farms/${currentFarm.id}/marketing/contracts/${p.data.id}/document`, formData);
+            fetchData();
+          } catch (err) {
+            setSnack({ open: true, message: extractErrorMessage(err, 'Failed to upload document'), severity: 'error' });
+          }
+        };
+        return (
+          <>
+            <input id={`doc-upload-${p.data.id}`} type="file" accept=".pdf,.doc,.docx,.jpg,.png" hidden onChange={handleUpload} />
+            <Tooltip title="Upload contract document">
+              <IconButton size="small" onClick={() => document.getElementById(`doc-upload-${p.data.id}`)?.click()}>
+                <UploadFileIcon fontSize="small" color="action" />
+              </IconButton>
+            </Tooltip>
+          </>
+        );
+      },
+    },
+    {
       headerName: 'Actions', width: 160, sortable: false, filter: false, pinned: 'right',
       cellRenderer: p => {
         if (!canEdit) return null;
@@ -396,7 +436,7 @@ export default function MarketingContracts() {
       },
     },
   ];
-  }, [canEdit, isAdmin, hiddenColumns]);
+  }, [canEdit, isAdmin, hiddenColumns, currentFarm, fetchData]);
 
   const defaultColDef = useMemo(() => ({ sortable: true, resizable: true, filter: true }), []);
 

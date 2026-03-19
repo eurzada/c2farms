@@ -66,6 +66,14 @@ export default function BinInventory() {
     { field: 'crop_year', headerName: 'Crop Year', minWidth: 80, flex: 0.7 },
     { field: 'status', headerName: 'Status', minWidth: 90, flex: 0.8, cellRenderer: StatusCell },
     { field: 'notes', headerName: 'Notes', minWidth: 120, flex: 1.5 },
+    {
+      field: 'purpose', headerName: 'Purpose', minWidth: 110, flex: 0.9,
+      cellRenderer: ({ value }) => {
+        const colorMap = { market: 'success', seed: 'info', feed: 'warning', reserved: 'error', consumption: 'default' };
+        const label = (value || 'market').charAt(0).toUpperCase() + (value || 'market').slice(1);
+        return <Chip label={label} color={colorMap[value] || 'default'} size="small" variant="outlined" />;
+      },
+    },
   ], []);
 
   const defaultColDef = useMemo(() => ({
@@ -117,6 +125,12 @@ export default function BinInventory() {
           defaultColDef={defaultColDef}
           animateRows
           getRowId={p => p.data?.id}
+          getRowStyle={params => {
+            if (params.data?.purpose && params.data.purpose !== 'market') {
+              return { backgroundColor: mode === 'dark' ? 'rgba(255,152,0,0.08)' : 'rgba(255,152,0,0.06)' };
+            }
+            return null;
+          }}
         />
       </Box>
 

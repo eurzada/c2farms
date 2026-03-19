@@ -229,9 +229,9 @@ export async function getPositionByCommodity(farmId) {
     orderBy: { period_date: 'desc' },
   });
 
-  // Get bin counts for inventory
+  // Get bin counts for inventory (market-purpose bins only)
   const binCounts = latestPeriod ? await prisma.binCount.findMany({
-    where: { farm_id: farmId, count_period_id: latestPeriod.id },
+    where: { farm_id: farmId, count_period_id: latestPeriod.id, bin: { purpose: 'market' } },
     include: { commodity: true },
   }) : [];
 
@@ -446,7 +446,7 @@ export async function getCommitmentMatrix(farmId, cropYear = null) {
     orderBy: { period_date: 'desc' },
   });
   const binCounts = latestPeriod ? await prisma.binCount.findMany({
-    where: { farm_id: farmId, count_period_id: latestPeriod.id },
+    where: { farm_id: farmId, count_period_id: latestPeriod.id, bin: { purpose: 'market' } },
     include: { commodity: true },
   }) : [];
 
@@ -515,6 +515,17 @@ export async function getCommitmentMatrix(farmId, cropYear = null) {
     grandTotal += totalCommitted;
   }
 
+  // Compute earliest delivery_end per buyer
+  const buyerDeliveryEnd = {};
+  for (const c of contracts) {
+    const buyerName = c.counterparty?.name || 'Unknown';
+    if (c.delivery_end) {
+      if (!buyerDeliveryEnd[buyerName] || c.delivery_end < buyerDeliveryEnd[buyerName]) {
+        buyerDeliveryEnd[buyerName] = c.delivery_end;
+      }
+    }
+  }
+
   // Build buyer rows (one row per buyer)
   const rows = buyers.map(buyer => {
     const cropValues = {};
@@ -527,6 +538,7 @@ export async function getCommitmentMatrix(farmId, cropYear = null) {
     return {
       buyer_name: buyer.name,
       buyer_code: buyer.short_code,
+      earliest_delivery_end: buyerDeliveryEnd[buyer.name] || null,
       crops: cropValues,
       total_mt: totalMt,
     };
@@ -594,6 +606,98 @@ export async function getCropYears(farmId) {
     orderBy: { crop_year: 'desc' },
   });
   return results.map(r => r.crop_year).filter(Boolean);
+}
+
+// ─── Group D3: Contract Fulfillment ──────────────────────────────────
+
+/**
+ * Get contract fulfillment: hauled vs contracted MT per active contract.
+ */
+export async function getContractFulfillment(farmId) {
+  // Get active contracts with delivery windows
+  const contracts = await prisma.marketingContract.findMany({
+    where: {
+      farm_id: farmId,
+      status: { in: ['executed', 'in_delivery'] },
+    },
+    include: {
+      counterparty: { select: { name: true, short_code: true } },
+      commodity: { select: { name: true, code: true } },
+    },
+    orderBy: { delivery_end: 'asc' },
+  });
+
+  // Get hauled MT per contract from DeliveryTicket
+  // Try both marketing_contract_id FK and text contract_number fallback
+  const contractIds = contracts.map(c => c.id);
+  const hauledByContract = {};
+
+  if (contractIds.length > 0) {
+    const ticketAggs = await prisma.deliveryTicket.groupBy({
+      by: ['marketing_contract_id'],
+      where: { farm_id: farmId, marketing_contract_id: { in: contractIds } },
+      _sum: { net_weight_mt: true },
+      _count: true,
+    });
+    for (const agg of ticketAggs) {
+      hauledByContract[agg.marketing_contract_id] = {
+        hauled_mt: agg._sum.net_weight_mt || 0,
+        ticket_count: agg._count,
+      };
+    }
+  }
+
+  // Also try matching by contract_number text for tickets without FK
+  const contractNumbers = contracts.map(c => c.contract_number).filter(Boolean);
+  if (contractNumbers.length > 0) {
+    const textAggs = await prisma.deliveryTicket.groupBy({
+      by: ['contract_number'],
+      where: {
+        farm_id: farmId,
+        contract_number: { in: contractNumbers },
+        marketing_contract_id: null,  // only unlinked tickets
+      },
+      _sum: { net_weight_mt: true },
+      _count: true,
+    });
+    // Map back to contract id
+    const numToId = {};
+    for (const c of contracts) numToId[c.contract_number] = c.id;
+    for (const agg of textAggs) {
+      const cid = numToId[agg.contract_number];
+      if (!cid) continue;
+      if (!hauledByContract[cid]) hauledByContract[cid] = { hauled_mt: 0, ticket_count: 0 };
+      hauledByContract[cid].hauled_mt += agg._sum.net_weight_mt || 0;
+      hauledByContract[cid].ticket_count += agg._count;
+    }
+  }
+
+  const result = contracts.map(c => {
+    const hauled = hauledByContract[c.id] || { hauled_mt: 0, ticket_count: 0 };
+    const remaining_mt = Math.max(0, c.contracted_mt - hauled.hauled_mt);
+    const pct_complete = c.contracted_mt > 0 ? (hauled.hauled_mt / c.contracted_mt) * 100 : 0;
+    return {
+      id: c.id,
+      contract_number: c.contract_number,
+      buyer: c.counterparty?.name || '',
+      buyer_code: c.counterparty?.short_code || '',
+      commodity: c.commodity?.name || '',
+      commodity_code: c.commodity?.code || '',
+      grade: c.grade || '',
+      contracted_mt: c.contracted_mt,
+      hauled_mt: hauled.hauled_mt,
+      remaining_mt,
+      pct_complete,
+      ticket_count: hauled.ticket_count,
+      delivery_start: c.delivery_start,
+      delivery_end: c.delivery_end,
+      elevator_site: c.elevator_site || '',
+      price_per_bu: c.price_per_bu,
+      status: c.status,
+    };
+  });
+
+  return result;
 }
 
 // ─── Group E: Contract Lifecycle ─────────────────────────────────────
