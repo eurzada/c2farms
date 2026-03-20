@@ -100,21 +100,21 @@ export async function previewElevatorTicketImport(farmId, countPeriodId, fileBuf
 
   const headers = Object.keys(rows[0]);
 
-  // Auto-detect columns
+  // Auto-detect columns — candidates cover Cargill, Bunge, G3, LDC, Richardson, and standardized CSV formats
   const colMap = {
-    ticket_number: findHeader(headers, 'Ticket', 'Ticket #', 'Ticket No', 'Del Ticket', 'Delivery Ticket', 'Ticket Number'),
-    delivery_date: findHeader(headers, 'Date', 'Delivery Date', 'Del Date', 'Ship Date', 'Shipment Date'),
-    commodity: findHeader(headers, 'Commodity', 'Crop', 'Product', 'Grain', 'Grade'),
-    buyer: findHeader(headers, 'Buyer', 'Company', 'Elevator', 'Facility', 'Location', 'Site'),
-    net_weight: findHeader(headers, 'Net Weight', 'Net Wt', 'Net', 'Net MT', 'Net Kg', 'Net Lbs', 'Clean Weight'),
-    gross_weight: findHeader(headers, 'Gross Weight', 'Gross Wt', 'Gross', 'Gross MT'),
-    tare_weight: findHeader(headers, 'Tare Weight', 'Tare Wt', 'Tare', 'Tare MT'),
-    grade: findHeader(headers, 'Grade', 'Official Grade', 'Grading'),
-    protein: findHeader(headers, 'Protein', 'Protein %', 'Pro'),
-    moisture: findHeader(headers, 'Moisture', 'Moisture %', 'Moist'),
-    dockage: findHeader(headers, 'Dockage', 'Dockage %', 'Dock'),
-    contract_number: findHeader(headers, 'Contract', 'Contract #', 'Contract No', 'Contract Number'),
-    destination: findHeader(headers, 'Destination', 'Dest', 'Delivery Point'),
+    ticket_number: findHeader(headers, 'Ticket', 'Ticket #', 'Ticket No', 'Del Ticket', 'Delivery Ticket', 'Ticket Number', 'Receipt', 'Scale Ticket #', 'Scale Ticket', 'Ticket Id', 'Load #', 'Weigh Ticket #', 'ticket_number'),
+    delivery_date: findHeader(headers, 'Date', 'Delivery Date', 'Del Date', 'Ship Date', 'Shipment Date', 'Unload Date', 'delivery_date'),
+    commodity: findHeader(headers, 'Commodity', 'Crop', 'Product', 'Grain', 'commodity_raw', 'commodity'),
+    buyer: findHeader(headers, 'Buyer', 'Company', 'Elevator', 'Facility', 'Counterparty', 'Primary Account Name', 'buyer'),
+    net_weight: findHeader(headers, 'Net Weight', 'Net Wt', 'Net', 'Net MT', 'Net Kg', 'Net Lbs', 'Clean Weight', 'Net Quantity', 'Net Quantity (MT)', 'Est Net Dry Weight', 'Adjusted Net Delivery', 'Adjusted Net', 'net_weight_mt'),
+    gross_weight: findHeader(headers, 'Gross Weight', 'Gross Wt', 'Gross', 'Gross MT', 'Grain Unloaded', 'gross_weight_mt'),
+    tare_weight: findHeader(headers, 'Tare Weight', 'Tare Wt', 'Tare', 'Tare MT', 'tare_weight_mt'),
+    grade: findHeader(headers, 'Grade', 'Official Grade', 'Grading', 'Spec', 'QG', 'grade'),
+    protein: findHeader(headers, 'Protein', 'Protein %', 'Pro', 'protein_pct'),
+    moisture: findHeader(headers, 'Moisture', 'Moisture %', 'Moist', 'Mst', 'Mst %', 'moisture_pct'),
+    dockage: findHeader(headers, 'Dockage', 'Dockage %', 'Dock', 'Dkg', 'Dkg %', 'TDK', 'Dockage Percent', 'dockage_pct'),
+    contract_number: findHeader(headers, 'Contract', 'Contract #', 'Contract No', 'Contract Number', 'Nomination Number', 'Booking', 'contract_number'),
+    destination: findHeader(headers, 'Destination', 'Dest', 'Delivery Point', 'Location', 'Delivered Location', 'destination'),
   };
 
   // Detect weight unit from net weight values
@@ -164,21 +164,34 @@ export async function previewElevatorTicketImport(farmId, countPeriodId, fileBuf
     const rawTare = parseFloat(row[colMap.tare_weight]) || null;
     const tareWeightMt = rawTare ? convertToMt(rawTare, detectedUnit) : null;
 
-    // Parse date
+    // Parse date — handles ISO, MM/DD/YYYY, Excel serial numbers, JS Date strings
     let deliveryDate = null;
     const dateVal = row[colMap.delivery_date];
     if (dateVal) {
-      // Try YYYY-MM-DD first (Excel dates often come this way)
-      const isoMatch = dateVal.match(/^(\d{4})-(\d{2})-(\d{2})/);
-      if (isoMatch) {
-        deliveryDate = dateVal.substring(0, 10);
-      } else {
-        // Try MM/DD/YYYY or MM/DD/YY
-        const usMatch = dateVal.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
-        if (usMatch) {
-          let [, month, day, year] = usMatch;
-          if (year.length === 2) year = (parseInt(year) > 50 ? '19' : '20') + year;
-          deliveryDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+      const dateStr = String(dateVal).trim();
+      // Excel serial number (e.g., 46072.749...)
+      const numVal = parseFloat(dateStr);
+      if (!isNaN(numVal) && numVal > 40000 && numVal < 50000) {
+        const d = new Date((numVal - 25569) * 86400 * 1000);
+        if (!isNaN(d)) deliveryDate = d.toISOString().slice(0, 10);
+      }
+      if (!deliveryDate) {
+        // Try YYYY-MM-DD first
+        const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (isoMatch) {
+          deliveryDate = dateStr.substring(0, 10);
+        } else {
+          // Try MM/DD/YYYY or MM/DD/YY
+          const usMatch = dateStr.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+          if (usMatch) {
+            let [, month, day, year] = usMatch;
+            if (year.length === 2) year = (parseInt(year) > 50 ? '19' : '20') + year;
+            deliveryDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+          } else if (dateStr.match(/^\w{3}\s\w{3}\s/)) {
+            // JS Date string: "Mon Feb 02 2026 00:00:00 GMT..."
+            const d = new Date(dateStr);
+            if (!isNaN(d)) deliveryDate = d.toISOString().slice(0, 10);
+          }
         }
       }
     }
@@ -247,6 +260,16 @@ export async function previewElevatorTicketImport(farmId, countPeriodId, fileBuf
       is_duplicate: isDuplicate,
       status: isDuplicate ? 'duplicate' : 'new',
     });
+  }
+
+  // Normalize percentages — if all protein or moisture values are < 1, they're decimals (e.g., 0.13 = 13%)
+  const proteinVals = tickets.map(t => t.protein_pct).filter(v => v != null && v > 0);
+  if (proteinVals.length > 0 && proteinVals.every(v => v < 1)) {
+    tickets.forEach(t => { if (t.protein_pct) t.protein_pct = Math.round(t.protein_pct * 1000) / 10; });
+  }
+  const moistureVals = tickets.map(t => t.moisture_pct).filter(v => v != null && v > 0);
+  if (moistureVals.length > 0 && moistureVals.every(v => v < 1)) {
+    tickets.forEach(t => { if (t.moisture_pct) t.moisture_pct = Math.round(t.moisture_pct * 1000) / 10; });
   }
 
   return {

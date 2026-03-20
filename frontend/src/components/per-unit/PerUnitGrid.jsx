@@ -135,6 +135,7 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
           return true;
         },
         valueFormatter: (p) => formatNumber(p.value),
+        tooltipValueGetter: (params) => params.data?.comments?.[month] || null,
         cellStyle: (params) => {
           const style = {};
           if (params.data?.isComputed) {
@@ -148,6 +149,11 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
           }
           if (past) {
             style.backgroundColor = colors.actualCell;
+          }
+          // Module-driven values get a subtle colored font
+          const comment = params.data?.comments?.[month];
+          if (comment && comment.startsWith('From ')) {
+            style.color = colors.moduleDrivenText;
           }
           return style;
         },
@@ -230,6 +236,7 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
           animateRows={false}
           singleClickEdit={true}
           stopEditingWhenCellsLoseFocus={true}
+          tooltipShowDelay={300}
         />
       </div>
     </Box>

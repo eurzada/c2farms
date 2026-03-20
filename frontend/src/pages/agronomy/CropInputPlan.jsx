@@ -75,7 +75,14 @@ function InputSection({ title, inputs, allocation, canEdit, onAdd, onDelete, onU
                         freeSolo
                         options={productOptions}
                         value={inp.product_name}
-                        onChange={(_, val) => onUpdate(inp.id, { product_name: val || '' })}
+                        onChange={(_, val) => {
+                          const match = products.find(p => p.name === val);
+                          const updates = { product_name: val || '' };
+                          if (match?.cost_per_application_unit && !inp.cost_per_unit) {
+                            updates.cost_per_unit = match.cost_per_application_unit;
+                          }
+                          onUpdate(inp.id, updates);
+                        }}
                         onInputChange={(_, val, reason) => {
                           if (reason === 'input') onUpdate(inp.id, { product_name: val });
                         }}
@@ -394,20 +401,31 @@ export default function CropInputPlan() {
         <DialogTitle>Add {addDialog?.category === 'seeding' ? 'Seed' : 'Chemical'} Input</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
-            {addDialog?.category === 'chemicals' && chemProducts.length > 0 ? (
-              <Autocomplete
-                freeSolo
-                options={chemProducts.map(p => p.name)}
-                value={newInput.product_name}
-                onChange={(_, val) => setNewInput({ ...newInput, product_name: val || '' })}
-                onInputChange={(_, val, reason) => {
-                  if (reason === 'input') setNewInput({ ...newInput, product_name: val });
-                }}
-                renderInput={(params) => <TextField {...params} label="Product Name" fullWidth />}
-              />
-            ) : (
-              <TextField label="Product Name" value={newInput.product_name} onChange={e => setNewInput({ ...newInput, product_name: e.target.value })} fullWidth />
-            )}
+            {(() => {
+              const prods = addDialog?.category === 'chemicals' ? chemProducts
+                : addDialog?.category === 'fertilizer' ? fertProducts : [];
+              return prods.length > 0 ? (
+                <Autocomplete
+                  freeSolo
+                  options={prods.map(p => p.name)}
+                  value={newInput.product_name}
+                  onChange={(_, val) => {
+                    const match = prods.find(p => p.name === val);
+                    setNewInput({
+                      ...newInput,
+                      product_name: val || '',
+                      cost_per_unit: match?.cost_per_application_unit ? String(match.cost_per_application_unit) : newInput.cost_per_unit,
+                    });
+                  }}
+                  onInputChange={(_, val, reason) => {
+                    if (reason === 'input') setNewInput({ ...newInput, product_name: val });
+                  }}
+                  renderInput={(params) => <TextField {...params} label="Product Name" fullWidth />}
+                />
+              ) : (
+                <TextField label="Product Name" value={newInput.product_name} onChange={e => setNewInput({ ...newInput, product_name: e.target.value })} fullWidth />
+              );
+            })()}
             {addDialog?.category === 'chemicals' && (
               <FormControl fullWidth>
                 <InputLabel>Timing</InputLabel>

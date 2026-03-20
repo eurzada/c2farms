@@ -1,16 +1,14 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Box, Tabs, Tab } from '@mui/material';
-import DashboardIcon from '@mui/icons-material/Dashboard';
-import GrassIcon from '@mui/icons-material/Grass';
-import ScienceIcon from '@mui/icons-material/Science';
+import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing';
+import WarehouseIcon from '@mui/icons-material/Warehouse';
 
 const TABS = [
-  { label: 'Dashboard', path: '/agronomy/dashboard', icon: <DashboardIcon /> },
-  { label: 'Plan Setup', path: '/agronomy/plan', icon: <GrassIcon /> },
-  { label: 'Crop Inputs', path: '/agronomy/inputs', icon: <ScienceIcon /> },
+  { label: 'Metrics', path: '/operations/metrics', icon: <PrecisionManufacturingIcon /> },
+  { label: 'Bin Inventory', path: '/operations/bins', icon: <WarehouseIcon /> },
 ];
 
-export default function AgronomyLayout({ children }) {
+export default function OperationsLayout({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
 

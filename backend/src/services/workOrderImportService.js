@@ -77,6 +77,8 @@ function parseDate(val) {
 function parseNumber(val) {
   if (val == null) return 0;
   if (typeof val === 'number') return val;
+  // Excel formula cells: { formula: '...', result: 123 }
+  if (typeof val === 'object' && val.result != null) return parseNumber(val.result);
   const n = parseFloat(String(val).replace(/[,$]/g, ''));
   return isNaN(n) ? 0 : n;
 }
@@ -84,6 +86,59 @@ function parseNumber(val) {
 function resolvePackagingVolume(packagingUnit) {
   if (!packagingUnit) return null;
   return PACKAGING_VOLUMES[packagingUnit.toUpperCase().trim()] || null;
+}
+
+/**
+ * Extract volume from product name suffix, e.g.:
+ *   "Axial - 10L" → { volume: 10, unit: 'L' }
+ *   "Accelerated Growth - Canola Package - 454kg" → { volume: 454, unit: 'kg' }
+ *   "Elatus Era - Case (10.12 + 9.72L)" → { volume: 19.84, unit: 'L' } (sum)
+ *   "Action 5% BLZ - (950L + 50L) Tote" → { volume: 1000, unit: 'L' } (sum)
+ */
+function extractVolumeFromName(productName) {
+  if (!productName) return null;
+
+  // Per-acre products (e.g., "DB-878 Pro PPac Blend - Acre") → volume=1, unit=acre
+  if (/[-–]\s*acre\b/i.test(productName)) {
+    return { volume: 1, unit: 'acre' };
+  }
+
+  // Pattern: sum in parens "(10.12 + 9.72L)" or "(950L + 50L)" or "(450gm + 7.76L)"
+  const parenSum = productName.match(/\(([0-9.]+)\s*[a-z]*\s*\+\s*([0-9.]+)\s*L?\)/i);
+  if (parenSum) {
+    const vol = parseFloat(parenSum[1]) + parseFloat(parenSum[2]);
+    if (vol > 0) return { volume: vol, unit: 'L' };
+  }
+
+  // Pattern: bare sum "10.12L + 8.09L" (no parens)
+  const bareSum = productName.match(/([0-9.]+)\s*L\s*\+\s*([0-9.]+)\s*L/i);
+  if (bareSum) {
+    const vol = parseFloat(bareSum[1]) + parseFloat(bareSum[2]);
+    if (vol > 0) return { volume: vol, unit: 'L' };
+  }
+
+  // Pattern: "- 10L", "- 9.6L", "- 115L"
+  const literMatch = productName.match(/[-–]\s*([0-9.]+)\s*L\b/i);
+  if (literMatch) {
+    const vol = parseFloat(literMatch[1]);
+    if (vol > 0) return { volume: vol, unit: 'L' };
+  }
+
+  // Pattern: "- 454kg", "- 20Kg"
+  const kgMatch = productName.match(/[-–]\s*([0-9.]+)\s*kg\b/i);
+  if (kgMatch) {
+    const vol = parseFloat(kgMatch[1]);
+    if (vol > 0) return { volume: vol, unit: 'kg' };
+  }
+
+  // Pattern: "- 4.25M" (million seeds)
+  const mMatch = productName.match(/[-–]\s*([0-9.]+)\s*M\b/);
+  if (mMatch) {
+    const vol = parseFloat(mMatch[1]);
+    if (vol > 0) return { volume: vol, unit: 'M seeds' };
+  }
+
+  return null;
 }
 
 /**
@@ -130,9 +185,20 @@ export async function previewWorkOrderImport(rows, cropYear) {
     const isNew = canonical && !existingByCanonical[canonical];
     if (isNew) newProducts.add(canonical);
 
-    const packagingUnit = (r.packaging_unit || r.packaging || '').toString().trim();
+    const packagingUnit = (r.packaging_unit || r.unit || r.packaging || '').toString().trim();
     const unitPrice = parseNumber(r.unit_price || r.price);
-    const packVol = resolvePackagingVolume(packagingUnit);
+
+    // Resolve volume: prefer name-parsed volume (precise), fall back to packaging unit lookup
+    let packVol = null;
+    let packUnit = packagingUnit;
+    const nameVol = extractVolumeFromName(productName);
+    if (nameVol) {
+      packVol = nameVol.volume;
+      packUnit = packagingUnit || nameVol.unit;
+    }
+    if (!packVol) {
+      packVol = resolvePackagingVolume(packagingUnit);
+    }
     const costPerAppUnit = packVol && unitPrice ? unitPrice / packVol : null;
 
     const line = {

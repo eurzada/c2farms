@@ -3,7 +3,6 @@ import {
   Drawer, List, ListItemButton, ListItemIcon, ListItemText, Box, Divider,
   Typography,
 } from '@mui/material';
-import TableChartIcon from '@mui/icons-material/TableChart';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import ListAltIcon from '@mui/icons-material/ListAlt';
@@ -22,17 +21,13 @@ import { useFarm } from '../../contexts/FarmContext';
 
 // Farm Unit nav items (per-location data entry)
 const FARM_UNIT_ITEMS = [
-  { section: 'Agronomy' },
+  { section: 'Planning' },
   { label: 'Crop Plan', path: '/agronomy', icon: <GrassIcon />, module: 'agronomy' },
-  { section: 'Forecast' },
-  { label: 'Labour Plan', path: '/labour', icon: <GroupsIcon />, module: 'forecast' },
-  { label: 'Cost Forecast', path: '/cost-forecast', icon: <AccountBalanceIcon />, module: 'forecast' },
-  { label: 'Per-Unit', path: '/per-unit', icon: <TableChartIcon />, module: 'forecast' },
-  { label: 'Operations', path: '/operations', icon: <PrecisionManufacturingIcon />, module: 'forecast' },
-  { label: 'Dashboard', path: '/dashboard', icon: <DashboardIcon />, module: 'forecast' },
-  { label: 'Chart of Accounts', path: '/chart-of-accounts', icon: <ListAltIcon />, module: 'forecast', adminOnly: true },
+  { label: 'Labour Plan', path: '/labour', icon: <GroupsIcon />, module: 'agronomy' },
+  { section: 'Financials' },
+  { label: 'Financials', path: '/financials', icon: <AccountBalanceIcon />, module: 'forecast' },
   { section: 'Operations' },
-  { label: 'Bin Inventory', path: '/inventory/bins', icon: <WarehouseIcon />, module: 'inventory' },
+  { label: 'Operations', path: '/operations', icon: <PrecisionManufacturingIcon />, module: 'inventory' },
 ];
 
 // Enterprise nav items
@@ -88,11 +83,12 @@ export default function Sidebar({ width }) {
 
   const isSelected = (path) => {
     if (location.pathname === path) return true;
+    // Sub-path matching (e.g. /enterprise/agro-plan/library highlights /enterprise/agro-plan)
+    if (location.pathname.startsWith(path + '/')) return true;
     // Prefix matching for module roots
-    const prefixes = ['/inventory', '/marketing', '/logistics', '/agronomy', '/enterprise', '/labour', '/terminal'];
+    const prefixes = ['/inventory', '/marketing', '/logistics', '/agronomy', '/labour', '/terminal', '/financials', '/operations'];
     for (const p of prefixes) {
       if (path === p && location.pathname.startsWith(p + '/')) return true;
-      if (path.startsWith(p + '/') && location.pathname.startsWith(p + '/') && path === location.pathname) return true;
     }
     return false;
   };

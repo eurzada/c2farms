@@ -471,8 +471,9 @@ async function seed() {
   await prisma.agroProduct.deleteMany({});
   await prisma.seasonProfile.deleteMany({});
 
-  // Use the first farm's ID for products (they're shared reference data)
-  const refFarmId = farms[0].id;
+  // Products belong to the enterprise farm (shared library across all BUs)
+  const enterprise = await prisma.farm.findFirst({ where: { is_enterprise: true } });
+  const refFarmId = enterprise ? enterprise.id : farms[0].id;
 
   // Seed products
   console.log('\nSeeding product reference data...');

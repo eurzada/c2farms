@@ -268,9 +268,11 @@ router.get('/:farmId/accounting/:year', authenticate, async (req, res, next) => 
 
     const monthMap = {};
     const monthActualMap = {};
+    const monthCommentsMap = {};
     for (const row of monthlyData) {
       monthMap[row.month] = row.data_json || {};
       monthActualMap[row.month] = row.is_actual || false;
+      monthCommentsMap[row.month] = row.comments_json || {};
     }
 
     const isFrozen = assumption?.is_frozen || false;
@@ -278,11 +280,13 @@ router.get('/:farmId/accounting/:year', authenticate, async (req, res, next) => 
     const allRows = farmCategories.map(cat => {
       const monthValues = {};
       const actuals = {};
+      const comments = {};
       let total = 0;
       for (const month of months) {
         const val = monthMap[month]?.[cat.code] || 0;
         monthValues[month] = val;
         actuals[month] = monthActualMap[month] || false;
+        comments[month] = monthCommentsMap[month]?.[cat.code] || '';
         total += val;
       }
 
@@ -308,6 +312,7 @@ router.get('/:farmId/accounting/:year', authenticate, async (req, res, next) => 
         sort_order: cat.sort_order,
         months: monthValues,
         actuals,
+        comments,
         total,
         priorYear: priorYearAgg[cat.code] || 0,
         forecastTotal: forecastVal,

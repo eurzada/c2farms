@@ -522,6 +522,7 @@ model Counterparty {
   terminal_settlements  TerminalSettlement[]
   aliases CounterpartyAlias[]
   elevator_tickets ElevatorTicket[]
+  procurement_contracts ProcurementContract[]
 
   @@unique([farm_id, name])
   @@map("counterparties")
@@ -968,6 +969,65 @@ model WorkOrderLine {
   created_at       DateTime @default(now())
 
   @@map("work_order_lines")
+}
+
+// ─── Procurement Contracts ──────────────────────────────────────────
+
+model ProcurementContract {
+  id                String   @id @default(uuid())
+  farm_id           String   // Enterprise farm ID
+  contract_number   String   // Supplier's contract # (e.g., "20556173")
+  counterparty_id   String
+  crop_year         Int
+  input_category    String   // fertilizer, fuel, chemical, seed
+  description       String?
+  blend_formula     String?  // Custom NPK blend e.g. "32-21-24"
+  contract_value    Float?   // Total CAD across all lines
+  currency          String   @default("CAD")
+  valid_from        DateTime? @db.Date
+  valid_to          DateTime? @db.Date
+  payment_due       String?  // May be a date or text like "On delivery"
+  delivery_window   String?  // "Apr-May 2026", "Spring 2026"
+  status            String   @default("ordered") // ordered, in_transit, delivered, invoiced, paid, cancelled
+  source_file       String?
+  notes             String?
+  created_by        String?
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  counterparty      Counterparty @relation(fields: [counterparty_id], references: [id])
+  lines             ProcurementContractLine[]
+
+  @@unique([farm_id, contract_number])
+  @@index([farm_id, status])
+  @@index([farm_id, crop_year])
+  @@map("procurement_contracts")
+}
+
+model ProcurementContractLine {
+  id                String   @id @default(uuid())
+  contract_id       String
+  line_number       Int
+  bu_farm_id        String?  // FK to BU farm (e.g., Lewvan)
+  input_category    String   // fertilizer, fuel, chemical, seed
+  product_code      String?  // Supplier product code
+  product_name      String
+  product_analysis  String?  // NPK: "46-0-0"
+  blend_formula     String?  // Blend this line belongs to: "32-21-24"
+  qty               Float    @default(0)
+  qty_unit          String   @default("tonnes") // tonnes, litres, lbs, kg
+  unit_price        Float    @default(0)
+  price_unit        String   @default("$/tonne") // $/tonne, ¢/L, $/lb
+  line_total        Float    @default(0) // qty * unit_price
+  delivered_qty     Float    @default(0)
+  notes             String?
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  contract          ProcurementContract @relation(fields: [contract_id], references: [id], onDelete: Cascade)
+
+  @@index([contract_id])
+  @@map("procurement_contract_lines")
 }
 
 model CwoFieldGroupMapping {

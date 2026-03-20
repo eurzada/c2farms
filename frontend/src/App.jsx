@@ -33,6 +33,8 @@ const MarketingLayout = lazy(() => import('./components/marketing/MarketingLayou
 const MarketingDashboard = lazy(() => import('./pages/marketing/MarketingDashboard'));
 const MarketingContracts = lazy(() => import('./pages/marketing/MarketingContracts'));
 const MarketingBuyers = lazy(() => import('./pages/marketing/MarketingBuyers'));
+const FinancialsLayout = lazy(() => import('./components/financials/FinancialsLayout'));
+const OperationsLayout = lazy(() => import('./components/operations/OperationsLayout'));
 const AgronomyLayout = lazy(() => import('./components/agronomy/AgronomyLayout'));
 const AgronomyDashboard = lazy(() => import('./pages/agronomy/AgronomyDashboard'));
 const PlanSetup = lazy(() => import('./pages/agronomy/PlanSetup'));
@@ -114,7 +116,7 @@ function TerminalRoute({ children }) {
 
 function InventoryRedirect() {
   const { isEnterprise } = useFarm();
-  return <Navigate to={isEnterprise ? '/inventory/dashboard' : '/inventory/bins'} />;
+  return <Navigate to={isEnterprise ? '/inventory/dashboard' : '/operations/bins'} />;
 }
 
 function NotFound() {
@@ -142,13 +144,22 @@ export default function App() {
                     <Routes>
                       <Route path="/" element={<SmartRedirect />} />
                       <Route path="/home" element={<Home />} />
-                      {/* Farm Unit routes (per-location, data entry) */}
-                      <Route path="/per-unit" element={<FarmUnitRoute module="forecast"><PerUnit /></FarmUnitRoute>} />
-                      <Route path="/cost-forecast" element={<FarmUnitRoute module="forecast"><Accounting /></FarmUnitRoute>} />
-                      <Route path="/accounting" element={<Navigate to="/cost-forecast" />} />
-                      <Route path="/operations" element={<FarmUnitRoute module="forecast"><OperationalData /></FarmUnitRoute>} />
-                      <Route path="/dashboard" element={<FarmUnitRoute module="forecast"><Dashboard /></FarmUnitRoute>} />
-                      <Route path="/chart-of-accounts" element={<FarmUnitRoute module="forecast"><ChartOfAccounts /></FarmUnitRoute>} />
+                      {/* Financials — tabbed group (Dashboard, Cost Forecast, Per-Unit, Chart of Accounts) */}
+                      <Route path="/financials" element={<FarmUnitRoute module="forecast"><Navigate to="/financials/dashboard" /></FarmUnitRoute>} />
+                      <Route path="/financials/dashboard" element={<FarmUnitRoute module="forecast"><FinancialsLayout><Dashboard /></FinancialsLayout></FarmUnitRoute>} />
+                      <Route path="/financials/cost-forecast" element={<FarmUnitRoute module="forecast"><FinancialsLayout><Accounting /></FinancialsLayout></FarmUnitRoute>} />
+                      <Route path="/financials/per-unit" element={<FarmUnitRoute module="forecast"><FinancialsLayout><PerUnit /></FinancialsLayout></FarmUnitRoute>} />
+                      <Route path="/financials/chart-of-accounts" element={<FarmUnitRoute module="forecast"><FinancialsLayout><ChartOfAccounts /></FinancialsLayout></FarmUnitRoute>} />
+                      {/* Operations — tabbed group (Metrics, Bin Inventory) */}
+                      <Route path="/operations" element={<FarmUnitRoute module="inventory"><Navigate to="/operations/metrics" /></FarmUnitRoute>} />
+                      <Route path="/operations/metrics" element={<FarmUnitRoute module="forecast"><OperationsLayout><OperationalData /></OperationsLayout></FarmUnitRoute>} />
+                      <Route path="/operations/bins" element={<FarmUnitRoute module="inventory"><OperationsLayout><BinInventory /></OperationsLayout></FarmUnitRoute>} />
+                      {/* Backward-compat redirects for old URLs */}
+                      <Route path="/dashboard" element={<Navigate to="/financials/dashboard" />} />
+                      <Route path="/cost-forecast" element={<Navigate to="/financials/cost-forecast" />} />
+                      <Route path="/accounting" element={<Navigate to="/financials/cost-forecast" />} />
+                      <Route path="/per-unit" element={<Navigate to="/financials/per-unit" />} />
+                      <Route path="/chart-of-accounts" element={<Navigate to="/financials/chart-of-accounts" />} />
                       <Route path="/settings" element={<AdminRoute><Settings /></AdminRoute>} />
                       <Route path="/universal-settings" element={<AnyFarmAdminRoute><UniversalSettings /></AnyFarmAdminRoute>} />
 
@@ -157,7 +168,8 @@ export default function App() {
                       <Route path="/agronomy/dashboard" element={<FarmUnitRoute module="agronomy"><AgronomyLayout><AgronomyDashboard /></AgronomyLayout></FarmUnitRoute>} />
                       <Route path="/agronomy/plan" element={<FarmUnitRoute module="agronomy"><AgronomyLayout><PlanSetup /></AgronomyLayout></FarmUnitRoute>} />
                       <Route path="/agronomy/inputs" element={<FarmUnitRoute module="agronomy"><AgronomyLayout><CropInputPlan /></AgronomyLayout></FarmUnitRoute>} />
-                      <Route path="/agronomy/products" element={<FarmUnitRoute module="agronomy"><AgronomyLayout><ProductLibrary /></AgronomyLayout></FarmUnitRoute>} />
+                      <Route path="/enterprise/agro-plan/library" element={<EnterpriseRoute><EnterpriseAgroPlan /></EnterpriseRoute>} />
+                      <Route path="/enterprise/agro-plan/contracts" element={<EnterpriseRoute><EnterpriseAgroPlan /></EnterpriseRoute>} />
                       <Route path="/labour" element={<FarmUnitRoute module="agronomy"><LabourPlan /></FarmUnitRoute>} />
 
                       {/* Inventory — both modes, but different scope */}

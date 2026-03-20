@@ -19,7 +19,7 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
 import { DEFAULT_GL_ACCOUNTS } from '../utils/defaultCategoryTemplate.js';
-import { FISCAL_MONTHS, CALENDAR_MONTHS } from '../utils/fiscalYear.js';
+import { FISCAL_MONTHS, CALENDAR_MONTHS, calendarToFiscal } from '../utils/fiscalYear.js';
 import { rollupGlActuals } from '../services/glRollupService.js';
 import { invalidateCache } from '../services/categoryService.js';
 
@@ -120,8 +120,8 @@ function mapAccountName(name, overrides) {
   const lower = name.toLowerCase().trim();
 
   // 1. User overrides (highest priority)
-  if (overrides && overrides[name]) return overrides[name];
-  if (overrides && overrides[lower]) return overrides[lower];
+  if (overrides && overrides[name]) return overrides[name] === '__skip__' ? '__skip__' : overrides[name];
+  if (overrides && overrides[lower]) return overrides[lower] === '__skip__' ? '__skip__' : overrides[lower];
 
   // 2. Exact match against DEFAULT_GL_ACCOUNTS names
   if (EXACT_NAME_MAP[lower]) return EXACT_NAME_MAP[lower];
@@ -133,6 +133,12 @@ function mapAccountName(name, overrides) {
 
   return null;
 }
+
+// ─── Farm Name Aliases ───────────────────────────────────────────────────────
+// Map QBO class names to C2 Farms DB names when they differ
+const FARM_NAME_ALIASES = {
+  keywest: 'Ogema',
+};
 
 // ─── Excel Parsing ──────────────────────────────────────────────────────────
 
@@ -152,19 +158,49 @@ const MONTH_ABBREV = {
   dec: 'Dec', december: 'Dec',
 };
 
-function parseMonthFromHeader(header) {
+// Month name to 0-indexed calendar month number (for fiscal year calculation)
+const MONTH_NUM = {
+  Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
+  Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11,
+};
+
+function parseMonthYearFromHeader(header) {
   if (!header || typeof header !== 'string') return null;
   const trimmed = header.trim();
-  // Try patterns: "Nov 2024", "November 2024", "Nov-24", "Nov-2024", "11/2024"
-  // We only need the month name, not the year (year comes from filename)
-  let match = trimmed.match(/^([A-Za-z]+)[\s\-\.]+\d{2,4}$/);
+
+  // Skip "Total" column
+  if (/^total$/i.test(trimmed)) return null;
+
+  // Try "November 2023", "Nov 2024", "Nov-2024", "Nov.2024"
+  let match = trimmed.match(/^([A-Za-z]+)[\s\-\.]+(\d{4})$/);
   if (match) {
     const m = match[1].toLowerCase();
-    return MONTH_ABBREV[m] || null;
+    const month = MONTH_ABBREV[m];
+    if (month) return { month, year: parseInt(match[2]) };
   }
-  // Try "Nov" alone
+
+  // Try partial-month QBO format: "Mar. 1 - Mar. 20 2026" or "Nov. 1 - Nov. 30 2025"
+  match = trimmed.match(/^([A-Za-z]+)\.\s*\d+\s*-\s*[A-Za-z]+\.\s*\d+\s+(\d{4})$/);
+  if (match) {
+    const m = match[1].toLowerCase();
+    const month = MONTH_ABBREV[m];
+    if (month) return { month, year: parseInt(match[2]) };
+  }
+
+  // Try "Nov-24" (2-digit year)
+  match = trimmed.match(/^([A-Za-z]+)[\s\-\.]+(\d{2})$/);
+  if (match) {
+    const m = match[1].toLowerCase();
+    const month = MONTH_ABBREV[m];
+    if (month) return { month, year: 2000 + parseInt(match[2]) };
+  }
+
+  // Try month name alone (no year — cannot determine fiscal year)
   const m = trimmed.toLowerCase();
-  return MONTH_ABBREV[m] || null;
+  const month = MONTH_ABBREV[m];
+  if (month) return { month, year: null };
+
+  return null;
 }
 
 function parseAmount(value) {
@@ -209,21 +245,28 @@ async function parseQboExcel(filePath) {
 
   // Find header row (scan rows 1-15 for one containing month names)
   let headerRow = null;
-  let monthColumns = {}; // month abbreviation -> column index (1-based)
+  // columnInfos: array of { month, year, fiscalYear, col } per detected column
+  let columnInfos = [];
 
+  const maxCol = Math.min(sheet.columnCount || 100, 200); // cap to avoid ExcelJS overflow
   for (let r = 1; r <= Math.min(15, sheet.rowCount); r++) {
     const row = sheet.getRow(r);
-    const foundMonths = {};
-    for (let c = 2; c <= row.cellCount + 1; c++) {
+    const found = [];
+    for (let c = 2; c <= maxCol; c++) {
       const cell = row.getCell(c);
       const val = cell.text || (cell.value && String(cell.value));
-      const month = parseMonthFromHeader(val);
-      if (month) foundMonths[month] = c;
+      const parsed = parseMonthYearFromHeader(val);
+      if (parsed) {
+        const fiscalYear = parsed.year != null
+          ? calendarToFiscal(new Date(parsed.year, MONTH_NUM[parsed.month], 1)).fiscalYear
+          : null;
+        found.push({ month: parsed.month, year: parsed.year, fiscalYear, col: c });
+      }
     }
     // Need at least 3 months to identify as header row
-    if (Object.keys(foundMonths).length >= 3) {
+    if (found.length >= 3) {
       headerRow = r;
-      monthColumns = foundMonths;
+      columnInfos = found;
       break;
     }
   }
@@ -240,11 +283,13 @@ async function parseQboExcel(filePath) {
 
     if (shouldSkipRow(accountName)) continue;
 
+    // months keyed by "FY:Month" (e.g., "2025:Nov") for multi-FY support
     const months = {};
     let hasAnyValue = false;
-    for (const [month, col] of Object.entries(monthColumns)) {
-      const val = parseAmount(row.getCell(col).value);
-      months[month] = val;
+    for (const colInfo of columnInfos) {
+      const val = parseAmount(row.getCell(colInfo.col).value);
+      const key = `${colInfo.fiscalYear}:${colInfo.month}`;
+      months[key] = val;
       if (val !== 0) hasAnyValue = true;
     }
 
@@ -254,20 +299,38 @@ async function parseQboExcel(filePath) {
     accounts.push({ name: accountName, months });
   }
 
-  return { monthColumns: Object.keys(monthColumns), accounts };
+  // Determine which fiscal years are present
+  const fiscalYears = [...new Set(columnInfos.map(c => c.fiscalYear).filter(Boolean))].sort();
+
+  return { columnInfos, fiscalYears, accounts };
 }
 
 // ─── Filename Parsing ───────────────────────────────────────────────────────
 
 function parseFilename(filename) {
-  // Expected: FarmName_FY2025.xlsx or Farm_Name_FY2025.xlsx
   const base = path.basename(filename, '.xlsx');
-  const match = base.match(/^(.+?)_FY(\d{4})$/i);
-  if (!match) return null;
+
+  // Try legacy format first: FarmName_FY2025.xlsx
+  const legacyMatch = base.match(/^(.+?)_FY(\d{4})$/i);
+  if (legacyMatch) {
+    const rawName = legacyMatch[1].replace(/_/g, ' ');
+    return {
+      farmName: resolveFarmAlias(rawName),
+      fiscalYear: parseInt(legacyMatch[2]),
+    };
+  }
+
+  // New format: just FarmName.xlsx (fiscal years detected from column headers)
+  const rawName = base.replace(/_/g, ' ');
   return {
-    farmName: match[1].replace(/_/g, ' '),
-    fiscalYear: parseInt(match[2]),
+    farmName: resolveFarmAlias(rawName),
+    fiscalYear: null, // will be determined from column headers
   };
+}
+
+function resolveFarmAlias(name) {
+  const lower = name.toLowerCase().trim();
+  return FARM_NAME_ALIASES[lower] || name;
 }
 
 // ─── Farm Lookup ────────────────────────────────────────────────────────────
@@ -322,7 +385,7 @@ async function ensureAssumption(farmId, fiscalYear, dryRun) {
       fiscal_year: fiscalYear,
       total_acres: source.total_acres,
       crops_json: source.crops_json || [],
-      assumptions_json: source.assumptions_json || {},
+      bins_json: source.bins_json || [],
       is_frozen: false,
     },
   });
@@ -374,7 +437,7 @@ async function processFile(filePath, overrides, dryRun) {
   const filename = path.basename(filePath);
   const parsed = parseFilename(filename);
   if (!parsed) {
-    return { file: filename, error: `Cannot parse filename. Expected format: FarmName_FY2025.xlsx` };
+    return { file: filename, error: `Cannot parse filename. Expected format: FarmName.xlsx or FarmName_FY2025.xlsx` };
   }
 
   const farm = await findFarm(parsed.farmName);
@@ -382,33 +445,59 @@ async function processFile(filePath, overrides, dryRun) {
     return { file: filename, error: `Farm "${parsed.farmName}" not found in database` };
   }
 
-  const { accounts, monthColumns } = await parseQboExcel(filePath);
+  const { accounts, columnInfos, fiscalYears: detectedFYs } = await parseQboExcel(filePath);
+
+  // Determine fiscal years: from filename (legacy) or from column headers (new)
+  const fiscalYears = parsed.fiscalYear ? [parsed.fiscalYear] : detectedFYs;
+
+  if (fiscalYears.length === 0) {
+    return { file: filename, error: 'Could not determine fiscal year(s) from column headers. Headers must include year (e.g., "Nov 2024").' };
+  }
 
   // Map accounts
   const mapped = [];
   const unmapped = [];
+  const skipped = [];
   for (const acct of accounts) {
     const code = mapAccountName(acct.name, overrides);
     const total = Object.values(acct.months).reduce((s, v) => s + v, 0);
-    if (code) {
+    if (code === '__skip__') {
+      skipped.push({ name: acct.name, total });
+    } else if (code) {
       mapped.push({ ...acct, categoryCode: code, total });
     } else {
       unmapped.push({ name: acct.name, total });
     }
   }
 
-  // Check/create assumption
-  const assumptionResult = await ensureAssumption(farm.id, parsed.fiscalYear, dryRun);
+  // For legacy single-FY files, rekey months from "FY:Month" back to "Month" for compatibility
+  if (parsed.fiscalYear) {
+    for (const acct of mapped) {
+      const rekeyed = {};
+      for (const [key, val] of Object.entries(acct.months)) {
+        const month = key.includes(':') ? key.split(':')[1] : key;
+        rekeyed[month] = val;
+      }
+      acct.months = rekeyed;
+    }
+  }
+
+  // Check/create assumptions for all fiscal years
+  const assumptions = {};
+  for (const fy of fiscalYears) {
+    assumptions[fy] = await ensureAssumption(farm.id, fy, dryRun);
+  }
 
   // Check for new revenue categories (crops in QBO not in farm categories)
   const newCategories = [];
+  const checkedCodes = new Set();
   for (const acct of mapped) {
-    if (acct.categoryCode.startsWith('rev_') && acct.categoryCode !== 'rev_other_income') {
+    if (acct.categoryCode.startsWith('rev_') && acct.categoryCode !== 'rev_other_income' && !checkedCodes.has(acct.categoryCode)) {
+      checkedCodes.add(acct.categoryCode);
       const exists = await prisma.farmCategory.findUnique({
         where: { farm_id_code: { farm_id: farm.id, code: acct.categoryCode } },
       });
       if (!exists) {
-        // Derive display name from category code
         const cropName = acct.categoryCode.replace('rev_', '').replace(/_/g, ' ')
           .replace(/\b\w/g, c => c.toUpperCase());
         newCategories.push({ code: acct.categoryCode, displayName: `${cropName} Revenue`, parentCode: 'revenue' });
@@ -416,26 +505,32 @@ async function processFile(filePath, overrides, dryRun) {
     }
   }
 
+  // Build human-readable month list
+  const monthLabels = columnInfos.map(c => `${c.month} ${c.year || '?'}`);
+
   return {
     file: filename,
     farm,
-    fiscalYear: parsed.fiscalYear,
-    monthColumns,
+    fiscalYears,
+    isMultiFY: fiscalYears.length > 1,
+    monthLabels,
     mapped,
     unmapped,
-    assumption: assumptionResult,
+    skipped,
+    assumptions,
     newCategories,
     filePath,
   };
 }
 
 async function executeImport(result) {
-  const { farm, fiscalYear, mapped, newCategories, assumption, filePath } = result;
+  const { farm, fiscalYears, mapped, newCategories, assumptions, isMultiFY } = result;
 
-  // 1. Create assumption if needed
-  if (assumption.created) {
-    // Already created in processFile when dryRun=false; if we're here it was dryRun before
-    await ensureAssumption(farm.id, fiscalYear, false);
+  // 1. Ensure assumptions exist for all fiscal years
+  for (const fy of fiscalYears) {
+    if (assumptions[fy] && assumptions[fy].created) {
+      await ensureAssumption(farm.id, fy, false);
+    }
   }
 
   // 2. Create new categories
@@ -456,7 +551,8 @@ async function executeImport(result) {
     categoryMap[cat.code] = cat.id;
   }
 
-  const monthsAffected = new Set();
+  // Track affected FY+month combos for rollup
+  const rollupTargets = new Set(); // "FY:Month"
 
   // 4. Upsert GlAccount + GlActualDetail in a transaction
   await prisma.$transaction(async (tx) => {
@@ -467,7 +563,7 @@ async function executeImport(result) {
         continue;
       }
 
-      // Upsert GL account (use account name as account_number for QBO imports)
+      // Upsert GL account
       const glAccount = await tx.glAccount.upsert({
         where: { farm_id_account_number: { farm_id: farm.id, account_number: acct.name } },
         update: { account_name: acct.name, category_id: categoryId },
@@ -475,8 +571,22 @@ async function executeImport(result) {
       });
 
       // Upsert monthly amounts
-      for (const [month, amount] of Object.entries(acct.months)) {
+      for (const [key, amount] of Object.entries(acct.months)) {
+        let fiscalYear, month;
+
+        if (key.includes(':')) {
+          // Multi-FY format: "2025:Nov"
+          const parts = key.split(':');
+          fiscalYear = parseInt(parts[0]);
+          month = parts[1];
+        } else {
+          // Legacy single-FY format: "Nov"
+          fiscalYear = fiscalYears[0];
+          month = key;
+        }
+
         if (!CALENDAR_MONTHS.includes(month)) continue;
+        if (!fiscalYear) continue;
 
         await tx.glActualDetail.upsert({
           where: {
@@ -491,17 +601,18 @@ async function executeImport(result) {
           },
         });
 
-        monthsAffected.add(month);
+        rollupTargets.add(`${fiscalYear}:${month}`);
       }
     }
   });
 
-  // 5. Rollup each affected month (outside transaction — rollup does its own queries)
-  for (const month of monthsAffected) {
-    await rollupGlActuals(farm.id, fiscalYear, month);
+  // 5. Rollup each affected FY+month (outside transaction)
+  for (const target of rollupTargets) {
+    const [fy, month] = target.split(':');
+    await rollupGlActuals(farm.id, parseInt(fy), month);
   }
 
-  return { months: monthsAffected.size, accounts: mapped.length };
+  return { months: rollupTargets.size, accounts: mapped.length, fiscalYears };
 }
 
 // ─── Display ────────────────────────────────────────────────────────────────
@@ -529,13 +640,17 @@ function printPreview(results) {
 
     console.log(`File: ${r.file}`);
     console.log(`  Farm: ${r.farm.name} (${r.farm.id.substring(0, 8)}...)`);
-    console.log(`  Fiscal Year: ${r.fiscalYear}`);
-    console.log(`  Months found: ${r.monthColumns.join(', ')}`);
+    console.log(`  Fiscal Year(s): ${r.fiscalYears.join(', ')}`);
+    console.log(`  Months found: ${r.monthLabels.join(', ')}`);
 
-    if (r.assumption.created) {
-      console.log(`  Assumption: WILL CREATE (cloning from FY${r.assumption.clonedFrom}, ${r.assumption.assumption.total_acres} acres)`);
-    } else {
-      console.log(`  Assumption: exists (${r.assumption.assumption.total_acres} acres)`);
+    // Show assumptions per fiscal year
+    for (const fy of r.fiscalYears) {
+      const a = r.assumptions[fy];
+      if (a.created) {
+        console.log(`  FY${fy} Assumption: WILL CREATE (cloning from FY${a.clonedFrom}, ${a.assumption.total_acres} acres)`);
+      } else {
+        console.log(`  FY${fy} Assumption: exists (${a.assumption.total_acres} acres)`);
+      }
     }
 
     if (r.newCategories.length > 0) {
@@ -543,7 +658,6 @@ function printPreview(results) {
     }
 
     console.log(`\n  Mapped Accounts (${r.mapped.length}):`);
-    // Group by category code for cleaner display
     const byCategory = {};
     for (const acct of r.mapped) {
       if (!byCategory[acct.categoryCode]) byCategory[acct.categoryCode] = [];
@@ -552,6 +666,13 @@ function printPreview(results) {
     for (const [code, accts] of Object.entries(byCategory)) {
       for (const acct of accts) {
         console.log(`    ${acct.name.padEnd(35)} → ${code.padEnd(20)} Total: ${formatCurrency(acct.total)}`);
+      }
+    }
+
+    if (r.skipped && r.skipped.length > 0) {
+      console.log(`\n  Skipped Accounts (${r.skipped.length}):`);
+      for (const acct of r.skipped) {
+        console.log(`    ⊘ "${acct.name}"${' '.repeat(Math.max(1, 30 - acct.name.length))} Total: ${formatCurrency(acct.total)}`);
       }
     }
 
@@ -608,7 +729,11 @@ Usage: node src/scripts/importQboPnl.js <path> [--dry-run] [--force]
   --dry-run    Preview only, no database changes
   --force      Skip confirmation prompt
 
-File naming: FarmName_FY2025.xlsx (e.g. Lewvan_FY2025.xlsx, Balcarres_FY2024.xlsx)
+File naming (pick one):
+  FarmName.xlsx            One file per BU, full date range (fiscal years auto-detected from headers)
+  FarmName_FY2025.xlsx     Legacy format: one file per BU per fiscal year
+
+QBO class aliases: Keywest → Ogema (add more in FARM_NAME_ALIASES)
 
 Override unmapped accounts by placing qbo-account-overrides.json alongside the files:
   { "Bank Charges": "lpm_shop", "Miscellaneous": "lpm_shop" }
@@ -718,7 +843,7 @@ Override unmapped accounts by placing qbo-account-overrides.json alongside the f
         continue;
       }
       const importResult = await executeImport(freshResult);
-      console.log(`  ✓ ${result.file}: ${importResult.accounts} accounts, ${importResult.months} months`);
+      console.log(`  ✓ ${result.file}: ${importResult.accounts} accounts, ${importResult.months} month-slots, FY ${importResult.fiscalYears.join('+')}`);
       success++;
     } catch (err) {
       console.log(`  ❌ ${result.file}: ${err.message}`);

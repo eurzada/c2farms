@@ -5,6 +5,8 @@ import { authenticate } from '../middleware/auth.js';
 import * as svc from '../services/agronomyService.js';
 import * as woImport from '../services/workOrderImportService.js';
 import * as cwoImport from '../services/cwoImportService.js';
+import * as procSvc from '../services/procurementContractService.js';
+import * as procImport from '../services/procurementImportService.js';
 import prisma from '../config/database.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -251,11 +253,119 @@ agronomyGeneralRouter.get('/snapshots', authenticate, async (req, res, next) => 
 
 // ─── Consolidated Procurement (Phase C) ────────────────────────────
 
+agronomyGeneralRouter.get('/wo-matrix', authenticate, async (req, res, next) => {
+  try {
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const result = await svc.getWorkOrderMatrix(year);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 agronomyGeneralRouter.get('/consolidated-procurement', authenticate, async (req, res, next) => {
   try {
     const year = parseInt(req.query.year) || new Date().getFullYear();
     const result = await svc.getConsolidatedProcurement(year);
     res.json(result);
+  } catch (err) { next(err); }
+});
+
+// ─── Procurement Contracts ──────────────────────────────────────────
+
+async function resolveEnterpriseFarmId() {
+  const ent = await prisma.farm.findFirst({ where: { is_enterprise: true } });
+  if (!ent) throw Object.assign(new Error('Enterprise farm not found'), { status: 404 });
+  return ent.id;
+}
+
+agronomyGeneralRouter.get('/procurement-contracts', authenticate, async (req, res, next) => {
+  try {
+    const farmId = await resolveEnterpriseFarmId();
+    const contracts = await procSvc.getContracts(farmId, {
+      cropYear: req.query.crop_year,
+      status: req.query.status,
+      category: req.query.category,
+      buFarmId: req.query.bu,
+      search: req.query.search,
+    });
+    res.json(contracts);
+  } catch (err) { next(err); }
+});
+
+agronomyGeneralRouter.get('/procurement-contracts/:id', authenticate, async (req, res, next) => {
+  try {
+    const farmId = await resolveEnterpriseFarmId();
+    const contract = await procSvc.getContractById(farmId, req.params.id);
+    res.json(contract);
+  } catch (err) { next(err); }
+});
+
+agronomyGeneralRouter.post('/procurement-contracts', authenticate, async (req, res, next) => {
+  try {
+    const farmId = await resolveEnterpriseFarmId();
+    const contract = await procSvc.createContract(farmId, req.body);
+    res.status(201).json(contract);
+  } catch (err) { next(err); }
+});
+
+agronomyGeneralRouter.patch('/procurement-contracts/:id', authenticate, async (req, res, next) => {
+  try {
+    const farmId = await resolveEnterpriseFarmId();
+    const contract = await procSvc.updateContract(farmId, req.params.id, req.body);
+    res.json(contract);
+  } catch (err) { next(err); }
+});
+
+agronomyGeneralRouter.delete('/procurement-contracts/:id', authenticate, async (req, res, next) => {
+  try {
+    const farmId = await resolveEnterpriseFarmId();
+    await procSvc.deleteContract(farmId, req.params.id);
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
+agronomyGeneralRouter.patch('/procurement-contract-lines/:lineId', authenticate, async (req, res, next) => {
+  try {
+    const line = await procSvc.updateLine(req.params.lineId, req.body);
+    res.json(line);
+  } catch (err) { next(err); }
+});
+
+agronomyGeneralRouter.get('/procurement-kpis', authenticate, async (req, res, next) => {
+  try {
+    const farmId = await resolveEnterpriseFarmId();
+    const cropYear = parseInt(req.query.crop_year) || new Date().getFullYear();
+    const kpis = await procSvc.getDashboardKPIs(farmId, cropYear);
+    res.json(kpis);
+  } catch (err) { next(err); }
+});
+
+agronomyGeneralRouter.post('/procurement-contracts/import/preview', authenticate, upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const cropYear = parseInt(req.body.crop_year) || new Date().getFullYear();
+    const parsed = await procImport.parseProcurementExcel(req.file.buffer);
+    const preview = await procImport.previewProcurementImport(parsed, cropYear);
+    // Stash for commit
+    req.app.locals._procImport = req.app.locals._procImport || {};
+    req.app.locals._procImport[req.userId] = { preview, ts: Date.now() };
+    res.json(preview);
+  } catch (err) {
+    if (err.message) return res.status(400).json({ error: err.message });
+    next(err);
+  }
+});
+
+agronomyGeneralRouter.post('/procurement-contracts/import/commit', authenticate, async (req, res, next) => {
+  try {
+    const cropYear = parseInt(req.body.crop_year);
+    if (!cropYear) return res.status(400).json({ error: 'crop_year required' });
+    const cached = req.app.locals._procImport?.[req.userId];
+    if (!cached || Date.now() - cached.ts > 10 * 60 * 1000) {
+      return res.status(400).json({ error: 'No pending import — please upload and preview again' });
+    }
+    const results = await procImport.commitProcurementImport(cached.preview, cropYear, req.userId);
+    delete req.app.locals._procImport[req.userId];
+    res.json({ success: true, results });
   } catch (err) { next(err); }
 });
 

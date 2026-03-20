@@ -153,6 +153,7 @@ export default function AccountingGrid({ farmId, fiscalYear, onSummaryLoaded }) 
           return true;
         },
         valueFormatter: acctValueFormatter,
+        tooltipValueGetter: (params) => params.data?.comments?.[month] || null,
         cellStyle: (params) => {
           const style = {};
           if (params.data?.isComputed) {
@@ -166,6 +167,11 @@ export default function AccountingGrid({ farmId, fiscalYear, onSummaryLoaded }) 
           }
           if (past) {
             style.backgroundColor = colors.actualCell;
+          }
+          // Module-driven values get a subtle colored font
+          const comment = params.data?.comments?.[month];
+          if (comment && comment.startsWith('From ')) {
+            style.color = colors.moduleDrivenText;
           }
           return style;
         },
@@ -241,6 +247,7 @@ export default function AccountingGrid({ farmId, fiscalYear, onSummaryLoaded }) 
           animateRows={false}
           singleClickEdit={true}
           stopEditingWhenCellsLoseFocus={true}
+          tooltipShowDelay={300}
         />
       </div>
     </Box>

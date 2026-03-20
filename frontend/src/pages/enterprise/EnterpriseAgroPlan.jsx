@@ -1,12 +1,18 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
-  Box, Typography, Paper, Alert, Chip, Stack,
+  Box, Typography, Paper, Alert, Chip, Stack, Tabs, Tab,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   FormControl, InputLabel, Select, MenuItem,
 } from '@mui/material';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import AgricultureIcon from '@mui/icons-material/Agriculture';
+import InventoryIcon from '@mui/icons-material/Inventory';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useFarm } from '../../contexts/FarmContext';
 import api from '../../services/api';
+import ProductLibrary from '../agronomy/ProductLibrary';
+import ProcurementContracts from '../agronomy/ProcurementContracts';
 
 function fmt(n) { return (n || 0).toLocaleString('en-CA', { maximumFractionDigits: 0 }); }
 function fmtDec(n) { return '$' + (n || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -19,7 +25,6 @@ const TOTAL_ROW = { fontWeight: 'bold', borderTop: 2, borderColor: 'divider' };
 const TIMING_LABELS = { fall_residual: 'Fall Residual', preburn: 'Preburn', incrop: 'In-Crop', fungicide: 'Fungicide', desiccation: 'Desiccation' };
 const TIMING_ORDER = ['fall_residual', 'preburn', 'incrop', 'fungicide', 'desiccation'];
 
-// Short farm name: "C2 Lewvan" → "Lewvan"
 function shortName(name) { return (name || '').replace(/^C2\s*/i, ''); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -27,9 +32,8 @@ function shortName(name) { return (name || '').replace(/^C2\s*/i, ''); }
    ═══════════════════════════════════════════════════════════════════════════ */
 
 function buildCategoryData(farmsWithData, category) {
-  // Products as rows, farms as columns → cell = total cost ($)
-  const productMap = new Map(); // productName → { unit, unitPrice, farms: { farmId → { cost, volume } } }
-  const farmTotals = new Map(); // farmId → { cost, acres }
+  const productMap = new Map();
+  const farmTotals = new Map();
 
   for (const { farm, plan, dashboard } of farmsWithData) {
     const acres = dashboard?.farm?.acres || 0;
@@ -55,7 +59,6 @@ function buildCategoryData(farmsWithData, category) {
     }
   }
 
-  // Sort products by total cost descending
   const products = [...productMap.entries()]
     .map(([name, data]) => {
       const totalCost = Object.values(data.farms).reduce((s, f) => s + f.cost, 0);
@@ -72,7 +75,7 @@ function buildCategoryData(farmsWithData, category) {
 
 function buildStageData(farmsWithData) {
   const stageSet = new Set();
-  const farmStage = new Map(); // farmId → { stage → totalCost }
+  const farmStage = new Map();
   const farmAcres = new Map();
 
   for (const { farm, plan, dashboard } of farmsWithData) {
@@ -97,7 +100,7 @@ function buildStageData(farmsWithData) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Product Cost Table — products as rows, farms as columns
+   Product Cost Table
    ═══════════════════════════════════════════════════════════════════════════ */
 function ProductCostTable({ title, data, farmsWithData }) {
   const { products, farmTotals, grandCost, grandAcres } = data;
@@ -140,7 +143,6 @@ function ProductCostTable({ title, data, farmsWithData }) {
               </TableRow>
             ))}
 
-            {/* Total cost row */}
             <TableRow sx={{ '& td': { ...TD, ...TOTAL_ROW } }}>
               <TableCell colSpan={3}>Total Cost</TableCell>
               {farmsWithData.map(({ farm }) => (
@@ -149,7 +151,6 @@ function ProductCostTable({ title, data, farmsWithData }) {
               <TableCell align="right" sx={{ borderLeft: 1, borderColor: 'divider' }}>{fmtK(grandCost)}</TableCell>
             </TableRow>
 
-            {/* $/Acre row */}
             <TableRow sx={{ '& td': { ...TD, fontWeight: 'bold', color: 'primary.main' } }}>
               <TableCell colSpan={3}>$/Acre</TableCell>
               {farmsWithData.map(({ farm }) => {
@@ -172,7 +173,7 @@ function ProductCostTable({ title, data, farmsWithData }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Chemistry Stage Matrix — farms × stages, $/acre
+   Chemistry Stage Matrix
    ═══════════════════════════════════════════════════════════════════════════ */
 function ChemStageTable({ stageData, farmsWithData }) {
   const { stages, farmStage, farmAcres } = stageData;
@@ -220,7 +221,6 @@ function ChemStageTable({ stageData, farmsWithData }) {
                 </TableRow>
               );
             })}
-            {/* Weighted avg */}
             <TableRow sx={{ '& td': { ...TD, ...TOTAL_ROW } }}>
               <TableCell>Avg $/Acre</TableCell>
               {stages.map(s => {
@@ -245,13 +245,114 @@ function ChemStageTable({ stageData, farmsWithData }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Main Page
+   Procurement Tab Content
+   ═══════════════════════════════════════════════════════════════════════════ */
+function ProcurementContent({ year, farmsWithData }) {
+  const seedData = useMemo(() => buildCategoryData(farmsWithData, 'seed'), [farmsWithData]);
+  const fertData = useMemo(() => buildCategoryData(farmsWithData, 'fertilizer'), [farmsWithData]);
+  const chemData = useMemo(() => buildCategoryData(farmsWithData, 'chemical'), [farmsWithData]);
+  const stageData = useMemo(() => buildStageData(farmsWithData), [farmsWithData]);
+
+  const grandAcres = seedData.grandAcres;
+  const totalInput = seedData.grandCost + fertData.grandCost + chemData.grandCost;
+
+  if (farmsWithData.length === 0) {
+    return <Alert severity="warning">No agronomy plans found for crop year {year}.</Alert>;
+  }
+
+  return (
+    <>
+      {/* KPIs */}
+      <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
+        {[
+          { label: 'Farms', value: farmsWithData.length },
+          { label: 'Total Acres', value: fmt(grandAcres) },
+          { label: 'Seed', value: fmtK(seedData.grandCost) },
+          { label: 'Fertilizer', value: fmtK(fertData.grandCost) },
+          { label: 'Chemistry', value: fmtK(chemData.grandCost) },
+          { label: 'Total $/Acre', value: grandAcres > 0 ? fmtDec(totalInput / grandAcres) : '—' },
+        ].map(kpi => (
+          <Paper key={kpi.label} sx={{ p: 2, textAlign: 'center', flex: 1 }}>
+            <Typography variant="body2" color="text.secondary">{kpi.label}</Typography>
+            <Typography variant="h6" fontWeight="bold">{kpi.value}</Typography>
+          </Paper>
+        ))}
+      </Stack>
+
+      {/* Cost by Location */}
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="h6" fontWeight="bold" sx={{ mb: 1 }}>Cost by Location ($/Acre)</Typography>
+        <TableContainer component={Paper}>
+          <Table size="small">
+            <TableHead>
+              <TableRow sx={{ '& th': TH }}>
+                <TableCell>Location</TableCell>
+                <TableCell align="right">Acres</TableCell>
+                <TableCell align="right">Seed</TableCell>
+                <TableCell align="right">Fertilizer</TableCell>
+                <TableCell align="right">Chemistry</TableCell>
+                <TableCell align="right" sx={{ borderLeft: 1, borderColor: 'divider' }}>Total $/Acre</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {farmsWithData.map(({ farm }) => {
+                const acres = seedData.farmTotals.get(farm.id)?.acres || 0;
+                const s = seedData.farmTotals.get(farm.id)?.cost || 0;
+                const f = fertData.farmTotals.get(farm.id)?.cost || 0;
+                const c = chemData.farmTotals.get(farm.id)?.cost || 0;
+                return (
+                  <TableRow key={farm.id} hover>
+                    <TableCell sx={{ ...TD, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{shortName(farm.name)}</TableCell>
+                    <TableCell align="right" sx={TD}>{fmt(acres)}</TableCell>
+                    <TableCell align="right" sx={TD}>{acres > 0 ? fmtDec(s / acres) : '—'}</TableCell>
+                    <TableCell align="right" sx={TD}>{acres > 0 ? fmtDec(f / acres) : '—'}</TableCell>
+                    <TableCell align="right" sx={TD}>{acres > 0 ? fmtDec(c / acres) : '—'}</TableCell>
+                    <TableCell align="right" sx={{ ...TD, fontWeight: 'bold', borderLeft: 1, borderColor: 'divider' }}>
+                      {acres > 0 ? fmtDec((s + f + c) / acres) : '—'}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+              <TableRow sx={{ '& td': { ...TD, ...TOTAL_ROW } }}>
+                <TableCell>TOTAL</TableCell>
+                <TableCell align="right">{fmt(grandAcres)}</TableCell>
+                <TableCell align="right">{grandAcres > 0 ? fmtDec(seedData.grandCost / grandAcres) : ''}</TableCell>
+                <TableCell align="right">{grandAcres > 0 ? fmtDec(fertData.grandCost / grandAcres) : ''}</TableCell>
+                <TableCell align="right">{grandAcres > 0 ? fmtDec(chemData.grandCost / grandAcres) : ''}</TableCell>
+                <TableCell align="right" sx={{ borderLeft: 1, borderColor: 'divider' }}>
+                  {grandAcres > 0 ? fmtDec(totalInput / grandAcres) : ''}
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Box>
+
+      {/* Product tables */}
+      <ProductCostTable title="Seed" data={seedData} farmsWithData={farmsWithData} />
+      <ProductCostTable title="Fertilizer" data={fertData} farmsWithData={farmsWithData} />
+      <ProductCostTable title="Chemistry" data={chemData} farmsWithData={farmsWithData} />
+
+      {/* Chemistry by stage */}
+      <ChemStageTable stageData={stageData} farmsWithData={farmsWithData} />
+    </>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Main Page — Tabbed: Procurement | Product Library
    ═══════════════════════════════════════════════════════════════════════════ */
 export default function EnterpriseAgroPlan() {
   const { farmUnits } = useFarm();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [year, setYear] = useState(2026);
   const [farmResults, setFarmResults] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const isLibraryTab = location.pathname.includes('/library');
+  const isContractsTab = location.pathname.includes('/contracts');
+  const tabIndex = isContractsTab ? 2 : isLibraryTab ? 1 : 0;
 
   useEffect(() => {
     if (!farmUnits?.length) return;
@@ -271,13 +372,10 @@ export default function EnterpriseAgroPlan() {
     [farmResults]
   );
 
-  const seedData = useMemo(() => buildCategoryData(farmsWithData, 'seed'), [farmsWithData]);
-  const fertData = useMemo(() => buildCategoryData(farmsWithData, 'fertilizer'), [farmsWithData]);
-  const chemData = useMemo(() => buildCategoryData(farmsWithData, 'chemical'), [farmsWithData]);
-  const stageData = useMemo(() => buildStageData(farmsWithData), [farmsWithData]);
-
-  const grandAcres = seedData.grandAcres;
-  const totalInput = seedData.grandCost + fertData.grandCost + chemData.grandCost;
+  const handleTabChange = (_, idx) => {
+    const paths = ['/enterprise/agro-plan', '/enterprise/agro-plan/library', '/enterprise/agro-plan/contracts'];
+    navigate(paths[idx] || paths[0]);
+  };
 
   if (loading) return <Typography>Loading...</Typography>;
 
@@ -297,84 +395,28 @@ export default function EnterpriseAgroPlan() {
         <Chip icon={<VisibilityIcon />} label="Read-Only" size="small" variant="outlined" />
       </Box>
 
-      {farmsWithData.length === 0 ? (
-        <Alert severity="warning">No agronomy plans found for crop year {year}.</Alert>
-      ) : (
-        <>
-          {/* ─── KPIs ──────────────────────────────────────────── */}
-          <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
-            {[
-              { label: 'Farms', value: farmsWithData.length },
-              { label: 'Total Acres', value: fmt(grandAcres) },
-              { label: 'Seed', value: fmtK(seedData.grandCost) },
-              { label: 'Fertilizer', value: fmtK(fertData.grandCost) },
-              { label: 'Chemistry', value: fmtK(chemData.grandCost) },
-              { label: 'Total $/Acre', value: grandAcres > 0 ? fmtDec(totalInput / grandAcres) : '—' },
-            ].map(kpi => (
-              <Paper key={kpi.label} sx={{ p: 2, textAlign: 'center', flex: 1 }}>
-                <Typography variant="body2" color="text.secondary">{kpi.label}</Typography>
-                <Typography variant="h6" fontWeight="bold">{kpi.value}</Typography>
-              </Paper>
-            ))}
-          </Stack>
+      {/* Tabs */}
+      <Tabs
+        value={tabIndex}
+        onChange={handleTabChange}
+        variant="scrollable"
+        scrollButtons="auto"
+        sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}
+      >
+        <Tab label="Procurement" icon={<AgricultureIcon />} iconPosition="start" />
+        <Tab label="Product Library" icon={<InventoryIcon />} iconPosition="start" />
+        <Tab label="Contracts" icon={<ReceiptLongIcon />} iconPosition="start" />
+      </Tabs>
 
-          {/* ─── Cost by Location (summary) ────────────────────── */}
-          <Box sx={{ mb: 3 }}>
-            <Typography variant="h6" fontWeight="bold" sx={{ mb: 1 }}>Cost by Location ($/Acre)</Typography>
-            <TableContainer component={Paper}>
-              <Table size="small">
-                <TableHead>
-                  <TableRow sx={{ '& th': TH }}>
-                    <TableCell>Location</TableCell>
-                    <TableCell align="right">Acres</TableCell>
-                    <TableCell align="right">Seed</TableCell>
-                    <TableCell align="right">Fertilizer</TableCell>
-                    <TableCell align="right">Chemistry</TableCell>
-                    <TableCell align="right" sx={{ borderLeft: 1, borderColor: 'divider' }}>Total $/Acre</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {farmsWithData.map(({ farm }) => {
-                    const acres = seedData.farmTotals.get(farm.id)?.acres || 0;
-                    const s = seedData.farmTotals.get(farm.id)?.cost || 0;
-                    const f = fertData.farmTotals.get(farm.id)?.cost || 0;
-                    const c = chemData.farmTotals.get(farm.id)?.cost || 0;
-                    return (
-                      <TableRow key={farm.id} hover>
-                        <TableCell sx={{ ...TD, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{shortName(farm.name)}</TableCell>
-                        <TableCell align="right" sx={TD}>{fmt(acres)}</TableCell>
-                        <TableCell align="right" sx={TD}>{acres > 0 ? fmtDec(s / acres) : '—'}</TableCell>
-                        <TableCell align="right" sx={TD}>{acres > 0 ? fmtDec(f / acres) : '—'}</TableCell>
-                        <TableCell align="right" sx={TD}>{acres > 0 ? fmtDec(c / acres) : '—'}</TableCell>
-                        <TableCell align="right" sx={{ ...TD, fontWeight: 'bold', borderLeft: 1, borderColor: 'divider' }}>
-                          {acres > 0 ? fmtDec((s + f + c) / acres) : '—'}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                  <TableRow sx={{ '& td': { ...TD, ...TOTAL_ROW } }}>
-                    <TableCell>TOTAL</TableCell>
-                    <TableCell align="right">{fmt(grandAcres)}</TableCell>
-                    <TableCell align="right">{grandAcres > 0 ? fmtDec(seedData.grandCost / grandAcres) : ''}</TableCell>
-                    <TableCell align="right">{grandAcres > 0 ? fmtDec(fertData.grandCost / grandAcres) : ''}</TableCell>
-                    <TableCell align="right">{grandAcres > 0 ? fmtDec(chemData.grandCost / grandAcres) : ''}</TableCell>
-                    <TableCell align="right" sx={{ borderLeft: 1, borderColor: 'divider' }}>
-                      {grandAcres > 0 ? fmtDec(totalInput / grandAcres) : ''}
-                    </TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </TableContainer>
-          </Box>
-
-          {/* ─── Product tables ────────────────────────────────── */}
-          <ProductCostTable title="Seed" data={seedData} farmsWithData={farmsWithData} />
-          <ProductCostTable title="Fertilizer" data={fertData} farmsWithData={farmsWithData} />
-          <ProductCostTable title="Chemistry" data={chemData} farmsWithData={farmsWithData} />
-
-          {/* ─── Chemistry by stage ────────────────────────────── */}
-          <ChemStageTable stageData={stageData} farmsWithData={farmsWithData} />
-        </>
+      {/* Tab content */}
+      {tabIndex === 0 && (
+        <ProcurementContent year={year} farmsWithData={farmsWithData} />
+      )}
+      {tabIndex === 1 && (
+        <ProductLibrary year={year} />
+      )}
+      {tabIndex === 2 && (
+        <ProcurementContracts year={year} />
       )}
     </Box>
   );

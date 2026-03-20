@@ -558,7 +558,9 @@ export async function getProcurementSummary(farmId, cropYear) {
 // ─── Product Reference CRUD ─────────────────────────────────────────
 
 export async function getProducts(farmId, type) {
-  const where = { farm_id: farmId };
+  // Always pull from enterprise product library — products are enterprise-scoped
+  const enterprise = await prisma.farm.findFirst({ where: { is_enterprise: true } });
+  const where = { farm_id: enterprise ? enterprise.id : farmId };
   if (type) where.type = type;
   return prisma.agroProduct.findMany({ where, orderBy: { name: 'asc' } });
 }
@@ -568,7 +570,10 @@ export async function upsertProduct(farmId, data) {
   if (id) {
     return prisma.agroProduct.update({ where: { id }, data: fields });
   }
-  return prisma.agroProduct.create({ data: { farm_id: farmId, ...fields } });
+  // Always create products on the enterprise farm (shared library)
+  const enterprise = await prisma.farm.findFirst({ where: { is_enterprise: true } });
+  const targetFarmId = enterprise ? enterprise.id : farmId;
+  return prisma.agroProduct.create({ data: { farm_id: targetFarmId, ...fields } });
 }
 
 export async function deleteProduct(productId) {
@@ -694,6 +699,96 @@ export async function getConsolidatedProcurement(cropYear) {
 }
 
 /**
+ * Get work order procurement matrix for a crop year.
+ * Returns products with per-BU breakdown of quantities, costs, and unit pricing.
+ */
+export async function getWorkOrderMatrix(cropYear) {
+  const woLines = await prisma.workOrderLine.findMany({
+    where: { crop_year: cropYear },
+  });
+
+  if (woLines.length === 0) return { products: [], farms: [], totals: {} };
+
+  // Look up farm names for all referenced farm_ids
+  const farmIds = [...new Set(woLines.map(l => l.farm_id))];
+  const farmsRaw = await prisma.farm.findMany({
+    where: { id: { in: farmIds } },
+    select: { id: true, name: true, is_enterprise: true },
+  });
+  const farmLookup = {};
+  for (const f of farmsRaw) farmLookup[f.id] = f;
+
+  // Collect unique BU farms
+  const farmMap = {};
+  for (const l of woLines) {
+    const f = farmLookup[l.farm_id];
+    if (f && !f.is_enterprise) {
+      farmMap[f.id] = f.name;
+    }
+  }
+  const farms = Object.entries(farmMap)
+    .map(([id, name]) => ({ id, name: name.replace(/^C2\s*/i, '') }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Aggregate by product
+  const productMap = {};
+  for (const l of woLines) {
+    const key = l.product_name;
+    if (!productMap[key]) {
+      productMap[key] = {
+        product_name: l.product_name,
+        product_code: l.product_code,
+        packaging_unit: l.packaging_unit,
+        packaging_volume: null,
+        unit_price: l.unit_price,
+        cost_per_unit: null,
+        by_farm: {},
+        total_pkgs: 0,
+        total_cost: 0,
+      };
+    }
+    const p = productMap[key];
+    const f = farmLookup[l.farm_id];
+    const farmId = (f && !f.is_enterprise) ? l.farm_id : null;
+    const farmKey = farmId || '__unmapped__';
+
+    if (!p.by_farm[farmKey]) p.by_farm[farmKey] = { pkgs: 0, cost: 0 };
+    p.by_farm[farmKey].pkgs += l.qty_ordered;
+    p.by_farm[farmKey].cost += l.line_total || (l.qty_ordered * l.unit_price);
+    p.total_pkgs += l.qty_ordered;
+    p.total_cost += l.line_total || (l.qty_ordered * l.unit_price);
+  }
+
+  // Enrich with product library data (packaging_volume, cost_per_application_unit)
+  const enterprise = await prisma.farm.findFirst({ where: { is_enterprise: true } });
+  const libraryProducts = enterprise
+    ? await prisma.agroProduct.findMany({ where: { farm_id: enterprise.id } })
+    : [];
+  const libByName = {};
+  for (const lp of libraryProducts) libByName[lp.name] = lp;
+
+  const products = Object.values(productMap).map(p => {
+    const lib = libByName[p.product_name];
+    return {
+      ...p,
+      packaging_volume: lib?.packaging_volume || null,
+      cost_per_unit: lib?.cost_per_application_unit || null,
+      type: lib?.type || 'chemical',
+    };
+  }).sort((a, b) => b.total_cost - a.total_cost);
+
+  // Grand totals
+  const totals = {
+    total_products: products.length,
+    total_pkgs: products.reduce((s, p) => s + p.total_pkgs, 0),
+    total_cost: products.reduce((s, p) => s + p.total_cost, 0),
+    total_lines: woLines.length,
+  };
+
+  return { products, farms, totals };
+}
+
+/**
  * Get cost coverage stats for a farm+year.
  */
 export async function getCostCoverage(farmId, cropYear) {
@@ -729,9 +824,39 @@ export async function getProductLibrary(cropYear, type) {
 
   const products = await prisma.agroProduct.findMany({ where, orderBy: { name: 'asc' } });
 
-  // Annotate with CWO usage status: check if any CropInput uses this product
-  // This is expensive for large datasets, so keep it simple for now
-  return products;
+  // Annotate with BU usage: which farms reference this product in their crop plans
+  const inputs = await prisma.cropInput.findMany({
+    where: {
+      allocation: {
+        plan: { crop_year: cropYear },
+      },
+    },
+    select: {
+      product_name: true,
+      allocation: {
+        select: {
+          plan: {
+            select: {
+              farm: { select: { id: true, name: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  // Build product_name → Set<farmName> map
+  const usageMap = {};
+  for (const inp of inputs) {
+    const key = inp.product_name.toLowerCase().trim();
+    if (!usageMap[key]) usageMap[key] = new Set();
+    usageMap[key].add(inp.allocation.plan.farm.name);
+  }
+
+  return products.map(p => ({
+    ...p,
+    used_by: [...(usageMap[p.name.toLowerCase().trim()] || [])].sort(),
+  }));
 }
 
 // ─── Bulk Import (Crop Allocations) ─────────────────────────────────
