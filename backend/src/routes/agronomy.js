@@ -3,8 +3,11 @@ import multer from 'multer';
 import { requireRole } from '../middleware/auth.js';
 import { authenticate } from '../middleware/auth.js';
 import * as svc from '../services/agronomyService.js';
+import * as woImport from '../services/workOrderImportService.js';
+import * as cwoImport from '../services/cwoImportService.js';
+import prisma from '../config/database.js';
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 const router = Router();
 
 // ─── Cross-farm import routes (mounted at /api/agronomy) ────────────
@@ -66,6 +69,192 @@ agronomyGeneralRouter.post('/bulk-status', authenticate, async (req, res, next) 
     if (!adminRole) return res.status(403).json({ error: 'Admin access required' });
 
     const result = await svc.bulkUpdatePlanStatus(crop_year, status, req.user?.name || 'admin');
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// ─── Work Order Import (Phase A) ────────────────────────────────────
+
+agronomyGeneralRouter.post('/work-orders/preview', authenticate, upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const cropYear = parseInt(req.body.crop_year) || new Date().getFullYear();
+    const rows = await woImport.parseWorkOrderExcel(req.file.buffer);
+    const preview = await woImport.previewWorkOrderImport(rows, cropYear);
+    // Stash for commit
+    req.app.locals._woImport = req.app.locals._woImport || {};
+    req.app.locals._woImport[req.userId] = { preview, ts: Date.now() };
+    res.json(preview);
+  } catch (err) {
+    if (err.message) return res.status(400).json({ error: err.message });
+    next(err);
+  }
+});
+
+agronomyGeneralRouter.post('/work-orders/commit', authenticate, async (req, res, next) => {
+  try {
+    const cropYear = parseInt(req.body.crop_year);
+    if (!cropYear) return res.status(400).json({ error: 'crop_year required' });
+    const cached = req.app.locals._woImport?.[req.userId];
+    if (!cached || Date.now() - cached.ts > 10 * 60 * 1000) {
+      return res.status(400).json({ error: 'No pending import — please upload and preview again' });
+    }
+    const results = await woImport.commitWorkOrderImport(cached.preview, cropYear, req.userId);
+    delete req.app.locals._woImport[req.userId];
+    res.json({ success: true, results });
+  } catch (err) { next(err); }
+});
+
+// ─── Product Library (Phase A) ──────────────────────────────────────
+
+agronomyGeneralRouter.get('/product-library', authenticate, async (req, res, next) => {
+  try {
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const type = req.query.type || null;
+    const products = await svc.getProductLibrary(year, type);
+    res.json(products);
+  } catch (err) { next(err); }
+});
+
+agronomyGeneralRouter.patch('/product-library/:id', authenticate, async (req, res, next) => {
+  try {
+    const allowed = ['unit_price', 'packaging_unit', 'packaging_volume', 'cost_per_application_unit',
+      'dealer_code', 'dealer_name', 'name', 'type', 'analysis_code', 'form'];
+    const data = {};
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) data[key] = req.body[key];
+    }
+    // Recompute cost_per_application_unit if price or volume changed
+    if (data.unit_price !== undefined || data.packaging_volume !== undefined) {
+      const existing = await prisma.agroProduct.findUnique({ where: { id: req.params.id } });
+      if (existing) {
+        const price = data.unit_price ?? existing.unit_price;
+        const vol = data.packaging_volume ?? existing.packaging_volume;
+        if (price && vol) data.cost_per_application_unit = price / vol;
+      }
+    }
+    const product = await prisma.agroProduct.update({ where: { id: req.params.id }, data });
+    res.json(product);
+  } catch (err) { next(err); }
+});
+
+// ─── CWO Import (Phase B) ──────────────────────────────────────────
+
+agronomyGeneralRouter.post('/cwo/preview', authenticate, upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const cropYear = parseInt(req.body.crop_year) || new Date().getFullYear();
+
+    const rows = await cwoImport.parseCwoExcel(req.file.buffer);
+    const fieldGroups = cwoImport.extractFieldGroups(rows);
+
+    // Load saved mappings
+    const savedMappings = await prisma.cwoFieldGroupMapping.findMany({
+      where: { crop_year: cropYear },
+    });
+    const mappings = {};
+    for (const m of savedMappings) mappings[m.field_group] = m.farm_id;
+
+    // If custom mappings sent in body, merge
+    if (req.body.field_group_mappings) {
+      try {
+        const custom = JSON.parse(req.body.field_group_mappings);
+        Object.assign(mappings, custom);
+      } catch { /* ignore parse errors */ }
+    }
+
+    const preview = await cwoImport.previewCwoImport(rows, cropYear, mappings);
+
+    // Stash for commit
+    req.app.locals._cwoImport = req.app.locals._cwoImport || {};
+    req.app.locals._cwoImport[req.userId] = { preview, rows, ts: Date.now() };
+
+    res.json({ ...preview, field_groups: fieldGroups, saved_mappings: mappings });
+  } catch (err) {
+    if (err.message) return res.status(400).json({ error: err.message });
+    next(err);
+  }
+});
+
+agronomyGeneralRouter.post('/cwo/commit', authenticate, async (req, res, next) => {
+  try {
+    const cropYear = parseInt(req.body.crop_year);
+    const label = req.body.label || '';
+    if (!cropYear) return res.status(400).json({ error: 'crop_year required' });
+
+    const cached = req.app.locals._cwoImport?.[req.userId];
+    if (!cached || Date.now() - cached.ts > 10 * 60 * 1000) {
+      return res.status(400).json({ error: 'No pending import — please upload and preview again' });
+    }
+
+    // If updated mappings sent, re-preview with new mappings
+    let preview = cached.preview;
+    if (req.body.field_group_mappings) {
+      try {
+        const mappings = JSON.parse(req.body.field_group_mappings);
+        preview = await cwoImport.previewCwoImport(cached.rows, cropYear, mappings);
+      } catch { /* use cached preview */ }
+    }
+
+    const results = await cwoImport.commitCwoImport(preview, cropYear, label, req.userId);
+    delete req.app.locals._cwoImport[req.userId];
+    res.json({ success: true, results });
+  } catch (err) { next(err); }
+});
+
+// ─── Field Group Mappings ──────────────────────────────────────────
+
+agronomyGeneralRouter.get('/field-group-mappings', authenticate, async (req, res, next) => {
+  try {
+    const cropYear = parseInt(req.query.year) || new Date().getFullYear();
+    const mappings = await prisma.cwoFieldGroupMapping.findMany({
+      where: { crop_year: cropYear },
+      include: { farm: { select: { id: true, name: true } } },
+    });
+    res.json(mappings);
+  } catch (err) { next(err); }
+});
+
+agronomyGeneralRouter.post('/field-group-mappings', authenticate, async (req, res, next) => {
+  try {
+    const { mappings, crop_year } = req.body;
+    if (!Array.isArray(mappings) || !crop_year) {
+      return res.status(400).json({ error: 'mappings array and crop_year required' });
+    }
+
+    const results = [];
+    for (const { field_group, farm_id } of mappings) {
+      if (!field_group || !farm_id) continue;
+      const result = await prisma.cwoFieldGroupMapping.upsert({
+        where: { field_group_crop_year: { field_group, crop_year } },
+        update: { farm_id },
+        create: { field_group, farm_id, crop_year },
+      });
+      results.push(result);
+    }
+    res.json({ updated: results.length });
+  } catch (err) { next(err); }
+});
+
+// ─── Snapshots ─────────────────────────────────────────────────────
+
+agronomyGeneralRouter.get('/snapshots', authenticate, async (req, res, next) => {
+  try {
+    const cropYear = parseInt(req.query.year) || new Date().getFullYear();
+    const snapshots = await prisma.cwoImportSnapshot.findMany({
+      where: { crop_year: cropYear },
+      orderBy: { created_at: 'desc' },
+    });
+    res.json(snapshots);
+  } catch (err) { next(err); }
+});
+
+// ─── Consolidated Procurement (Phase C) ────────────────────────────
+
+agronomyGeneralRouter.get('/consolidated-procurement', authenticate, async (req, res, next) => {
+  try {
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const result = await svc.getConsolidatedProcurement(year);
     res.json(result);
   } catch (err) { next(err); }
 });
@@ -259,6 +448,24 @@ router.get('/:farmId/agronomy/procurement', async (req, res, next) => {
     const year = parseInt(req.query.year) || new Date().getFullYear();
     const summary = await svc.getProcurementSummary(req.params.farmId, year);
     res.json(summary || []);
+  } catch (err) { next(err); }
+});
+
+// ─── Apply Pricing (Phase C) ────────────────────────────────────────
+
+router.post('/:farmId/agronomy/apply-pricing', requireRole('manager'), async (req, res, next) => {
+  try {
+    const year = parseInt(req.body.crop_year) || new Date().getFullYear();
+    const result = await svc.applyPricing(req.params.farmId, year);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+router.get('/:farmId/agronomy/cost-coverage', async (req, res, next) => {
+  try {
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const result = await svc.getCostCoverage(req.params.farmId, year);
+    res.json(result);
   } catch (err) { next(err); }
 });
 

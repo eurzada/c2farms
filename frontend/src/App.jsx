@@ -38,6 +38,7 @@ const AgronomyDashboard = lazy(() => import('./pages/agronomy/AgronomyDashboard'
 const PlanSetup = lazy(() => import('./pages/agronomy/PlanSetup'));
 const CropInputPlan = lazy(() => import('./pages/agronomy/CropInputPlan'));
 const LabourPlan = lazy(() => import('./pages/agronomy/LabourPlan'));
+const ProductLibrary = lazy(() => import('./pages/agronomy/ProductLibrary'));
 const EnterpriseForecast = lazy(() => import('./pages/enterprise/EnterpriseForecast'));
 const EnterpriseAgronomy = lazy(() => import('./pages/enterprise/EnterpriseAgronomy'));
 const EnterpriseAgroPlan = lazy(() => import('./pages/enterprise/EnterpriseAgroPlan'));
@@ -156,6 +157,7 @@ export default function App() {
                       <Route path="/agronomy/dashboard" element={<FarmUnitRoute module="agronomy"><AgronomyLayout><AgronomyDashboard /></AgronomyLayout></FarmUnitRoute>} />
                       <Route path="/agronomy/plan" element={<FarmUnitRoute module="agronomy"><AgronomyLayout><PlanSetup /></AgronomyLayout></FarmUnitRoute>} />
                       <Route path="/agronomy/inputs" element={<FarmUnitRoute module="agronomy"><AgronomyLayout><CropInputPlan /></AgronomyLayout></FarmUnitRoute>} />
+                      <Route path="/agronomy/products" element={<FarmUnitRoute module="agronomy"><AgronomyLayout><ProductLibrary /></AgronomyLayout></FarmUnitRoute>} />
                       <Route path="/labour" element={<FarmUnitRoute module="agronomy"><LabourPlan /></FarmUnitRoute>} />
 
                       {/* Inventory — both modes, but different scope */}

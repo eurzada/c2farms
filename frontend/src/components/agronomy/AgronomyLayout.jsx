@@ -3,11 +3,13 @@ import { Box, Tabs, Tab } from '@mui/material';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import GrassIcon from '@mui/icons-material/Grass';
 import ScienceIcon from '@mui/icons-material/Science';
+import InventoryIcon from '@mui/icons-material/Inventory';
 
 const TABS = [
   { label: 'Dashboard', path: '/agronomy/dashboard', icon: <DashboardIcon /> },
   { label: 'Plan Setup', path: '/agronomy/plan', icon: <GrassIcon /> },
   { label: 'Crop Inputs', path: '/agronomy/inputs', icon: <ScienceIcon /> },
+  { label: 'Products', path: '/agronomy/products', icon: <InventoryIcon /> },
 ];
 
 export default function AgronomyLayout({ children }) {

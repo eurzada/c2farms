@@ -2,12 +2,19 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Paper, Button, Chip, Alert, Stack,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Select, MenuItem, FormControl, InputLabel,
+  Select, MenuItem, FormControl, InputLabel, LinearProgress, Collapse,
+  List, ListItem, ListItemText,
 } from '@mui/material';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
+import AgricultureIcon from '@mui/icons-material/Agriculture';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import PriceCheckIcon from '@mui/icons-material/PriceCheck';
 import { useFarm } from '../../contexts/FarmContext';
 import ImportDialog from '../../components/agronomy/ImportDialog';
+import CwoImportDialog from '../../components/agronomy/CwoImportDialog';
+import WorkOrderImportDialog from '../../components/agronomy/WorkOrderImportDialog';
 import api from '../../services/api';
+import { extractErrorMessage } from '../../utils/errorHelpers';
 
 function fmt(n) { return (n || 0).toLocaleString('en-CA', { maximumFractionDigits: 0 }); }
 function fmtDec(n, d = 2) { return (n || 0).toLocaleString('en-CA', { minimumFractionDigits: d, maximumFractionDigits: d }); }
@@ -28,13 +35,26 @@ export default function AgronomyDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [importOpen, setImportOpen] = useState(false);
+  const [cwoOpen, setCwoOpen] = useState(false);
+  const [woOpen, setWoOpen] = useState(false);
+  const [costCoverage, setCostCoverage] = useState(null);
+  const [snapshots, setSnapshots] = useState([]);
+  const [snapshotsOpen, setSnapshotsOpen] = useState(false);
+  const [applyingPricing, setApplyingPricing] = useState(false);
+  const [pricingResult, setPricingResult] = useState(null);
 
   const load = useCallback(async () => {
     if (!currentFarm) return;
     setLoading(true);
     try {
-      const res = await api.get(`/api/farms/${currentFarm.id}/agronomy/dashboard?year=${year}`);
-      setData(res.data);
+      const [dashRes, coverageRes, snapRes] = await Promise.all([
+        api.get(`/api/farms/${currentFarm.id}/agronomy/dashboard?year=${year}`),
+        api.get(`/api/farms/${currentFarm.id}/agronomy/cost-coverage?year=${year}`),
+        api.get(`/api/agronomy/snapshots?year=${year}`),
+      ]);
+      setData(dashRes.data);
+      setCostCoverage(coverageRes.data);
+      setSnapshots(snapRes.data);
     } catch (err) {
       console.error('Dashboard load error:', err);
     } finally {
@@ -43,6 +63,20 @@ export default function AgronomyDashboard() {
   }, [currentFarm, year]);
 
   useEffect(() => { load(); }, [load]);
+
+  const handleApplyPricing = async () => {
+    setApplyingPricing(true);
+    setPricingResult(null);
+    try {
+      const res = await api.post(`/api/farms/${currentFarm.id}/agronomy/apply-pricing`, { crop_year: year });
+      setPricingResult(res.data);
+      load();
+    } catch (err) {
+      console.error('Apply pricing error:', err);
+    } finally {
+      setApplyingPricing(false);
+    }
+  };
 
   if (loading) return <Typography>Loading...</Typography>;
   if (!data || !data.farm) {
@@ -58,14 +92,22 @@ export default function AgronomyDashboard() {
             </Select>
           </FormControl>
           <Box sx={{ flexGrow: 1 }} />
-          <Button variant="outlined" startIcon={<UploadFileIcon />} onClick={() => setImportOpen(true)}>
+          <Button variant="outlined" size="small" startIcon={<UploadFileIcon />} onClick={() => setImportOpen(true)}>
             Import Plans
+          </Button>
+          <Button variant="outlined" size="small" startIcon={<AgricultureIcon />} onClick={() => setCwoOpen(true)}>
+            Import CWO
+          </Button>
+          <Button variant="outlined" size="small" startIcon={<UploadFileIcon />} onClick={() => setWoOpen(true)}>
+            Import Work Orders
           </Button>
         </Box>
         <Alert severity="info">
           No agronomy plan found for crop year {year}. Go to Plan Setup to create one, or import plans from Excel/CSV.
         </Alert>
         <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} year={year} onImported={load} />
+        <CwoImportDialog open={cwoOpen} onClose={() => setCwoOpen(false)} year={year} onImported={load} />
+        <WorkOrderImportDialog open={woOpen} onClose={() => setWoOpen(false)} year={year} onImported={load} />
       </Box>
     );
   }
@@ -88,8 +130,16 @@ export default function AgronomyDashboard() {
         <Button variant="outlined" size="small" startIcon={<UploadFileIcon />} onClick={() => setImportOpen(true)}>
           Import Plans
         </Button>
+        <Button variant="outlined" size="small" startIcon={<AgricultureIcon />} onClick={() => setCwoOpen(true)}>
+          Import CWO
+        </Button>
+        <Button variant="outlined" size="small" startIcon={<UploadFileIcon />} onClick={() => setWoOpen(true)}>
+          Import Work Orders
+        </Button>
       </Box>
       <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} year={year} onImported={load} />
+      <CwoImportDialog open={cwoOpen} onClose={() => setCwoOpen(false)} year={year} onImported={load} />
+      <WorkOrderImportDialog open={woOpen} onClose={() => setWoOpen(false)} year={year} onImported={load} />
 
       {/* KPI Cards */}
       <Stack direction="row" spacing={2} sx={{ mb: 3, flexWrap: 'wrap' }}>
@@ -147,6 +197,68 @@ export default function AgronomyDashboard() {
           </TableBody>
         </Table>
       </TableContainer>
+
+      {/* Cost Coverage & Pricing */}
+      {costCoverage && costCoverage.total > 0 && (
+        <Paper sx={{ p: 2, mb: 3 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+            <Typography variant="h6">Pricing Coverage</Typography>
+            <Chip
+              label={`${costCoverage.priced} of ${costCoverage.total} products have pricing`}
+              color={costCoverage.coverage_pct === 100 ? 'success' : 'warning'}
+              size="small"
+            />
+            <Box sx={{ flexGrow: 1 }} />
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<PriceCheckIcon />}
+              onClick={handleApplyPricing}
+              disabled={applyingPricing || costCoverage.coverage_pct === 100}
+            >
+              {applyingPricing ? 'Applying...' : 'Apply Pricing from Library'}
+            </Button>
+          </Box>
+          <LinearProgress
+            variant="determinate"
+            value={costCoverage.coverage_pct}
+            sx={{ height: 8, borderRadius: 4 }}
+            color={costCoverage.coverage_pct === 100 ? 'success' : 'warning'}
+          />
+          {pricingResult && (
+            <Alert severity="success" sx={{ mt: 1 }} onClose={() => setPricingResult(null)}>
+              Updated {pricingResult.updated} inputs with pricing ({pricingResult.skipped} already priced)
+            </Alert>
+          )}
+        </Paper>
+      )}
+
+      {/* Import Snapshots */}
+      {snapshots.length > 0 && (
+        <Paper sx={{ p: 2, mb: 3 }}>
+          <Box
+            sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}
+            onClick={() => setSnapshotsOpen(!snapshotsOpen)}
+          >
+            <Typography variant="h6">Import History</Typography>
+            <Chip label={`${snapshots.length} imports`} size="small" sx={{ ml: 1 }} />
+            <Box sx={{ flexGrow: 1 }} />
+            <ExpandMoreIcon sx={{ transform: snapshotsOpen ? 'rotate(180deg)' : 'none', transition: '0.2s' }} />
+          </Box>
+          <Collapse in={snapshotsOpen}>
+            <List dense>
+              {snapshots.map(s => (
+                <ListItem key={s.id}>
+                  <ListItemText
+                    primary={s.label}
+                    secondary={`${new Date(s.created_at).toLocaleDateString()} — ${s.row_count} rows — ${s.source}`}
+                  />
+                </ListItem>
+              ))}
+            </List>
+          </Collapse>
+        </Paper>
+      )}
 
       {/* Budget Guardrails */}
       <Paper sx={{ p: 2 }}>

@@ -10,6 +10,9 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import PriceCheckIcon from '@mui/icons-material/PriceCheck';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { useFarm } from '../../contexts/FarmContext';
 import api from '../../services/api';
 import { extractErrorMessage } from '../../utils/errorHelpers';
@@ -98,11 +101,18 @@ function InputSection({ title, inputs, allocation, canEdit, onAdd, onDelete, onU
                   </TableCell>
                   <TableCell sx={{ fontSize: '0.8rem' }}>{inp.rate_unit}</TableCell>
                   <TableCell align="right">
-                    {canEdit ? (
-                      <TextField size="small" type="number" value={inp.cost_per_unit}
-                        onChange={e => onUpdate(inp.id, { cost_per_unit: parseFloat(e.target.value) || 0 })}
-                        sx={{ width: 80 }} inputProps={{ style: { textAlign: 'right', fontSize: '0.8rem' } }} />
-                    ) : `$${fmtDec(inp.cost_per_unit, 4)}`}
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                      {inp.cost_per_unit > 0 ? (
+                        <CheckCircleIcon sx={{ fontSize: 14, color: 'success.main' }} />
+                      ) : (
+                        <WarningAmberIcon sx={{ fontSize: 14, color: 'warning.main' }} />
+                      )}
+                      {canEdit ? (
+                        <TextField size="small" type="number" value={inp.cost_per_unit}
+                          onChange={e => onUpdate(inp.id, { cost_per_unit: parseFloat(e.target.value) || 0 })}
+                          sx={{ width: 80 }} inputProps={{ style: { textAlign: 'right', fontSize: '0.8rem' } }} />
+                      ) : `$${fmtDec(inp.cost_per_unit, 4)}`}
+                    </Box>
                   </TableCell>
                   <TableCell align="right" sx={{ fontWeight: 500 }}>${fmtDec(cpa)}</TableCell>
                   <TableCell align="right">${fmt(cpa * allocation.acres)}</TableCell>
@@ -143,6 +153,7 @@ export default function CropInputPlan() {
   const [copySourceAllocs, setCopySourceAllocs] = useState([]);
   const [copySourceAllocId, setCopySourceAllocId] = useState('');
   const [copyLoading, setCopyLoading] = useState(false);
+  const [applyingPricing, setApplyingPricing] = useState(false);
 
   const load = useCallback(async () => {
     if (!currentFarm) return;
@@ -261,6 +272,18 @@ export default function CropInputPlan() {
     }
   };
 
+  const handleApplyPricing = async () => {
+    setApplyingPricing(true);
+    try {
+      await api.post(`/api/farms/${currentFarm.id}/agronomy/apply-pricing`, { crop_year: year });
+      load();
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Error applying pricing'));
+    } finally {
+      setApplyingPricing(false);
+    }
+  };
+
   if (loading) return <Typography>Loading...</Typography>;
   if (!plan) {
     return (
@@ -291,6 +314,17 @@ export default function CropInputPlan() {
             <MenuItem value={2025}>2025</MenuItem>
           </Select>
         </FormControl>
+        {canEdit && (
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<PriceCheckIcon />}
+            onClick={handleApplyPricing}
+            disabled={applyingPricing}
+          >
+            {applyingPricing ? 'Applying...' : 'Auto-fill Prices'}
+          </Button>
+        )}
       </Box>
 
       {plan.allocations?.map(alloc => {

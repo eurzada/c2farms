@@ -575,6 +575,165 @@ export async function deleteProduct(productId) {
   return prisma.agroProduct.delete({ where: { id: productId } });
 }
 
+// ─── Product Library & Cost Merge (Phase C) ─────────────────────────
+
+/**
+ * Apply pricing from product library (AgroProduct) to CropInput records.
+ * Matches by product_name → AgroProduct.canonical_name via fuzzy match.
+ */
+export async function applyPricing(farmId, cropYear) {
+  const plan = await getPlan(farmId, cropYear);
+  if (!plan) throw new Error(`No plan found for farm ${farmId}, crop year ${cropYear}`);
+
+  // Get enterprise product library
+  const enterprise = await prisma.farm.findFirst({ where: { is_enterprise: true } });
+  if (!enterprise) throw new Error('Enterprise farm not found');
+
+  const products = await prisma.agroProduct.findMany({
+    where: { farm_id: enterprise.id, cost_per_application_unit: { not: null } },
+  });
+
+  const { findBestMatch } = await import('./productMatchingService.js');
+  let updated = 0;
+  let skipped = 0;
+
+  for (const alloc of plan.allocations) {
+    for (const input of alloc.inputs) {
+      // Skip if already has a non-zero cost
+      if (input.cost_per_unit > 0) { skipped++; continue; }
+
+      const match = findBestMatch(input.product_name, products);
+      if (match && match.match.cost_per_application_unit) {
+        await prisma.cropInput.update({
+          where: { id: input.id },
+          data: { cost_per_unit: match.match.cost_per_application_unit },
+        });
+        updated++;
+      }
+    }
+  }
+
+  log.info(`Applied pricing: ${updated} inputs updated, ${skipped} skipped (already priced)`);
+  return { updated, skipped, farm_id: farmId, crop_year: cropYear };
+}
+
+/**
+ * Get consolidated procurement across all farms for a crop year.
+ * Cross-references with WorkOrderLine quantities.
+ */
+export async function getConsolidatedProcurement(cropYear) {
+  // Get all plans for this crop year
+  const plans = await prisma.agroPlan.findMany({
+    where: { crop_year: cropYear },
+    include: {
+      farm: true,
+      allocations: {
+        include: { inputs: true },
+      },
+    },
+  });
+
+  // Get work order lines for comparison
+  const woLines = await prisma.workOrderLine.findMany({
+    where: { crop_year: cropYear },
+  });
+
+  // Aggregate work order quantities by canonical name
+  const { buildCanonicalName } = await import('./productMatchingService.js');
+  const woByProduct = {};
+  for (const wol of woLines) {
+    const cn = wol.canonical_name || buildCanonicalName(wol.product_name);
+    if (!woByProduct[cn]) woByProduct[cn] = { ordered: 0, total_cost: 0, unit_price: wol.unit_price };
+    woByProduct[cn].ordered += wol.qty_ordered;
+    woByProduct[cn].total_cost += wol.line_total;
+  }
+
+  // Aggregate planned usage across all farms
+  const products = {};
+  for (const plan of plans) {
+    for (const alloc of plan.allocations) {
+      for (const inp of alloc.inputs) {
+        const cn = buildCanonicalName(inp.product_name);
+        const key = `${inp.category}:${cn}`;
+        if (!products[key]) {
+          products[key] = {
+            category: inp.category,
+            product_name: inp.product_name,
+            canonical_name: cn,
+            rate_unit: inp.rate_unit,
+            cost_per_unit: inp.cost_per_unit,
+            total_qty_needed: 0,
+            total_planned_cost: 0,
+            ordered_qty: woByProduct[cn]?.ordered || 0,
+            ordered_cost: woByProduct[cn]?.total_cost || 0,
+            farms: [],
+          };
+        }
+        const qty = inp.rate * alloc.acres;
+        products[key].total_qty_needed += qty;
+        products[key].total_planned_cost += qty * inp.cost_per_unit;
+        products[key].farms.push({
+          farm_name: plan.farm.name,
+          crop: alloc.crop,
+          acres: alloc.acres,
+          rate: inp.rate,
+          qty: qty,
+        });
+      }
+    }
+  }
+
+  // Add delta (ordered - needed)
+  const result = Object.values(products).map(p => ({
+    ...p,
+    delta_qty: p.ordered_qty - p.total_qty_needed,
+    delta_cost: p.ordered_cost - p.total_planned_cost,
+  }));
+
+  return result.sort((a, b) => b.total_planned_cost - a.total_planned_cost);
+}
+
+/**
+ * Get cost coverage stats for a farm+year.
+ */
+export async function getCostCoverage(farmId, cropYear) {
+  const plan = await getPlan(farmId, cropYear);
+  if (!plan) return { total: 0, priced: 0, unpriced: 0, coverage_pct: 0 };
+
+  let total = 0;
+  let priced = 0;
+  for (const alloc of plan.allocations) {
+    for (const inp of alloc.inputs) {
+      total++;
+      if (inp.cost_per_unit > 0) priced++;
+    }
+  }
+
+  return {
+    total,
+    priced,
+    unpriced: total - priced,
+    coverage_pct: total > 0 ? Math.round((priced / total) * 100) : 0,
+  };
+}
+
+/**
+ * Get product library (enterprise-scoped) with optional type filter.
+ */
+export async function getProductLibrary(cropYear, type) {
+  const enterprise = await prisma.farm.findFirst({ where: { is_enterprise: true } });
+  if (!enterprise) return [];
+
+  const where = { farm_id: enterprise.id };
+  if (type) where.type = type;
+
+  const products = await prisma.agroProduct.findMany({ where, orderBy: { name: 'asc' } });
+
+  // Annotate with CWO usage status: check if any CropInput uses this product
+  // This is expensive for large datasets, so keep it simple for now
+  return products;
+}
+
 // ─── Bulk Import (Crop Allocations) ─────────────────────────────────
 
 function normalizeHeader(h) {

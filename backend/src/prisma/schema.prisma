@@ -34,7 +34,8 @@ model Farm {
   agro_plans      AgroPlan[]
   agro_products   AgroProduct[]
   season_profiles SeasonProfile[]
-  labour_plans    LabourPlan[]
+  labour_plans              LabourPlan[]
+  cwo_field_group_mappings  CwoFieldGroupMapping[]
 
   terminal_bins              TerminalBin[]
   terminal_tickets           TerminalTicket[]
@@ -899,17 +900,25 @@ model CropInput {
 }
 
 model AgroProduct {
-  id            String @id @default(uuid())
-  farm_id       String
-  name          String
-  type          String // seed, fertilizer, chemical, adjuvant
-  sub_type      String? // herbicide, fungicide, insecticide, growth_reg
-  crop_filter   String? // comma-separated crops or null for all
-  analysis_code String? // "46-0-0" (fertilizers)
-  form          String? // dry, liquid, nh3, micro_nutrient
-  default_unit  String?
-  default_rate  Float?
-  default_cost  Float?
+  id                      String  @id @default(uuid())
+  farm_id                 String
+  name                    String
+  type                    String  // seed, fertilizer, chemical, adjuvant
+  sub_type                String? // herbicide, fungicide, insecticide, growth_reg
+  crop_filter             String? // comma-separated crops or null for all
+  analysis_code           String? // "46-0-0" (fertilizers)
+  form                    String? // dry, liquid, nh3, micro_nutrient
+  default_unit            String?
+  default_rate            Float?
+  default_cost            Float?
+  // Dealer pricing fields (from Work Order import)
+  unit_price              Float?  // $/packaging unit from dealer
+  packaging_unit          String? // MB, DRUM, JUG, TOTE, etc.
+  packaging_volume        Float?  // volume/weight per package in base units (L or kg)
+  dealer_code             String? // Synergy product code
+  dealer_name             String? // e.g. "LAKELAND"
+  canonical_name          String? // normalized name for fuzzy matching
+  cost_per_application_unit Float? // computed $/L or $/lb for merging with CropInput rates
 
   farm          Farm @relation(fields: [farm_id], references: [id])
 
@@ -934,6 +943,56 @@ model SeasonProfile {
 
   @@unique([farm_id, crop, crop_year])
   @@map("season_profiles")
+}
+
+// ─── Work Orders & CWO Import ───────────────────────────────────────
+
+model WorkOrderLine {
+  id               String   @id @default(uuid())
+  farm_id          String
+  customer_name    String
+  work_order_ref   String
+  order_date       DateTime?
+  payment_due_date DateTime?
+  product_name     String
+  product_code     String?
+  packaging_unit   String?
+  qty_ordered      Float    @default(0)
+  qty_taken        Float    @default(0)
+  qty_remaining    Float    @default(0)
+  prepaid          Float    @default(0)
+  unit_price       Float    @default(0)
+  line_total       Float    @default(0)
+  crop_year        Int
+  canonical_name   String?
+  created_at       DateTime @default(now())
+
+  @@map("work_order_lines")
+}
+
+model CwoFieldGroupMapping {
+  id          String @id @default(uuid())
+  farm_id     String
+  field_group String
+  crop_year   Int
+
+  farm        Farm @relation(fields: [farm_id], references: [id])
+
+  @@unique([field_group, crop_year])
+  @@map("cwo_field_group_mappings")
+}
+
+model CwoImportSnapshot {
+  id           String   @id @default(uuid())
+  crop_year    Int
+  label        String   // "Spring 2026 Plan", "Mid-Season Update"
+  source       String   @default("cwo_export")
+  imported_by  String?
+  row_count    Int      @default(0)
+  summary_json Json?
+  created_at   DateTime @default(now())
+
+  @@map("cwo_import_snapshots")
 }
 
 // ─── Labour Planning ─────────────────────────────────────────────────
