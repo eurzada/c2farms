@@ -947,7 +947,7 @@ export default function Settlements() {
                         <TableCell>Contract #</TableCell>
                         <TableCell>Date</TableCell>
                         <TableCell>Grade</TableCell>
-                        <TableCell align="right">Gross MT</TableCell>
+                        <TableCell align="right">Unload MT</TableCell>
                         <TableCell align="right">Net MT</TableCell>
                         <TableCell align="right">$/MT</TableCell>
                         <TableCell align="right">$/bu</TableCell>

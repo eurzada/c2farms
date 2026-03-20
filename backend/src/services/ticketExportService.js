@@ -57,10 +57,7 @@ async function getTicketData(farmId, filters = {}) {
       delivery_date: t.delivery_date ? new Date(t.delivery_date).toISOString().split('T')[0] : '',
       crop_year: t.crop_year ?? '',
       commodity: t.commodity?.name || '',
-      gross_weight_mt: t.gross_weight_kg != null ? Math.round(t.gross_weight_kg / 1000 * 1000) / 1000 : '',
-      tare_weight_mt: t.tare_weight_kg != null ? Math.round(t.tare_weight_kg / 1000 * 1000) / 1000 : '',
       net_weight_mt: t.net_weight_mt != null ? Math.round(t.net_weight_mt * 1000) / 1000 : 0,
-      dockage_pct: t.dockage_pct != null ? t.dockage_pct : '',
       location: t.location?.name || '',
       bin: t.bin?.bin_number || t.bin_label || '',
       buyer: t.buyer_name || t.counterparty?.name || '',
@@ -93,7 +90,7 @@ export async function generateTicketExcel(farmId, filters = {}) {
   // Sheet 1: Ticket Detail
   const detailSheet = workbook.addWorksheet('Ticket Detail');
   detailSheet.addRow([
-    'Ticket #', 'Date', 'Crop Year', 'Crop', 'Gross MT', 'Tare MT', 'Net MT', 'Dockage %',
+    'Ticket #', 'Date', 'Crop Year', 'Crop', 'Unload MT',
     'Location', 'Bin', 'Buyer', 'Contract #', 'Grade', 'Moisture %',
     'Operator', 'Destination', 'Source', 'Settlement', 'Paid',
   ]);
@@ -101,7 +98,7 @@ export async function generateTicketExcel(farmId, filters = {}) {
   for (const r of rows) {
     detailSheet.addRow([
       r.ticket_number, r.delivery_date, r.crop_year, r.commodity,
-      r.gross_weight_mt, r.tare_weight_mt, r.net_weight_mt, r.dockage_pct,
+      r.net_weight_mt,
       r.location, r.bin, r.buyer, r.contract_number, r.grade,
       r.moisture_pct != null ? Math.round(r.moisture_pct * 10000) / 100 : '',
       r.operator, r.destination, r.source, r.settlement,
@@ -292,7 +289,7 @@ export async function generateTicketPdf(farmId, filters = {}) {
   };
 
   // ─── Detail table ───
-  const detailHeaders = ['Ticket #', 'Date', 'CY', 'Crop', 'Gross', 'Tare', 'Net MT', 'Dkg%', 'Location', 'Bin', 'Buyer', 'Contract #', 'Grade', 'Mst%', 'Dest', 'Settlement', 'Paid'];
+  const detailHeaders = ['Ticket #', 'Date', 'CY', 'Crop', 'Unload MT', 'Location', 'Bin', 'Buyer', 'Contract #', 'Grade', 'Mst%', 'Dest', 'Settlement', 'Paid'];
 
   const detailBody = [
     detailHeaders.map(h =>
@@ -305,10 +302,7 @@ export async function generateTicketPdf(farmId, filters = {}) {
         { text: r.delivery_date, fontSize: 6, fillColor: bg, border: noBorder },
         { text: String(r.crop_year), fontSize: 6, fillColor: bg, border: noBorder },
         { text: r.commodity, fontSize: 6, fillColor: bg, border: noBorder },
-        { text: r.gross_weight_mt !== '' ? fmtNum(r.gross_weight_mt) : '—', fontSize: 6, alignment: 'right', fillColor: bg, border: noBorder },
-        { text: r.tare_weight_mt !== '' ? fmtNum(r.tare_weight_mt) : '—', fontSize: 6, alignment: 'right', fillColor: bg, border: noBorder },
         { text: fmtNum(r.net_weight_mt), fontSize: 6, alignment: 'right', fillColor: bg, border: noBorder },
-        { text: r.dockage_pct !== '' ? fmtNum(r.dockage_pct) : '—', fontSize: 6, alignment: 'right', fillColor: bg, border: noBorder },
         { text: r.location, fontSize: 6, fillColor: bg, border: noBorder },
         { text: r.bin, fontSize: 6, fillColor: bg, border: noBorder },
         { text: r.buyer, fontSize: 6, fillColor: bg, border: noBorder },
@@ -348,7 +342,7 @@ export async function generateTicketPdf(farmId, filters = {}) {
       {
         table: {
           headerRows: 1,
-          widths: ['auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', '*', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto'],
+          widths: ['auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', '*', 'auto', 'auto'],
           body: detailBody,
         },
         layout: {
@@ -377,7 +371,7 @@ export async function generateTicketCsv(farmId, filters = {}) {
   };
 
   const columns = [
-    'Ticket #', 'Date', 'Crop Year', 'Crop', 'Gross MT', 'Tare MT', 'Net MT', 'Dockage %',
+    'Ticket #', 'Date', 'Crop Year', 'Crop', 'Unload MT',
     'Location', 'Bin', 'Buyer', 'Contract #', 'Grade', 'Moisture %',
     'Operator', 'Destination', 'Source', 'Settlement', 'Paid',
   ];
@@ -386,7 +380,7 @@ export async function generateTicketCsv(farmId, filters = {}) {
   for (const r of rows) {
     lines.push([
       r.ticket_number, r.delivery_date, r.crop_year, r.commodity,
-      r.gross_weight_mt, r.tare_weight_mt, r.net_weight_mt, r.dockage_pct,
+      r.net_weight_mt,
       r.location, r.bin, r.buyer, r.contract_number, r.grade,
       r.moisture_pct != null ? Math.round(r.moisture_pct * 10000) / 100 : '',
       r.operator, r.destination, r.source, r.settlement,

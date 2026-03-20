@@ -468,7 +468,7 @@ export default function SettlementReconciliation() {
                           <Grid item xs={12} sm={6}>
                             <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>Settlement Line</Typography>
                             <Typography variant="body2">Ticket #: {line.ticket_number_on_settlement || 'N/A'}</Typography>
-                            <Typography variant="body2">Weight: {fmt(line.net_weight_mt, 3)} MT</Typography>
+                            <Typography variant="body2">Net: {fmt(line.net_weight_mt, 3)} MT</Typography>
                             <Typography variant="body2">Date: {line.delivery_date ? new Date(line.delivery_date).toLocaleDateString() : 'N/A'}</Typography>
                             <Typography variant="body2">Commodity: {line.commodity || 'N/A'}</Typography>
                           </Grid>
@@ -476,7 +476,7 @@ export default function SettlementReconciliation() {
                             <Grid item xs={12} sm={6}>
                               <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>Closest Ticket Match</Typography>
                               <Typography variant="body2">Ticket #: {ticket.ticket_number}</Typography>
-                              <Typography variant="body2">Weight: {fmt(ticket.net_weight_mt, 3)} MT</Typography>
+                              <Typography variant="body2">Unload: {fmt(ticket.net_weight_mt, 3)} MT</Typography>
                               <Typography variant="body2">
                                 Date: {ticket.source_timestamp
                                   ? new Date(ticket.source_timestamp).toLocaleString('en-CA', { timeZone: 'America/Regina', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -616,7 +616,7 @@ export default function SettlementReconciliation() {
                             {!ticketNumsMatch && ' ⚠'}
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
-                            {line.delivery_ticket.net_weight_mt?.toFixed(2)} MT |{' '}
+                            {line.delivery_ticket.net_weight_mt?.toFixed(2)} Unload MT |{' '}
                             {line.delivery_ticket.commodity?.name} |{' '}
                             {line.delivery_ticket.location?.name}
                             {line.delivery_ticket.source_timestamp && (

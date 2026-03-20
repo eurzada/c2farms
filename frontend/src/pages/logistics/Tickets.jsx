@@ -47,12 +47,19 @@ export default function Tickets() {
   const [selectedCount, setSelectedCount] = useState(0);
   const [searchText, setSearchText] = useState('');
   const [activeCounterpartyId, setActiveCounterpartyId] = useState(null);
+  const [activeCommodityId, setActiveCommodityId] = useState(null);
   const [snack, setSnack] = useState({ open: false, message: '', severity: 'error' });
   const [unmatchedReportOpen, setUnmatchedReportOpen] = useState(false);
   const [colAnchor, setColAnchor] = useState(null);
   const [hiddenCols, setHiddenCols] = useState(() => {
-    const defaults = { gross_weight_mt: true, tare_weight_mt: true, dockage_pct: true };
-    try { return { ...defaults, ...JSON.parse(localStorage.getItem('c2_tickets_hidden_cols')) }; } catch { return defaults; }
+    try {
+      const saved = JSON.parse(localStorage.getItem('c2_tickets_hidden_cols')) || {};
+      // Remove legacy columns that no longer exist
+      delete saved.gross_weight_mt;
+      delete saved.tare_weight_mt;
+      delete saved.dockage_pct;
+      return saved;
+    } catch { return {}; }
   });
   const [editTicket, setEditTicket] = useState(null);
   const [exportAnchor, setExportAnchor] = useState(null);
@@ -202,8 +209,8 @@ export default function Tickets() {
 
   const copyUnmatchedReport = () => {
     const lines = ['Not Reconciled — Tickets Report', `Generated: ${new Date().toLocaleDateString()}`, ''];
-    lines.push(`Total: ${unmatchedTotal.tickets} tickets, ${unmatchedTotal.mt.toFixed(2)} MT`, '');
-    lines.push('Contract #\tBuyer\tCrop\tTickets\tTotal MT');
+    lines.push(`Total: ${unmatchedTotal.tickets} tickets, ${unmatchedTotal.mt.toFixed(2)} Unload MT`, '');
+    lines.push('Contract #\tBuyer\tCrop\tTickets\tUnload MT');
     for (const g of unmatchedReport) {
       lines.push(`${g.contract_number}\t${g.buyer}\t${g.crop}\t${g.tickets}\t${g.total_mt.toFixed(2)}`);
     }
@@ -212,7 +219,7 @@ export default function Tickets() {
   };
 
   const downloadUnmatchedCsv = () => {
-    const rows = [['Contract #', 'Buyer', 'Crop', 'Tickets', 'Total MT']];
+    const rows = [['Contract #', 'Buyer', 'Crop', 'Tickets', 'Unload MT']];
     for (const g of unmatchedReport) {
       rows.push([g.contract_number, g.buyer, g.crop, g.tickets, g.total_mt.toFixed(2)]);
     }
@@ -244,10 +251,7 @@ export default function Tickets() {
     { field: 'delivery_date', headerName: 'Date' },
     { field: 'crop_year', headerName: 'Crop Yr' },
     { field: 'commodity.name', headerName: 'Crop' },
-    { field: 'gross_weight_mt', headerName: 'Gross MT' },
-    { field: 'tare_weight_mt', headerName: 'Tare MT' },
-    { field: 'net_weight_mt', headerName: 'Net MT' },
-    { field: 'dockage_pct', headerName: 'Dockage%' },
+    { field: 'net_weight_mt', headerName: 'Unload MT' },
     { field: 'location.name', headerName: 'Location' },
     { field: 'bin_label', headerName: 'Bin/Bag' },
     { field: 'buyer_name', headerName: 'Buyer' },
@@ -310,23 +314,9 @@ export default function Tickets() {
     },
     !hiddenCols['crop_year'] && { field: 'crop_year', headerName: 'Crop Yr', width: 75 },
     !hiddenCols['commodity.name'] && { field: 'commodity.name', headerName: 'Crop', width: 100 },
-    !hiddenCols['gross_weight_mt'] && {
-      field: 'gross_weight_mt', headerName: 'Gross MT', width: 85,
-      valueGetter: p => p.data?.gross_weight_kg ? p.data.gross_weight_kg / 1000 : null,
-      valueFormatter: p => p.value?.toFixed(2) ?? '',
-    },
-    !hiddenCols['tare_weight_mt'] && {
-      field: 'tare_weight_mt', headerName: 'Tare MT', width: 80,
-      valueGetter: p => p.data?.tare_weight_kg ? p.data.tare_weight_kg / 1000 : null,
-      valueFormatter: p => p.value?.toFixed(2) ?? '',
-    },
     !hiddenCols['net_weight_mt'] && {
-      field: 'net_weight_mt', headerName: 'Net MT', width: 85,
+      field: 'net_weight_mt', headerName: 'Unload MT', width: 85,
       valueFormatter: p => p.value?.toFixed(2),
-    },
-    !hiddenCols['dockage_pct'] && {
-      field: 'dockage_pct', headerName: 'Dockage%', width: 80,
-      valueFormatter: p => p.value != null ? p.value.toFixed(2) + '%' : '',
     },
     !hiddenCols['location.name'] && { field: 'location.name', headerName: 'Location', width: 100 },
     !hiddenCols['bin_label'] && { field: 'bin_label', headerName: 'Bin/Bag', width: 100 },
@@ -499,21 +489,54 @@ export default function Tickets() {
         <Stack direction="row" spacing={1} sx={{ mb: 2 }} flexWrap="wrap" useFlexGap>
           {stats.by_counterparty.map(cp => {
             const commodities = cp.by_commodity || [];
+            const isActive = activeCounterpartyId === cp.counterparty_id;
+
+            if (isActive) {
+              // Active buyer: show parent chip + commodity sub-chips
+              return [
+                <Chip
+                  key={cp.counterparty_id}
+                  label={`${cp.counterparty_name} ✓ (${cp.total_mt.toFixed(0)} MT)`}
+                  size="small"
+                  variant="filled"
+                  color="primary"
+                  onClick={() => {
+                    setActiveCounterpartyId(null);
+                    setActiveCommodityId(null);
+                  }}
+                  sx={{ cursor: 'pointer' }}
+                />,
+                ...commodities.map(c => (
+                  <Chip
+                    key={`${cp.counterparty_id}-${c.commodity_id}`}
+                    label={`${c.commodity_name}: ${c.total_mt.toFixed(0)} MT`}
+                    size="small"
+                    variant={activeCommodityId === c.commodity_id ? 'filled' : 'outlined'}
+                    color={activeCommodityId === c.commodity_id ? 'secondary' : 'default'}
+                    onClick={() => {
+                      setActiveCommodityId(activeCommodityId === c.commodity_id ? null : c.commodity_id);
+                    }}
+                    sx={{ cursor: 'pointer' }}
+                  />
+                )),
+              ];
+            }
+
+            // Inactive buyer: show combined label
             const breakdown = commodities.length === 1
               ? `${commodities[0].total_mt.toFixed(0)} MT ${commodities[0].commodity_name}`
               : commodities.map(c => `${c.total_mt.toFixed(0)} MT ${c.commodity_name}`).join(' \u00b7 ')
                 + ` (${cp.total_mt.toFixed(0)} MT total)`;
-            const label = `${cp.counterparty_name}: ${breakdown}`;
-            const isActive = activeCounterpartyId === cp.counterparty_id;
             return (
               <Chip
                 key={cp.counterparty_id}
-                label={label}
+                label={`${cp.counterparty_name}: ${breakdown}`}
                 size="small"
-                variant={isActive ? 'filled' : 'outlined'}
-                color={isActive ? 'primary' : 'default'}
+                variant="outlined"
+                color="default"
                 onClick={() => {
-                  setActiveCounterpartyId(isActive ? null : cp.counterparty_id);
+                  setActiveCounterpartyId(cp.counterparty_id);
+                  setActiveCommodityId(null);
                 }}
                 sx={{ cursor: 'pointer' }}
               />
@@ -528,7 +551,12 @@ export default function Tickets() {
       >
         <AgGridReact
           ref={gridRef}
-          rowData={activeCounterpartyId ? tickets.filter(t => t.counterparty_id === activeCounterpartyId) : tickets}
+          rowData={activeCounterpartyId
+            ? tickets.filter(t =>
+                t.counterparty_id === activeCounterpartyId &&
+                (!activeCommodityId || t.commodity_id === activeCommodityId)
+              )
+            : tickets}
           columnDefs={columnDefs}
           defaultColDef={{ sortable: true, resizable: true, filter: true }}
           animateRows
@@ -609,7 +637,7 @@ export default function Tickets() {
           ) : (
             <>
               <Alert severity="info" sx={{ mb: 2 }}>
-                {unmatchedTotal.tickets} ticket{unmatchedTotal.tickets !== 1 ? 's' : ''} ({unmatchedTotal.mt.toFixed(2)} MT) not yet reconciled to a settlement.
+                {unmatchedTotal.tickets} ticket{unmatchedTotal.tickets !== 1 ? 's' : ''} ({unmatchedTotal.mt.toFixed(2)} Unload MT) not yet reconciled to a settlement.
               </Alert>
               <TableContainer component={Paper} variant="outlined">
                 <Table size="small">
@@ -619,7 +647,7 @@ export default function Tickets() {
                       <TableCell>Buyer</TableCell>
                       <TableCell>Crop</TableCell>
                       <TableCell align="right">Tickets</TableCell>
-                      <TableCell align="right">Total MT</TableCell>
+                      <TableCell align="right">Unload MT</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>

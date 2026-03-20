@@ -672,10 +672,47 @@ export async function getContractFulfillment(farmId) {
     }
   }
 
+  // Get settled Net MT per contract from SettlementLine (matched/manual lines only)
+  const settledByContract = {};
+  if (contractIds.length > 0) {
+    // SettlementLines linked via delivery_ticket → marketing_contract_id
+    const settledAggs = await prisma.settlementLine.groupBy({
+      by: ['delivery_ticket_id'],
+      where: {
+        match_status: { in: ['matched', 'manual'] },
+        delivery_ticket: {
+          farm_id: farmId,
+          marketing_contract_id: { in: contractIds },
+        },
+      },
+      _sum: { net_weight_mt: true },
+    });
+
+    // Map back to contract via ticket's marketing_contract_id
+    if (settledAggs.length > 0) {
+      const ticketIds = settledAggs.map(a => a.delivery_ticket_id).filter(Boolean);
+      const ticketContracts = await prisma.deliveryTicket.findMany({
+        where: { id: { in: ticketIds } },
+        select: { id: true, marketing_contract_id: true },
+      });
+      const ticketToContract = {};
+      for (const t of ticketContracts) ticketToContract[t.id] = t.marketing_contract_id;
+
+      for (const agg of settledAggs) {
+        const cid = ticketToContract[agg.delivery_ticket_id];
+        if (!cid) continue;
+        settledByContract[cid] = (settledByContract[cid] || 0) + (agg._sum.net_weight_mt || 0);
+      }
+    }
+  }
+
   const result = contracts.map(c => {
     const hauled = hauledByContract[c.id] || { hauled_mt: 0, ticket_count: 0 };
-    const remaining_mt = Math.max(0, c.contracted_mt - hauled.hauled_mt);
-    const pct_complete = c.contracted_mt > 0 ? (hauled.hauled_mt / c.contracted_mt) * 100 : 0;
+    const settled_net_mt = settledByContract[c.id] || 0;
+    // Progress: prefer Net (settlement), fall back to Unload (ticket)
+    const progress_mt = settled_net_mt > 0 ? settled_net_mt : hauled.hauled_mt;
+    const remaining_mt = Math.max(0, c.contracted_mt - progress_mt);
+    const pct_complete = c.contracted_mt > 0 ? (progress_mt / c.contracted_mt) * 100 : 0;
     return {
       id: c.id,
       contract_number: c.contract_number,
@@ -686,6 +723,7 @@ export async function getContractFulfillment(farmId) {
       grade: c.grade || '',
       contracted_mt: c.contracted_mt,
       hauled_mt: hauled.hauled_mt,
+      settled_net_mt,
       remaining_mt,
       pct_complete,
       ticket_count: hauled.ticket_count,

@@ -255,7 +255,7 @@ export default function TicketImportDialog({ open, onClose, farmId, onImported }
     { field: 'crop_name', headerName: 'Crop', width: 120,
       cellStyle: p => (!p.data?.commodity_id && p.value) ? { backgroundColor: '#FFF3E0', fontWeight: 600 } : null,
     },
-    { field: 'net_weight_mt', headerName: 'Net MT', width: 100, valueFormatter: p => p.value?.toFixed(2) },
+    { field: 'net_weight_mt', headerName: 'Unload MT', width: 100, valueFormatter: p => p.value?.toFixed(2) },
     { field: 'contract_match', headerName: 'Contract', width: 180, cellRenderer: p => <MatchChip value={p.value} /> },
     { field: 'counterparty_match', headerName: 'Buyer', width: 140,
       cellRenderer: p => {

@@ -105,7 +105,7 @@ export default function LogisticsDashboard() {
     return {
       labels: rows.map(r => r.commodity),
       datasets: [
-        { label: 'Shipped MT', data: rows.map(r => r.shipped_mt), backgroundColor: '#1976d2' },
+        { label: 'Shipped (Unload) MT', data: rows.map(r => r.shipped_mt), backgroundColor: '#1976d2' },
         { label: 'Settled MT', data: rows.map(r => r.settled_mt), backgroundColor: '#2e7d32' },
       ],
     };
@@ -134,7 +134,7 @@ export default function LogisticsDashboard() {
     { field: 'contract_number', headerName: 'Contract #', flex: 1, minWidth: 110 },
     { field: 'commodity', headerName: 'Commodity', flex: 0.9, minWidth: 90 },
     { field: 'shipped_count', headerName: 'Shipped', width: 80, type: 'numericColumn' },
-    { field: 'shipped_mt', headerName: 'Shipped MT', width: 100, type: 'numericColumn', valueFormatter: p => fmt(p.value) },
+    { field: 'shipped_mt', headerName: 'Shipped (Unload) MT', width: 120, type: 'numericColumn', valueFormatter: p => fmt(p.value) },
     { field: 'settled_count', headerName: 'Settled', width: 80, type: 'numericColumn' },
     { field: 'settled_mt', headerName: 'Settled MT', width: 100, type: 'numericColumn', valueFormatter: p => fmt(p.value) },
     {
@@ -206,7 +206,7 @@ export default function LogisticsDashboard() {
   // --- Shipped vs Confirmed Sold columns ---
   const confirmedCols = useMemo(() => [
     { field: 'commodity', headerName: 'Commodity', flex: 1, minWidth: 120 },
-    { field: 'shipped_mt', headerName: 'Shipped (Tickets) MT', flex: 0.8, type: 'numericColumn', valueFormatter: p => fmt(p.value) },
+    { field: 'shipped_mt', headerName: 'Shipped (Unload) MT', flex: 0.8, type: 'numericColumn', valueFormatter: p => fmt(p.value) },
     { field: 'confirmed_mt', headerName: 'Confirmed Sold MT', flex: 0.8, type: 'numericColumn', valueFormatter: p => fmt(p.value) },
     {
       field: 'gap_mt', headerName: 'Pending Confirmation MT', flex: 0.8, type: 'numericColumn',
@@ -254,7 +254,7 @@ export default function LogisticsDashboard() {
       {/* Row 1: KPI Cards */}
       <Stack direction="row" spacing={2} sx={{ mb: 3, flexWrap: 'wrap', gap: 1 }}>
         <KPICard label="Total Shipments" value={fmt(kpis.total_shipments)} />
-        <KPICard label="Total MT Shipped" value={fmt(kpis.total_mt_shipped)} />
+        <KPICard label="Total Unload MT Shipped" value={fmt(kpis.total_mt_shipped)} />
         <KPICard label="Total Settled" value={fmtDollar(kpis.total_settled_amount)} />
         <KPICard
           label="Pending Settlements"
@@ -299,7 +299,7 @@ export default function LogisticsDashboard() {
                 [...ms.rows, { month: 'TOTAL', ...ms.totals }],
                 [
                   { key: 'month', label: 'Month' },
-                  { key: 'shipped_mt', label: 'Shipped MT' },
+                  { key: 'shipped_mt', label: 'Shipped (Unload) MT' },
                   { key: 'ticket_count', label: 'Tickets' },
                   { key: 'settled_mt', label: 'Settled MT' },
                   { key: 'settlement_count', label: 'Settlements' },
@@ -316,7 +316,7 @@ export default function LogisticsDashboard() {
                 <thead>
                   <tr style={{ borderBottom: '2px solid', borderColor: 'rgba(128,128,128,0.3)' }}>
                     <th style={{ textAlign: 'left', padding: '6px 8px' }}>Month</th>
-                    <th style={{ textAlign: 'right', padding: '6px 8px' }}>Shipped MT</th>
+                    <th style={{ textAlign: 'right', padding: '6px 8px' }}>Shipped (Unload) MT</th>
                     <th style={{ textAlign: 'right', padding: '6px 8px' }}>Tickets</th>
                     <th style={{ textAlign: 'right', padding: '6px 8px' }}>Settled MT</th>
                     <th style={{ textAlign: 'right', padding: '6px 8px' }}>Settlements</th>
@@ -389,7 +389,7 @@ export default function LogisticsDashboard() {
             title="Shipped vs Settled by Commodity"
             onExport={() => exportRowsCsv(
               data.shipped_vs_settled,
-              [{ key: 'commodity', label: 'Commodity' }, { key: 'shipped_mt', label: 'Shipped MT' }, { key: 'settled_mt', label: 'Settled MT' }],
+              [{ key: 'commodity', label: 'Commodity' }, { key: 'shipped_mt', label: 'Shipped (Unload) MT' }, { key: 'settled_mt', label: 'Settled MT' }],
               'shipped-vs-settled.csv',
             )}
           />

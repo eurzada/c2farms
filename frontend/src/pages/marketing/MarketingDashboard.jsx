@@ -99,22 +99,33 @@ export default function MarketingDashboard() {
     { field: 'commodity', headerName: 'Crop', width: 100 },
     { field: 'grade', headerName: 'Grade', width: 80 },
     { field: 'contracted_mt', headerName: 'Contracted MT', width: 110, type: 'rightAligned', valueFormatter: p => fmt(p.value) },
-    { field: 'hauled_mt', headerName: 'Hauled MT', width: 100, type: 'rightAligned', valueFormatter: p => fmt(p.value) },
+    { field: 'hauled_mt', headerName: 'Delivered (Unload)', width: 120, type: 'rightAligned', valueFormatter: p => fmt(p.value),
+      headerTooltip: 'Unload weight from truck tickets — dirty grain before dockage',
+    },
+    { field: 'settled_net_mt', headerName: 'Delivered (Net)', width: 110, type: 'rightAligned',
+      valueFormatter: p => p.value ? fmt(p.value) : '—',
+      headerTooltip: 'Net (clean) weight from buyer settlements — what fulfills contract obligations',
+      cellStyle: p => !p.value ? { color: '#9e9e9e', fontStyle: 'italic' } : null,
+    },
     { field: 'remaining_mt', headerName: 'Remaining MT', width: 110, type: 'rightAligned', valueFormatter: p => fmt(p.value),
       cellStyle: p => p.value > 0 ? { color: '#e65100', fontWeight: 600 } : { color: '#2e7d32' },
     },
     {
-      field: 'pct_complete', headerName: 'Progress', width: 120,
+      field: 'pct_complete', headerName: 'Progress (Net)', width: 130,
+      headerTooltip: 'Contract fulfillment based on Net (clean) weight from settlements. Falls back to Unload weight when no settlement data.',
       cellRenderer: p => {
+        const hasNet = p.data?.settled_net_mt > 0;
         const pct = Math.min(100, p.value || 0);
         const color = pct >= 100 ? '#2e7d32' : pct >= 50 ? '#1976d2' : '#e65100';
         return (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
-            <Box sx={{ flex: 1, bgcolor: 'action.hover', borderRadius: 1, height: 8 }}>
-              <Box sx={{ width: `${pct}%`, bgcolor: color, borderRadius: 1, height: 8 }} />
+          <Tooltip title={hasNet ? 'Based on Net (settlement) weight' : 'Based on Unload (ticket) weight — no settlement yet'} arrow>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+              <Box sx={{ flex: 1, bgcolor: 'action.hover', borderRadius: 1, height: 8 }}>
+                <Box sx={{ width: `${pct}%`, bgcolor: color, borderRadius: 1, height: 8, ...(hasNet ? {} : { backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(255,255,255,0.3) 3px, rgba(255,255,255,0.3) 6px)' }) }} />
+              </Box>
+              <Typography variant="caption" sx={{ minWidth: 35 }}>{pct.toFixed(0)}%{!hasNet ? '*' : ''}</Typography>
             </Box>
-            <Typography variant="caption" sx={{ minWidth: 35 }}>{pct.toFixed(0)}%</Typography>
-          </Box>
+          </Tooltip>
         );
       },
     },
@@ -283,8 +294,8 @@ export default function MarketingDashboard() {
       <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
         {[
           { label: 'Gross Commitment', value: `${fmt(kpis.gross_commitment)} MT`, color: 'text.primary', tip: 'Total MT across all signed contracts (executed + in delivery)' },
-          { label: 'Hauled', value: `${fmt(kpis.hauled_mt)} MT`, color: 'info.main', tip: 'MT physically delivered per weigh scale tickets in Logistics' },
-          { label: 'Still to Haul', value: `${fmt(kpis.remaining_less_hauled)} MT`, color: 'error.main', tip: 'Gross commitment minus hauled — grain still to be physically moved' },
+          { label: 'Hauled (Unload)', value: `${fmt(kpis.hauled_mt)} MT`, color: 'info.main', tip: 'Unload weight from truck tickets — dirty grain before dockage' },
+          { label: 'Still to Haul', value: `${fmt(kpis.remaining_less_hauled)} MT`, color: 'error.main', tip: 'Gross commitment minus hauled (Unload weight) — grain still to be physically moved' },
           { label: 'Confirmed (Paid)', value: `${fmt(kpis.settled_mt)} MT`, color: 'success.main', tip: 'MT from approved settlement documents — buyer has paid' },
           { label: 'Awaiting Payment', value: `${fmt(kpis.remaining_less_settled)} MT`, color: 'warning.main', tip: 'Gross commitment minus confirmed paid — still awaiting settlement' },
         ].map(k => (
@@ -301,12 +312,12 @@ export default function MarketingDashboard() {
       {fulfillment.length > 0 && (
         <>
           <Typography variant="h6" sx={{ mb: 1 }}>Contract Fulfillment</Typography>
-          <Box className={agTheme} sx={{ height: Math.min(400, 56 + fulfillment.length * 42), width: '100%', minWidth: 0, mb: 3 }}>
+          <Box className={agTheme} sx={{ height: Math.min(400, 56 + fulfillment.length * 42), width: '100%', minWidth: 0, mb: 3, '& .ag-header-cell-label': { whiteSpace: 'normal', lineHeight: '1.2' } }}>
             <AgGridReact
               ref={fulfillmentGridRef}
               rowData={fulfillment}
               columnDefs={fulfillmentColDefs}
-              defaultColDef={defaultColDef}
+              defaultColDef={{ ...defaultColDef, autoHeaderHeight: true, wrapHeaderText: true }}
               animateRows
               getRowId={p => p.data?.id}
               onGridReady={({ api }) => api.sizeColumnsToFit()}
