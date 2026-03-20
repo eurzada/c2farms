@@ -209,6 +209,12 @@ export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
 
   // Get hauled tonnage between the two periods from DeliveryTicket (Traction Ag imports)
   // and legacy Delivery records (old inventory contracts)
+  // Elevator tickets (buyer portal imports) for the "to" period
+  const elevatorTickets = await prisma.elevatorTicket.findMany({
+    where: { farm_id: farmId, count_period_id: toPeriodId },
+    include: { commodity: true },
+  });
+
   const [deliveryTickets, legacyDeliveries, withdrawals, settlementLines] = await Promise.all([
     prisma.deliveryTicket.findMany({
       where: {
@@ -300,9 +306,19 @@ export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
     hauledByCommodity[name] = (hauledByCommodity[name] || 0) + d.mt_delivered * 1000; // convert MT to kg
   }
 
-  // Settlement lines — "at elevator" tonnage by commodity
+  // Elevator tickets (portal import) — "at elevator" tonnage by commodity (preferred source)
+  const elevatorFromPortal = {};
+  for (const et of elevatorTickets) {
+    if (!et.net_weight_mt) continue;
+    const name = et.commodity?.name || et.commodity_raw;
+    if (!name) continue;
+    elevatorFromPortal[name] = (elevatorFromPortal[name] || 0) + et.net_weight_mt;
+  }
+  const hasPortalData = Object.keys(elevatorFromPortal).length > 0;
+
+  // Settlement lines — "at elevator" tonnage by commodity (fallback source)
   // Prefer marketing contract commodity name (canonical), fall back to normalized line commodity
-  const atElevatorByCommodity = {};
+  const elevatorFromSettlement = {};
   for (const sl of settlementLines) {
     if (!sl.net_weight_mt) continue;
     const raw = sl.settlement?.marketing_contract?.commodity?.name || sl.commodity;
@@ -310,8 +326,11 @@ export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
     const name = sl.settlement?.marketing_contract?.commodity?.name
       ? raw
       : normalizeSettlementCommodity(raw);
-    atElevatorByCommodity[name] = (atElevatorByCommodity[name] || 0) + sl.net_weight_mt;
+    elevatorFromSettlement[name] = (elevatorFromSettlement[name] || 0) + sl.net_weight_mt;
   }
+
+  // Priority: portal imports > settlement lines
+  const atElevatorByCommodity = hasPortalData ? elevatorFromPortal : elevatorFromSettlement;
 
   // Withdrawals by commodity (seed, feed, loss, consumption, transfer)
   const withdrawalsByCommodity = {};
@@ -351,6 +370,14 @@ export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
 
     const reconciled_mt = atElevatorMt > 0 ? atElevatorMt : hauledMt;
 
+    // Determine elevator data source for this commodity
+    let elevator_source = 'none';
+    if (hasPortalData && (elevatorFromPortal[name] || 0) > 0) {
+      elevator_source = 'portal';
+    } else if (!hasPortalData && (elevatorFromSettlement[name] || 0) > 0) {
+      elevator_source = 'settlement';
+    }
+
     rows.push({
       commodity: name,
       beginning_mt: beginMt,
@@ -359,6 +386,7 @@ export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
       tare_mt: convertKgToMt(tareByCommodity[name] || 0),
       withdrawal_mt: withdrawalMt,
       at_elevator_mt: atElevatorMt,
+      elevator_source,
       reconciled_mt,
       variance_mt: varianceMt,
       variance_pct: variancePct,
@@ -402,6 +430,8 @@ export async function computeReconciliation(farmId, fromPeriodId, toPeriodId) {
       total_at_elevator_mt: rows.reduce((s, r) => s + r.at_elevator_mt, 0),
       total_reconciled_mt: rows.reduce((s, r) => s + r.reconciled_mt, 0),
       total_variance_mt: rows.reduce((s, r) => s + r.variance_mt, 0),
+      elevator_source: hasPortalData ? 'portal' : (Object.keys(elevatorFromSettlement).length > 0 ? 'settlement' : 'none'),
+      elevator_ticket_count: elevatorTickets.length,
     },
   };
 }
@@ -711,6 +741,7 @@ export async function getDashboardData(farmId, { locationId } = {}) {
               commodity_code: row.commodity_code,
               opening_mt: 0,
               hauled_mt: 0,
+              at_elevator_mt: 0,
               expected_closing_mt: 0,
               actual_closing_mt: 0,
               variance_mt: 0,
@@ -723,11 +754,13 @@ export async function getDashboardData(farmId, { locationId } = {}) {
           if (c.opening_mt === 0) c.opening_mt = row.opening_mt;
           c.actual_closing_mt = row.closing_mt; // latest month's closing
           c.hauled_mt += row.total_shipped_mt;
+          c.at_elevator_mt += row.total_settled_mt; // settlement net = elevator clean grain
           c.settled_mt += row.total_settled_mt;
         }
         // Compute derived fields
         const reconRows = Object.values(byCommodity).map(c => {
-          c.expected_closing_mt = Math.round((c.opening_mt - c.hauled_mt) * 100) / 100;
+          c.reconciled_mt = (c.at_elevator_mt || 0) > 0 ? c.at_elevator_mt : c.hauled_mt;
+          c.expected_closing_mt = Math.round((c.opening_mt - c.reconciled_mt) * 100) / 100;
           c.variance_mt = Math.round((c.actual_closing_mt - c.expected_closing_mt) * 100) / 100;
           c.unsettled_mt = Math.round((c.hauled_mt - c.settled_mt) * 100) / 100;
           c.variance_pct = c.opening_mt > 0
@@ -743,6 +776,8 @@ export async function getDashboardData(farmId, { locationId } = {}) {
           totals: {
             opening_mt: reconRows.reduce((s, r) => s + r.opening_mt, 0),
             hauled_mt: reconRows.reduce((s, r) => s + r.hauled_mt, 0),
+            at_elevator_mt: reconRows.reduce((s, r) => s + (r.at_elevator_mt || 0), 0),
+            reconciled_mt: reconRows.reduce((s, r) => s + (r.reconciled_mt || r.hauled_mt), 0),
             expected_closing_mt: reconRows.reduce((s, r) => s + r.expected_closing_mt, 0),
             actual_closing_mt: reconRows.reduce((s, r) => s + r.actual_closing_mt, 0),
             variance_mt: reconRows.reduce((s, r) => s + r.variance_mt, 0),
