@@ -38,6 +38,8 @@ import labourRoutes, { labourGeneralRouter } from './routes/labour.js';
 import terminalRoutes from './routes/terminal.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { authenticate, requireFarmAccess, requireModule } from './middleware/auth.js';
+import activityRoutes from './routes/activity.js';
+import { logActivity } from './services/activityService.js';
 
 const app = express();
 
@@ -89,8 +91,24 @@ app.use('/api/auth/register', registerLimiter);
 // Routes
 app.use('/api/auth', authRoutes);
 
+// Activity query endpoint (admin-only)
+app.use('/api/admin/activity', authenticate, activityRoutes);
+
 // Enforce farm-level authorization on all /:farmId/* routes
 app.use('/api/farms/:farmId', authenticate, requireFarmAccess);
+
+// Activity log for write operations on farm routes (after authenticate sets req.userId)
+app.use('/api/farms/', (req, res, next) => {
+  if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method) && req.userId) {
+    logActivity({
+      userId: req.userId,
+      action: 'data_edit',
+      detail: `${req.method} ${req.originalUrl}`.substring(0, 500),
+      req,
+    });
+  }
+  next();
+});
 
 // Forecast module
 app.use('/api/farms', assumptionsRoutes);

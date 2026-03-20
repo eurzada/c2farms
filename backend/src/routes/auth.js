@@ -3,6 +3,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import prisma from '../config/database.js';
 import { authenticate } from '../middleware/auth.js';
+import { logActivity } from '../services/activityService.js';
 
 const router = Router();
 
@@ -109,11 +110,14 @@ router.post('/login', async (req, res, next) => {
 
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
+      logActivity({ userId: user.id, action: 'login_failed', detail: 'Invalid password', req });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     // Auto-accept pending invites
     await acceptPendingInvites(user.id, trimmedEmail);
+
+    logActivity({ userId: user.id, action: 'login', req });
 
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
     res.json({
