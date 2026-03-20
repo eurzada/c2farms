@@ -69,18 +69,81 @@ export default function Reconciliation() {
       .finally(() => setLoading(false));
   }, [currentFarm, viewMode]);
 
+  // Determine which source is "used in calc" for a row
+  const getUsedSource = (row) => {
+    if (!row) return 'traction';
+    const elevator = row.at_elevator_mt || 0;
+    const traction = row.hauled_mt || 0;
+    // Elevator used when it exists and >= traction (normal case)
+    return elevator > 0 && elevator >= traction ? 'elevator' : 'traction';
+  };
+
+  // Settlement coverage stats
+  const settlementCoverage = useMemo(() => {
+    if (!data?.rows) return null;
+    const total = data.rows.length;
+    const withElevator = data.rows.filter(r => (r.at_elevator_mt || 0) > 0).length;
+    return { withElevator, total };
+  }, [data]);
+
   const columnDefs = useMemo(() => [
     { field: 'commodity', headerName: 'Commodity', width: 150 },
     { field: 'beginning_mt', headerName: 'Beginning MT', width: 140, valueFormatter: p => fmt(p.value) },
     { field: 'ending_mt', headerName: 'Ending MT', width: 130, valueFormatter: p => fmt(p.value) },
     {
-      headerName: 'Shipped MT', width: 140,
-      valueGetter: p => (p.data?.hauled_mt || 0) + (p.data?.at_elevator_mt || 0),
+      field: 'hauled_mt', headerName: 'Traction MT', width: 130,
       valueFormatter: p => fmt(p.value),
-      tooltipValueGetter: p => {
-        const h = p.data?.hauled_mt || 0;
+      cellStyle: p => {
+        const used = getUsedSource(p.data);
+        return {
+          fontWeight: used === 'traction' ? 700 : 400,
+          backgroundColor: used === 'traction' ? '#FFF3E0' : undefined,
+        };
+      },
+    },
+    {
+      field: 'at_elevator_mt', headerName: 'Elevator MT', width: 130,
+      valueFormatter: p => fmt(p.value || 0),
+      cellStyle: p => {
+        const used = getUsedSource(p.data);
+        const hasElevator = (p.data?.at_elevator_mt || 0) > 0;
+        return {
+          fontWeight: used === 'elevator' ? 700 : 400,
+          backgroundColor: hasElevator && used === 'elevator' ? '#E8F5E9' : undefined,
+        };
+      },
+    },
+    {
+      headerName: 'Difference', width: 120,
+      valueGetter: p => {
         const e = p.data?.at_elevator_mt || 0;
-        return `Hauled: ${fmt(h)} MT  |  At Elevator: ${fmt(e)} MT`;
+        const h = p.data?.hauled_mt || 0;
+        return e > 0 ? e - h : null;
+      },
+      valueFormatter: p => p.value != null ? fmt(p.value) : '—',
+      cellStyle: p => {
+        if (p.value == null) return {};
+        return {
+          color: p.value < 0 ? '#D32F2F' : '#2E7D32',
+          fontWeight: p.value < 0 ? 700 : 400,
+        };
+      },
+    },
+    {
+      headerName: 'Source', width: 80,
+      valueGetter: p => {
+        const hasElevator = (p.data?.at_elevator_mt || 0) > 0;
+        return hasElevator ? (getUsedSource(p.data) === 'elevator' ? 'E' : 'T!') : '—';
+      },
+      cellStyle: p => {
+        if (p.value === 'T!') return { color: '#E65100', fontWeight: 700 };
+        if (p.value === 'E') return { color: '#2E7D32' };
+        return { color: '#9E9E9E' };
+      },
+      tooltipValueGetter: p => {
+        if (p.value === 'E') return 'Using Elevator (settlement) data for variance calc';
+        if (p.value === 'T!') return 'Elevator < Traction — using Traction. Investigate!';
+        return 'No elevator data — using Traction';
       },
     },
     { field: 'variance_mt', headerName: 'Variance MT', width: 130, valueFormatter: p => fmt(p.value) },
@@ -164,13 +227,29 @@ export default function Reconciliation() {
 
           {data && (
             <>
+              {/* Settlement coverage banner */}
+              {settlementCoverage && (
+                <Alert
+                  severity={settlementCoverage.withElevator === settlementCoverage.total ? 'success' :
+                    settlementCoverage.withElevator > 0 ? 'info' : 'warning'}
+                  sx={{ mb: 2 }}
+                >
+                  Settlement (elevator) data available for {settlementCoverage.withElevator} of {settlementCoverage.total} commodities.
+                  {settlementCoverage.withElevator < settlementCoverage.total &&
+                    ` Missing commodities use Traction data for variance calc.`}
+                  {' '}<strong>Bold</strong> = source used in variance calculation.
+                </Alert>
+              )}
+
               {/* Summary KPI cards */}
               <Grid container spacing={2} sx={{ mb: 3 }}>
                 {[
                   { label: 'Beginning', value: `${fmtInt(data.summary.total_beginning_mt)} MT`, color: '#1565C0' },
                   { label: 'Ending', value: `${fmtInt(data.summary.total_ending_mt)} MT`, color: '#1565C0' },
-                  { label: 'Hauled Out', value: `${fmtInt(data.summary.total_hauled_mt)} MT`, color: '#E65100' },
-                  { label: 'At Elevator', value: `${fmtInt(data.summary.total_at_elevator_mt)} MT`, color: '#6A1B9A' },
+                  { label: 'Traction (Hauled)', value: `${fmtInt(data.summary.total_hauled_mt)} MT`, color: '#E65100' },
+                  { label: 'Elevator (Settled)', value: `${fmtInt(data.summary.total_at_elevator_mt)} MT`, color: '#6A1B9A' },
+                  { label: 'Difference', value: `${fmtInt((data.summary.total_at_elevator_mt || 0) - (data.summary.total_hauled_mt || 0))} MT`,
+                    color: ((data.summary.total_at_elevator_mt || 0) - (data.summary.total_hauled_mt || 0)) < 0 ? '#D32F2F' : '#2E7D32' },
                   { label: 'Variance', value: `${fmtInt(data.summary.total_variance_mt)} MT`,
                     color: Math.abs(data.summary.total_variance_mt) > data.summary.total_beginning_mt * 0.02 ? '#D32F2F' : '#2E7D32' },
                 ].map(kpi => (
@@ -186,7 +265,7 @@ export default function Reconciliation() {
               </Grid>
 
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                Variance = Beginning − Ending − Hauled. Positive = unaccounted loss. Negative = unaccounted gain.
+                Variance = Beginning − Ending − Shipped. Uses elevator MT when available (≥ traction), otherwise traction MT.
                 {' '}LGX inventory and internal transfers shown separately below (wash).
               </Typography>
 
