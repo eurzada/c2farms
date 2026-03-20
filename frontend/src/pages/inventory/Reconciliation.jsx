@@ -3,13 +3,16 @@ import { AgGridReact } from 'ag-grid-react';
 import {
   Box, Typography, Stack, FormControl, InputLabel, Select, MenuItem,
   Card, CardContent, Alert, CircularProgress, Grid, Chip, ToggleButton, ToggleButtonGroup,
+  Button,
 } from '@mui/material';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { useFarm } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import { getGridColors } from '../../utils/gridColors';
 import api from '../../services/api';
+import ElevatorTicketImportDialog from '../../components/inventory/ElevatorTicketImportDialog';
 
 function FlagCell({ value }) {
   const icons = { ok: '\u2705', warning: '\u26A0\uFE0F', error: '\uD83D\uDD34' };
@@ -34,6 +37,8 @@ export default function Reconciliation() {
   const [error, setError] = useState('');
   const [viewMode, setViewMode] = useState('compare'); // 'compare' | 'waterfall'
   const [history, setHistory] = useState(null);
+  const [elevatorImportOpen, setElevatorImportOpen] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Fetch periods
   useEffect(() => {
@@ -57,7 +62,7 @@ export default function Reconciliation() {
       .then(res => { setData(res.data); setError(''); })
       .catch(() => setError('Failed to load reconciliation'))
       .finally(() => setLoading(false));
-  }, [currentFarm, fromPeriod, toPeriod, viewMode]);
+  }, [currentFarm, fromPeriod, toPeriod, viewMode, refreshKey]);
 
   // Fetch waterfall data (count history)
   useEffect(() => {
@@ -141,7 +146,8 @@ export default function Reconciliation() {
         return { color: '#9E9E9E' };
       },
       tooltipValueGetter: p => {
-        if (p.value === 'E') return 'Using Elevator (settlement) data for variance calc';
+        const src = p.data?.elevator_source;
+        if (p.value === 'E') return `Using Elevator data (${src === 'portal' ? 'portal import' : 'settlement PDF'}) for variance calc`;
         if (p.value === 'T!') return 'Elevator < Traction — using Traction. Investigate!';
         return 'No elevator data — using Traction';
       },
@@ -208,7 +214,7 @@ export default function Reconciliation() {
       {/* ─── Compare View ─── */}
       {viewMode === 'compare' && (
         <>
-          <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
+          <Stack direction="row" spacing={2} sx={{ mb: 3 }} alignItems="center">
             <FormControl size="small" sx={{ minWidth: 200 }}>
               <InputLabel>From Period</InputLabel>
               <Select value={fromPeriod} label="From Period" onChange={e => setFromPeriod(e.target.value)}>
@@ -221,20 +227,36 @@ export default function Reconciliation() {
                 {periods.map(p => <MenuItem key={p.id} value={p.id}>{formatDate(p.period_date)}</MenuItem>)}
               </Select>
             </FormControl>
+            {toPeriod && (
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<UploadFileIcon />}
+                onClick={() => setElevatorImportOpen(true)}
+              >
+                Import Elevator Tickets
+              </Button>
+            )}
           </Stack>
 
           {loading && <CircularProgress />}
 
           {data && (
             <>
-              {/* Settlement coverage banner */}
+              {/* Elevator data coverage banner */}
               {settlementCoverage && (
                 <Alert
                   severity={settlementCoverage.withElevator === settlementCoverage.total ? 'success' :
                     settlementCoverage.withElevator > 0 ? 'info' : 'warning'}
                   sx={{ mb: 2 }}
                 >
-                  Settlement (elevator) data available for {settlementCoverage.withElevator} of {settlementCoverage.total} commodities.
+                  {data.summary?.elevator_source === 'portal'
+                    ? <>Elevator data from <strong>portal import</strong> ({data.summary.elevator_ticket_count} tickets)</>
+                    : data.summary?.elevator_source === 'settlement'
+                      ? <>Elevator data from <strong>settlement PDFs</strong></>
+                      : <>No elevator data imported</>
+                  }
+                  {' — '}available for {settlementCoverage.withElevator} of {settlementCoverage.total} commodities.
                   {settlementCoverage.withElevator < settlementCoverage.total &&
                     ` Missing commodities use Traction data for variance calc.`}
                   {' '}<strong>Bold</strong> = source used in variance calculation.
@@ -333,6 +355,18 @@ export default function Reconciliation() {
             </>
           )}
         </>
+      )}
+
+      {/* Elevator Ticket Import Dialog */}
+      {toPeriod && (
+        <ElevatorTicketImportDialog
+          open={elevatorImportOpen}
+          onClose={() => setElevatorImportOpen(false)}
+          farmId={currentFarm?.id}
+          countPeriodId={toPeriod}
+          periodLabel={periods.find(p => p.id === toPeriod) ? formatDate(periods.find(p => p.id === toPeriod).period_date) : ''}
+          onImported={() => setRefreshKey(k => k + 1)}
+        />
       )}
 
       {/* ─── Waterfall View — All Periods Side by Side ─── */}

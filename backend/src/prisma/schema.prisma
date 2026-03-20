@@ -293,6 +293,7 @@ model Commodity {
   terminal_settlement_lines TerminalSettlementLine[]
   aliases CommodityAlias[]
   withdrawals InventoryWithdrawal[]
+  elevator_tickets ElevatorTicket[]
 
   @@unique([farm_id, code])
   @@map("commodities")
@@ -414,8 +415,9 @@ model CountPeriod {
   status      String            @default("open") // open, closed
   created_at  DateTime          @default(now())
   updated_at  DateTime          @updatedAt
-  bin_counts  BinCount[]
-  submissions CountSubmission[]
+  bin_counts       BinCount[]
+  submissions      CountSubmission[]
+  elevator_tickets ElevatorTicket[]
 
   @@unique([farm_id, period_date])
   @@map("count_periods")
@@ -518,6 +520,7 @@ model Counterparty {
   terminal_contracts    TerminalContract[]
   terminal_settlements  TerminalSettlement[]
   aliases CounterpartyAlias[]
+  elevator_tickets ElevatorTicket[]
 
   @@unique([farm_id, name])
   @@map("counterparties")
@@ -1239,4 +1242,39 @@ model DailyPosition {
   @@unique([farm_id, position_date, bin_id])
   @@index([farm_id, position_date])
   @@map("daily_positions")
+}
+
+// ─── Elevator Ticket Import (Buyer Portal Data for Recon) ────────────
+
+model ElevatorTicket {
+  id                String       @id @default(uuid())
+  farm_id           String
+  count_period_id   String
+  counterparty_id   String?
+  commodity_id      String?
+  ticket_number     String
+  delivery_date     DateTime?    @db.Date
+  commodity_raw     String?      // raw commodity name from portal file
+  buyer_name        String?      // raw buyer name from portal file
+  net_weight_mt     Float
+  gross_weight_mt   Float?
+  tare_weight_mt    Float?
+  grade             String?
+  protein_pct       Float?
+  moisture_pct      Float?
+  dockage_pct       Float?
+  contract_number   String?
+  destination       String?
+  source_system     String       @default("portal_csv") // portal_csv, portal_excel
+  source_file       String?      // original filename
+  created_at        DateTime     @default(now())
+  updated_at        DateTime     @updatedAt
+  count_period      CountPeriod  @relation(fields: [count_period_id], references: [id], onDelete: Cascade)
+  counterparty      Counterparty? @relation(fields: [counterparty_id], references: [id])
+  commodity         Commodity?   @relation(fields: [commodity_id], references: [id])
+
+  @@unique([farm_id, count_period_id, ticket_number])
+  @@index([farm_id, count_period_id])
+  @@index([farm_id, delivery_date])
+  @@map("elevator_tickets")
 }
