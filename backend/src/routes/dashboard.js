@@ -3,7 +3,10 @@ import prisma from '../config/database.js';
 import { authenticate } from '../middleware/auth.js';
 import { parseYear } from '../utils/fiscalYear.js';
 import { calculateForecast } from '../services/forecastService.js';
+import { getExecutiveDashboard } from '../services/agronomyService.js';
+import createLogger from '../utils/logger.js';
 
+const logger = createLogger('dashboard');
 const router = Router();
 
 router.get('/:farmId/dashboard/:year', authenticate, async (req, res, next) => {
@@ -106,6 +109,137 @@ router.get('/:farmId/dashboard/:year', authenticate, async (req, res, next) => {
 
     res.json({ kpis, chartData, cropYields });
   } catch (err) {
+    next(err);
+  }
+});
+
+// V2 — Farm Manager Performance Scorecard
+router.get('/:farmId/dashboard/v2/:year', authenticate, async (req, res, next) => {
+  try {
+    const { farmId, year } = req.params;
+    const fiscalYear = parseYear(year);
+    if (!fiscalYear) return res.status(400).json({ error: 'Invalid fiscal year' });
+
+    const [assumption, forecast, agroDashboard, latestCount] = await Promise.all([
+      prisma.assumption.findUnique({
+        where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: fiscalYear } },
+      }),
+      calculateForecast(farmId, fiscalYear).catch(() => null),
+      getExecutiveDashboard(farmId, fiscalYear).catch(() => null),
+      prisma.countSubmission.findFirst({
+        where: { farm_id: farmId },
+        orderBy: { updated_at: 'desc' },
+      }),
+    ]);
+
+    const totalAcres = assumption?.total_acres || 0;
+    const crops = assumption?.crops_json || [];
+    const hasFrozenBudget = forecast ? Object.values(forecast).some(c => c.frozenBudgetTotal) : false;
+
+    // --- Scorecard ---
+    const cropCount = crops.length;
+    const agroPlanStatus = agroDashboard?.plan_status || null;
+
+    // Input adherence: agro plan budget vs forecast actuals for inputs
+    const inputsBudgetPerAcre = agroDashboard?.farm?.cost_per_acre || 0;
+    const inputsForecastPerAcre = totalAcres > 0 && forecast?.inputs
+      ? forecast.inputs.forecastTotal / totalAcres : 0;
+    const inputAdherencePct = inputsBudgetPerAcre > 0
+      ? Math.round((1 - Math.abs(inputsForecastPerAcre - inputsBudgetPerAcre) / inputsBudgetPerAcre) * 100)
+      : null;
+
+    // Controllable costs: fog + repairs + shop
+    const controllableCodes = ['lpm_fog', 'lpm_repairs', 'lpm_shop'];
+    const controllableActual = controllableCodes.reduce(
+      (sum, code) => sum + (forecast?.[code]?.forecastTotal || 0), 0
+    );
+    const controllableBudget = controllableCodes.reduce(
+      (sum, code) => sum + (forecast?.[code]?.frozenBudgetTotal || 0), 0
+    );
+    const controllablePerAcre = totalAcres > 0 ? controllableActual / totalAcres : 0;
+    const controllableBudgetPerAcre = totalAcres > 0 ? controllableBudget / totalAcres : 0;
+
+    // Inventory freshness
+    let lastCountDaysAgo = null;
+    let countStatus = null;
+    if (latestCount) {
+      const diffMs = Date.now() - new Date(latestCount.updated_at).getTime();
+      lastCountDaysAgo = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      countStatus = lastCountDaysAgo <= 14 ? 'current' : lastCountDaysAgo <= 30 ? 'warning' : 'overdue';
+    }
+
+    // --- Expenses ---
+    const buildRow = (code, name) => {
+      const cat = forecast?.[code];
+      const actual = cat?.forecastTotal || 0;
+      const budget = cat?.frozenBudgetTotal || 0;
+      return {
+        code,
+        name,
+        budget_per_acre: totalAcres > 0 ? budget / totalAcres : 0,
+        actual_per_acre: totalAcres > 0 ? actual / totalAcres : 0,
+        variance: totalAcres > 0 ? (actual - budget) / totalAcres : 0,
+      };
+    };
+
+    const controllableRows = [
+      buildRow('inputs', 'Inputs (Seed/Fert/Chem)'),
+      buildRow('lpm_fog', 'Fuel, Oil & Grease'),
+      buildRow('lpm_repairs', 'Equipment Repairs'),
+      buildRow('lpm_shop', 'Shop & Supplies'),
+    ];
+    const controllableTotal = {
+      budget_per_acre: controllableRows.reduce((s, r) => s + r.budget_per_acre, 0),
+      actual_per_acre: controllableRows.reduce((s, r) => s + r.actual_per_acre, 0),
+      variance: controllableRows.reduce((s, r) => s + r.variance, 0),
+    };
+
+    const otherRows = [
+      buildRow('lpm_personnel', 'Personnel (Labour)'),
+      buildRow('lbf', 'Land Rent & Interest'),
+      buildRow('insurance', 'Insurance'),
+    ];
+    const grandTotal = {
+      budget_per_acre: controllableTotal.budget_per_acre + otherRows.reduce((s, r) => s + r.budget_per_acre, 0),
+      actual_per_acre: controllableTotal.actual_per_acre + otherRows.reduce((s, r) => s + r.actual_per_acre, 0),
+      variance: controllableTotal.variance + otherRows.reduce((s, r) => s + r.variance, 0),
+    };
+
+    // --- Crop Plan ---
+    const cropPlanCrops = agroDashboard?.crops?.map(c => ({
+      crop: c.crop,
+      acres: c.acres,
+      input_per_acre: c.total_per_acre || 0,
+      pct_of_farm: totalAcres > 0 ? Math.round((c.acres / totalAcres) * 100) : 0,
+    })) || [];
+
+    res.json({
+      scorecard: {
+        total_acres: totalAcres,
+        crop_count: cropCount,
+        agro_plan_status: agroPlanStatus,
+        input_adherence_pct: inputAdherencePct,
+        input_actual_per_acre: Math.round(inputsForecastPerAcre),
+        input_budget_per_acre: Math.round(inputsBudgetPerAcre),
+        controllable_per_acre: Math.round(controllablePerAcre),
+        controllable_budget_per_acre: Math.round(controllableBudgetPerAcre),
+        last_count_days_ago: lastCountDaysAgo,
+        count_status: countStatus,
+      },
+      expenses: {
+        has_frozen_budget: hasFrozenBudget,
+        controllable: controllableRows,
+        controllable_total: controllableTotal,
+        other: otherRows,
+        grand_total: grandTotal,
+      },
+      cropPlan: {
+        status: agroPlanStatus,
+        crops: cropPlanCrops,
+      },
+    });
+  } catch (err) {
+    logger.error('Dashboard v2 error:', err);
     next(err);
   }
 });
