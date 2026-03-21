@@ -369,6 +369,17 @@ agronomyGeneralRouter.post('/procurement-contracts/import/commit', authenticate,
   } catch (err) { next(err); }
 });
 
+// ─── Sync Contract Pricing → Product Library ──────────────────────
+
+agronomyGeneralRouter.post('/sync-contract-pricing', authenticate, async (req, res, next) => {
+  try {
+    const cropYear = parseInt(req.query.crop_year || req.body.crop_year) || new Date().getFullYear();
+    const farmId = await resolveEnterpriseFarmId();
+    const result = await procSvc.syncContractPricingToLibrary(farmId, cropYear);
+    res.json({ success: true, ...result });
+  } catch (err) { next(err); }
+});
+
 // ─── Plans ──────────────────────────────────────────────────────────
 
 router.get('/:farmId/agronomy/plans', async (req, res, next) => {

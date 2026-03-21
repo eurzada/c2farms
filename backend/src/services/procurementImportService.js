@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import prisma from '../config/database.js';
 import createLogger from '../utils/logger.js';
+import { syncContractPricingToLibrary } from './procurementContractService.js';
 
 const log = createLogger('procurement-import');
 
@@ -514,9 +515,19 @@ export async function commitProcurementImport(preview, cropYear, userId) {
 
   log.info(`Procurement import committed: ${contractsCreated} contracts, ${linesCreated} lines, ${suppliersCreated} new suppliers for crop year ${cropYear}`);
 
+  // Sync fertilizer contract pricing → product library
+  let pricingSync = null;
+  try {
+    pricingSync = await syncContractPricingToLibrary(enterprise.id, cropYear);
+  } catch (err) {
+    log.warn(`Contract pricing sync failed: ${err.message}`);
+    pricingSync = { error: err.message };
+  }
+
   return {
     contractsCreated,
     linesCreated,
     suppliersCreated,
+    pricingSync,
   };
 }

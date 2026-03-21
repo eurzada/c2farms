@@ -318,6 +318,116 @@ export async function getSupplierSummary(farmId, cropYear) {
 
 // ─── BU Matrix ──────────────────────────────────────────────────────
 
+// ─── Sync Contract Pricing → Product Library ────────────────────────
+
+const LBS_PER_TONNE = 2204.62;
+
+/**
+ * Sync fertilizer pricing from procurement contracts into AgroProduct records.
+ * Computes weighted-average $/tonne per product, converts to $/lb,
+ * and updates both cost_per_application_unit and default_cost.
+ */
+export async function syncContractPricingToLibrary(farmId, cropYear) {
+  const lines = await prisma.procurementContractLine.findMany({
+    where: {
+      contract: { farm_id: farmId, crop_year: Number(cropYear) },
+      input_category: 'fertilizer',
+    },
+    select: {
+      product_name: true,
+      product_analysis: true,
+      qty: true,
+      qty_unit: true,
+      unit_price: true,
+      price_unit: true,
+      line_total: true,
+    },
+  });
+
+  if (lines.length === 0) {
+    log.info(`No fertilizer contract lines found for crop year ${cropYear}`);
+    return { updated: 0, created: 0 };
+  }
+
+  // Group by product_analysis (NPK formula) — primary key for matching
+  const byAnalysis = {};
+  for (const l of lines) {
+    const analysis = (l.product_analysis || '').trim();
+    if (!analysis) continue;
+
+    if (!byAnalysis[analysis]) {
+      byAnalysis[analysis] = { product_name: l.product_name, totalQty: 0, totalValue: 0 };
+    }
+
+    // Normalize qty to tonnes for weighting
+    let qtyTonnes = l.qty || 0;
+    if (l.qty_unit === 'lbs') qtyTonnes = l.qty / LBS_PER_TONNE;
+
+    // Compute value: prefer line_total, fallback to qty × unit_price
+    let value = l.line_total || 0;
+    if (!value && l.unit_price) {
+      value = qtyTonnes * l.unit_price;
+    }
+
+    byAnalysis[analysis].totalQty += qtyTonnes;
+    byAnalysis[analysis].totalValue += value;
+  }
+
+  // Load existing fertilizer AgroProducts for this farm
+  const existing = await prisma.agroProduct.findMany({
+    where: { farm_id: farmId, type: 'fertilizer' },
+  });
+  const byCode = {};
+  for (const p of existing) {
+    if (p.analysis_code) byCode[p.analysis_code.trim()] = p;
+  }
+
+  let updated = 0;
+  let created = 0;
+
+  for (const [analysis, data] of Object.entries(byAnalysis)) {
+    if (data.totalQty <= 0) continue;
+
+    const avgPricePerTonne = data.totalValue / data.totalQty;
+    const costPerLb = avgPricePerTonne / LBS_PER_TONNE;
+
+    const match = byCode[analysis];
+    if (match) {
+      // Update existing AgroProduct
+      await prisma.agroProduct.update({
+        where: { id: match.id },
+        data: {
+          cost_per_application_unit: costPerLb,
+          default_cost: costPerLb,
+        },
+      });
+      log.info(`Updated ${match.name} (${analysis}): $${costPerLb.toFixed(4)}/lb from $${avgPricePerTonne.toFixed(2)}/tonne`);
+      updated++;
+    } else {
+      // Create new AgroProduct for unmatched fertilizer
+      await prisma.agroProduct.create({
+        data: {
+          farm_id: farmId,
+          name: data.product_name,
+          type: 'fertilizer',
+          analysis_code: analysis,
+          form: 'dry',
+          default_unit: 'lbs/acre',
+          default_cost: costPerLb,
+          cost_per_application_unit: costPerLb,
+        },
+      });
+      log.info(`Created new product ${data.product_name} (${analysis}): $${costPerLb.toFixed(4)}/lb`);
+      created++;
+    }
+  }
+
+  log.info(`Contract pricing sync complete: ${updated} updated, ${created} created for crop year ${cropYear}`);
+  return { updated, created };
+}
+
+// ─── BU Matrix ──────────────────────────────────────────────────────
+
 export async function getBuMatrix(farmId, cropYear) {
   const contracts = await prisma.procurementContract.findMany({
     where: { farm_id: farmId, crop_year: Number(cropYear) },

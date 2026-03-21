@@ -167,7 +167,7 @@ export default function FertilizerMatrix({ allocation, products, canEdit, onSave
       updates.product_analysis = catalog.analysis_code || '';
       updates.form = catalog.form || '';
       updates.rate_unit = catalog.default_unit || 'lbs/acre';
-      updates.cost_per_unit = catalog.default_cost ?? 0;
+      updates.cost_per_unit = catalog.cost_per_application_unit ?? catalog.default_cost ?? 0;
     }
     const newRows = rows.map((r, i) => i === idx ? { ...r, ...updates } : r);
     setRows(newRows);
