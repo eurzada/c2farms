@@ -45,6 +45,8 @@ const TIMING_LABELS = {
   seeding: 'Seeding',
 };
 
+const TIMING_ORDER = ['fall_residual', 'preburn', 'incrop', 'fungicide', 'desiccation'];
+
 const TIMING_OPTIONS = [
   { value: 'fall_residual', label: 'Fall Residual' },
   { value: 'preburn', label: 'Preburn' },
@@ -409,7 +411,12 @@ export default function CropInputPlan() {
       {plan.allocations?.map(alloc => {
         const seedInputs = alloc.inputs?.filter(i => i.category === 'seed' || i.category === 'seed_treatment') || [];
         const fertInputs = alloc.inputs?.filter(i => i.category === 'fertilizer') || [];
-        const chemInputs = alloc.inputs?.filter(i => i.category === 'chemical') || [];
+        const chemInputs = (alloc.inputs?.filter(i => i.category === 'chemical') || [])
+          .sort((a, b) => {
+            const ai = TIMING_ORDER.indexOf(a.timing);
+            const bi = TIMING_ORDER.indexOf(b.timing);
+            return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+          });
         const totalCost = alloc.inputs?.reduce((s, i) => s + i.rate * i.cost_per_unit * effectiveAcres(i, alloc), 0) || 0;
         const totalPerAcre = alloc.acres ? totalCost / alloc.acres : 0;
         const revenue = alloc.acres * alloc.target_yield_bu * alloc.commodity_price;
