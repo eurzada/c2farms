@@ -25,6 +25,8 @@ import reconciliationRoutes from './routes/reconciliation.js';
 import inventoryDashboardRoutes from './routes/inventoryDashboard.js';
 import inventoryExportsRoutes from './routes/inventoryExports.js';
 import gradingExportsRoutes from './routes/gradingExports.js';
+import agronomyExportsRoutes from './routes/agronomyExports.js';
+import procurementExportsRoutes from './routes/procurementExports.js';
 import marketingRoutes from './routes/marketing.js';
 import counterpartyRoutes from './routes/counterparties.js';
 import cashFlowRoutes from './routes/cashFlowEntries.js';
@@ -39,6 +41,9 @@ import terminalRoutes from './routes/terminal.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { authenticate, requireFarmAccess, requireModule } from './middleware/auth.js';
 import activityRoutes from './routes/activity.js';
+import auditReportRoutes from './routes/auditReport.js';
+import reportingRoutes from './routes/reporting.js';
+import enterpriseForecastRoutes from './routes/enterpriseForecast.js';
 import { logActivity } from './services/activityService.js';
 
 const app = express();
@@ -125,6 +130,7 @@ app.use('/api/farms', operationalDataRoutes);
 
 // Agronomy module
 app.use('/api/agronomy', agronomyGeneralRouter);
+app.use('/api/agronomy/procurement/export', procurementExportsRoutes);
 app.use('/api/farms/:farmId/agronomy', authenticate, requireModule('agronomy'));
 app.use('/api/farms', agronomyRoutes);
 
@@ -138,6 +144,11 @@ app.use('/api/farms', chartOfAccountsRoutes);
 app.use('/api/farms', settingsRoutes);
 app.use('/api/farms', aiRoutes);
 app.use('/api/admin', universalSettingsRoutes);
+app.use('/api/admin', authenticate, auditReportRoutes);
+app.use('/api/admin', authenticate, reportingRoutes);
+
+// Enterprise rollup (no farmId — queries all BU farms internally)
+app.use('/api/enterprise', authenticate, enterpriseForecastRoutes);
 
 // Inventory module
 app.use('/api/farms/:farmId/inventory', authenticate, requireModule('inventory'));
@@ -147,6 +158,7 @@ app.use('/api/farms', reconciliationRoutes);
 app.use('/api/farms', inventoryDashboardRoutes);
 app.use('/api/farms', inventoryExportsRoutes);
 app.use('/api/farms', gradingExportsRoutes);
+app.use('/api/farms', agronomyExportsRoutes);
 
 // Marketing module
 app.use('/api/farms/:farmId/marketing', authenticate, requireModule('marketing'));

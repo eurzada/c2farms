@@ -5,6 +5,14 @@ import createLogger from '../utils/logger.js';
 
 const log = createLogger('agronomy');
 
+// For seed/seed_treatment inputs, use per-varietal acres if set; otherwise fall back to allocation acres
+function effectiveAcres(inp, alloc) {
+  if ((inp.category === 'seed' || inp.category === 'seed_treatment') && inp.acres != null) {
+    return inp.acres;
+  }
+  return alloc.acres;
+}
+
 // ─── Nutrient Calculations ──────────────────────────────────────────
 
 export function parseAnalysis(code) {
@@ -181,7 +189,7 @@ export async function copyInputs(sourceAllocId, targetAllocId) {
     await prisma.cropInput.deleteMany({ where: { allocation_id: targetAllocId } });
   }
 
-  // Copy source inputs (product/rate/cost only, not nutrient balance)
+  // Copy source inputs (product/rate/cost/acres, not nutrient balance)
   const newInputs = source.inputs.map((inp, i) => ({
     allocation_id: targetAllocId,
     category: inp.category,
@@ -192,6 +200,7 @@ export async function copyInputs(sourceAllocId, targetAllocId) {
     rate: inp.rate,
     rate_unit: inp.rate_unit,
     cost_per_unit: inp.cost_per_unit,
+    acres: inp.acres,
     sort_order: i,
   }));
 
@@ -254,14 +263,18 @@ function getChemicalDistribution(timing) {
   return SEASONAL_DISTRIBUTION[key] || SEASONAL_DISTRIBUTION.chemical_default;
 }
 
-// Compute per-acre costs broken down by month for a single allocation
+// Compute total dollar costs broken down by month for a single allocation
+// Uses per-varietal acres for seed/seed_treatment, allocation acres for fert/chem
 function computeMonthlyInputCosts(alloc) {
-  // monthCosts: { 'Apr': { input_seed: X, input_fert: Y, input_chem: Z }, ... }
+  // monthCosts: { 'Apr': { input_seed: totalDollars, input_fert: totalDollars, ... }, ... }
   const monthCosts = {};
 
   for (const inp of alloc.inputs || []) {
     const costPerAcre = inp.rate * inp.cost_per_unit;
     if (costPerAcre === 0) continue;
+
+    const acres = effectiveAcres(inp, alloc);
+    const totalCost = costPerAcre * acres;
 
     let categoryCode;
     let distribution;
@@ -281,7 +294,7 @@ function computeMonthlyInputCosts(alloc) {
 
     for (const { month, pct } of distribution) {
       if (!monthCosts[month]) monthCosts[month] = {};
-      monthCosts[month][categoryCode] = (monthCosts[month][categoryCode] || 0) + costPerAcre * pct;
+      monthCosts[month][categoryCode] = (monthCosts[month][categoryCode] || 0) + totalCost * pct;
     }
   }
 
@@ -318,9 +331,9 @@ export async function pushToForecast(farmId, cropYear) {
     const monthlyCosts = computeMonthlyInputCosts(alloc);
     for (const [month, costs] of Object.entries(monthlyCosts)) {
       if (!monthTotals[month]) monthTotals[month] = {};
-      for (const [catCode, costPerAcre] of Object.entries(costs)) {
-        // costPerAcre is per acre for THIS crop; scale by this crop's acres
-        monthTotals[month][catCode] = (monthTotals[month][catCode] || 0) + costPerAcre * alloc.acres;
+      for (const [catCode, totalDollars] of Object.entries(costs)) {
+        // totalDollars already accounts for per-varietal acres (seed) or allocation acres (fert/chem)
+        monthTotals[month][catCode] = (monthTotals[month][catCode] || 0) + totalDollars;
       }
     }
   }
@@ -357,6 +370,35 @@ export async function pushToForecast(farmId, cropYear) {
   return { pushed: true, fiscalYear, monthsUpdated: updated };
 }
 
+// ─── Crop Options ───────────────────────────────────────────────────
+
+export async function getCropOptions() {
+  // Get all crops ever used in allocations, ordered by frequency
+  const used = await prisma.cropAllocation.groupBy({
+    by: ['crop'],
+    _count: { crop: true },
+    orderBy: { _count: { crop: 'desc' } },
+  });
+  const usedNames = used.map(u => u.crop);
+
+  // Merge with master list (ensures new crops available even if never used)
+  const MASTER_CROPS = [
+    'Canola', 'Hard Red Spring Wheat', 'Spring Durum Wheat', 'Winter Wheat',
+    'Malt Barley', 'Feed Barley', 'Oats', 'Hybrid Fall Rye',
+    'Flax', 'Large Green Lentils', 'Red Lentils', 'Desi Chickpea',
+    'Kabuli Chickpea (Large, 9mm)', 'Kabuli Chickpea (Small, 7mm)',
+    'Yellow Peas', 'Green Peas', 'Soybean', 'Corn',
+    'Brown Mustard', 'Yellow Mustard', 'Oriental Mustard', 'Hybrid Brown Mustard',
+    'Sunflower Oilseed', 'Fababeans', 'Camelina', 'Canary Seed',
+    'Caraway', 'Coriander', 'Fenugreek', 'Quinoa', 'Black Beans',
+  ];
+
+  // Deduplicate: used crops first, then remaining master crops
+  const seen = new Set(usedNames);
+  const remaining = MASTER_CROPS.filter(c => !seen.has(c));
+  return { used: usedNames, all: [...usedNames, ...remaining] };
+}
+
 // ─── Allocation CRUD ────────────────────────────────────────────────
 
 export async function upsertAllocation(planId, data) {
@@ -382,6 +424,10 @@ export async function deleteAllocation(allocationId) {
 
 export async function upsertInput(allocationId, data) {
   const { id, ...fields } = data;
+  // Only seed/seed_treatment inputs use per-varietal acres
+  if (fields.category && fields.category !== 'seed' && fields.category !== 'seed_treatment') {
+    delete fields.acres;
+  }
   if (id) {
     return prisma.cropInput.update({ where: { id }, data: fields });
   }
@@ -436,30 +482,32 @@ function computeInputCost(input) {
 }
 
 function summarizeAllocation(alloc) {
-  let seedCost = 0, fertCost = 0, chemCost = 0;
+  let seedTotal = 0, fertTotal = 0, chemTotal = 0;
   for (const inp of alloc.inputs || []) {
     const cpa = computeInputCost(inp);
-    if (inp.category === 'seed' || inp.category === 'seed_treatment') seedCost += cpa;
-    else if (inp.category === 'fertilizer') fertCost += cpa;
-    else if (inp.category === 'chemical') chemCost += cpa;
+    const acres = effectiveAcres(inp, alloc);
+    const total = cpa * acres;
+    if (inp.category === 'seed' || inp.category === 'seed_treatment') seedTotal += total;
+    else if (inp.category === 'fertilizer') fertTotal += total;
+    else if (inp.category === 'chemical') chemTotal += total;
   }
-  const totalPerAcre = seedCost + fertCost + chemCost;
+  const totalCost = seedTotal + fertTotal + chemTotal;
   const revenue = alloc.acres * alloc.target_yield_bu * alloc.commodity_price;
   return {
     crop: alloc.crop,
     acres: alloc.acres,
     target_yield_bu: alloc.target_yield_bu,
     commodity_price: alloc.commodity_price,
-    seed_per_acre: seedCost,
-    fert_per_acre: fertCost,
-    chem_per_acre: chemCost,
-    total_per_acre: totalPerAcre,
-    seed_total: seedCost * alloc.acres,
-    fert_total: fertCost * alloc.acres,
-    chem_total: chemCost * alloc.acres,
-    total_cost: totalPerAcre * alloc.acres,
+    seed_per_acre: alloc.acres ? seedTotal / alloc.acres : 0,
+    fert_per_acre: alloc.acres ? fertTotal / alloc.acres : 0,
+    chem_per_acre: alloc.acres ? chemTotal / alloc.acres : 0,
+    total_per_acre: alloc.acres ? totalCost / alloc.acres : 0,
+    seed_total: seedTotal,
+    fert_total: fertTotal,
+    chem_total: chemTotal,
+    total_cost: totalCost,
     revenue,
-    margin: revenue - totalPerAcre * alloc.acres,
+    margin: revenue - totalCost,
   };
 }
 
@@ -546,10 +594,11 @@ export async function getProcurementSummary(farmId, cropYear) {
           crops: [],
         };
       }
-      const qty = inp.rate * alloc.acres;
+      const acres = effectiveAcres(inp, alloc);
+      const qty = inp.rate * acres;
       products[key].total_qty += qty;
       products[key].total_cost += qty * inp.cost_per_unit;
-      products[key].crops.push({ crop: alloc.crop, acres: alloc.acres, rate: inp.rate });
+      products[key].crops.push({ crop: alloc.crop, acres, rate: inp.rate });
     }
   }
   return Object.values(products).sort((a, b) => b.total_cost - a.total_cost);
@@ -674,15 +723,16 @@ export async function getConsolidatedProcurement(cropYear) {
             farms: [],
           };
         }
-        const qty = inp.rate * alloc.acres;
+        const acres = effectiveAcres(inp, alloc);
+        const qty = inp.rate * acres;
         products[key].total_qty_needed += qty;
         products[key].total_planned_cost += qty * inp.cost_per_unit;
         products[key].farms.push({
           farm_name: plan.farm.name,
           crop: alloc.crop,
-          acres: alloc.acres,
+          acres,
           rate: inp.rate,
-          qty: qty,
+          qty,
         });
       }
     }

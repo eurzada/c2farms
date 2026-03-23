@@ -10,6 +10,7 @@ export function buildCanonicalName(rawName) {
     .replace(/\(r\)/gi, '')
     .replace(/\(tm\)/gi, '')
     .replace(/\s*\d+\s*(l|ml|kg|g|lb|lbs|gal|oz)\b/gi, '') // strip pack sizes
+    .replace(/\([\d\-]+\)/g, '') // strip (NPK) analysis codes like (46-0-0)
     .replace(/\s*-\s*/g, ' ')
     .replace(/[^a-z0-9\s]/g, '')
     .replace(/\s+/g, ' ')

@@ -15,6 +15,7 @@ import AgricultureIcon from '@mui/icons-material/Agriculture';
 import GroupsIcon from '@mui/icons-material/Groups';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import SupervisorAccountIcon from '@mui/icons-material/SupervisorAccount';
+import AssessmentIcon from '@mui/icons-material/Assessment';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import StorageIcon from '@mui/icons-material/Storage';
 import { useFarm } from '../../contexts/FarmContext';
@@ -166,6 +167,20 @@ export default function Sidebar({ width }) {
               >
                 <ListItemIcon sx={{ minWidth: 36, color: 'inherit' }}><SupervisorAccountIcon /></ListItemIcon>
                 <ListItemText primary="All Users" primaryTypographyProps={{ fontSize: 14 }} />
+              </ListItemButton>
+            )}
+            {isAnyFarmAdmin && (
+              <ListItemButton
+                selected={location.pathname === '/reporting'}
+                onClick={() => navigate('/reporting')}
+                sx={{
+                  mx: 1, borderRadius: 2, mb: 0.5,
+                  '&.Mui-selected': { bgcolor: 'primary.light', color: 'white' },
+                  '&.Mui-selected:hover': { bgcolor: 'primary.main' },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 36, color: 'inherit' }}><AssessmentIcon /></ListItemIcon>
+                <ListItemText primary="Reports" primaryTypographyProps={{ fontSize: 14 }} />
               </ListItemButton>
             )}
           </List>

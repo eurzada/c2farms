@@ -8,14 +8,18 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import AgricultureIcon from '@mui/icons-material/Agriculture';
 import InventoryIcon from '@mui/icons-material/Inventory';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useFarm } from '../../contexts/FarmContext';
 import api from '../../services/api';
 import ProductLibrary from '../agronomy/ProductLibrary';
 import ProcurementContracts from '../agronomy/ProcurementContracts';
+import ProcurementExportButtons from '../../components/agronomy/ProcurementExportButtons';
+import PlanVsBooked from '../agronomy/PlanVsBooked';
 
 function fmt(n) { return (n || 0).toLocaleString('en-CA', { maximumFractionDigits: 0 }); }
 function fmtDec(n) { return '$' + (n || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtDol(n) { return '$' + (n || 0).toLocaleString('en-CA', { maximumFractionDigits: 0 }); }
 function fmtK(n) { return n >= 1000 ? '$' + (n / 1000).toFixed(1) + 'k' : fmtDec(n); }
 
 const TH = { fontWeight: 'bold', bgcolor: 'action.hover', whiteSpace: 'nowrap', fontSize: '0.78rem', py: 0.75, px: 1 };
@@ -50,7 +54,8 @@ function buildCategoryData(farmsWithData, category) {
         }
         const p = productMap.get(inp.product_name);
         if (!p.farms[farm.id]) p.farms[farm.id] = { cost: 0, volume: 0 };
-        const vol = inp.rate * alloc.acres;
+        const acres = (inp.category === 'seed' || inp.category === 'seed_treatment') && inp.acres != null ? inp.acres : alloc.acres;
+        const vol = inp.rate * acres;
         const cost = vol * inp.cost_per_unit;
         p.farms[farm.id].cost += cost;
         p.farms[farm.id].volume += vol;
@@ -133,12 +138,12 @@ function ProductCostTable({ title, data, farmsWithData }) {
                   return (
                     <TableCell key={farm.id} align="right"
                       sx={{ ...TD, color: cost > 0 ? 'text.primary' : 'text.disabled' }}>
-                      {cost > 0 ? fmtK(cost) : '—'}
+                      {cost > 0 ? fmtDol(cost) : '—'}
                     </TableCell>
                   );
                 })}
                 <TableCell align="right" sx={{ ...TD, fontWeight: 'bold', borderLeft: 1, borderColor: 'divider' }}>
-                  {fmtK(p.totalCost)}
+                  {fmtDol(p.totalCost)}
                 </TableCell>
               </TableRow>
             ))}
@@ -146,9 +151,9 @@ function ProductCostTable({ title, data, farmsWithData }) {
             <TableRow sx={{ '& td': { ...TD, ...TOTAL_ROW } }}>
               <TableCell colSpan={3}>Total Cost</TableCell>
               {farmsWithData.map(({ farm }) => (
-                <TableCell key={farm.id} align="right">{fmtK(farmTotals.get(farm.id)?.cost || 0)}</TableCell>
+                <TableCell key={farm.id} align="right">{fmtDol(farmTotals.get(farm.id)?.cost || 0)}</TableCell>
               ))}
-              <TableCell align="right" sx={{ borderLeft: 1, borderColor: 'divider' }}>{fmtK(grandCost)}</TableCell>
+              <TableCell align="right" sx={{ borderLeft: 1, borderColor: 'divider' }}>{fmtDol(grandCost)}</TableCell>
             </TableRow>
 
             <TableRow sx={{ '& td': { ...TD, fontWeight: 'bold', color: 'primary.main' } }}>
@@ -267,9 +272,9 @@ function ProcurementContent({ year, farmsWithData }) {
         {[
           { label: 'Farms', value: farmsWithData.length },
           { label: 'Total Acres', value: fmt(grandAcres) },
-          { label: 'Seed', value: fmtK(seedData.grandCost) },
-          { label: 'Fertilizer', value: fmtK(fertData.grandCost) },
-          { label: 'Chemistry', value: fmtK(chemData.grandCost) },
+          { label: 'Seed', value: fmtDol(seedData.grandCost) },
+          { label: 'Fertilizer', value: fmtDol(fertData.grandCost) },
+          { label: 'Chemistry', value: fmtDol(chemData.grandCost) },
           { label: 'Total $/Acre', value: grandAcres > 0 ? fmtDec(totalInput / grandAcres) : '—' },
         ].map(kpi => (
           <Paper key={kpi.label} sx={{ p: 2, textAlign: 'center', flex: 1 }}>
@@ -352,7 +357,8 @@ export default function EnterpriseAgroPlan() {
 
   const isLibraryTab = location.pathname.includes('/library');
   const isContractsTab = location.pathname.includes('/contracts');
-  const tabIndex = isContractsTab ? 2 : isLibraryTab ? 1 : 0;
+  const isCoverageTab = location.pathname.includes('/coverage');
+  const tabIndex = isCoverageTab ? 3 : isContractsTab ? 2 : isLibraryTab ? 1 : 0;
 
   useEffect(() => {
     if (!farmUnits?.length) return;
@@ -373,7 +379,7 @@ export default function EnterpriseAgroPlan() {
   );
 
   const handleTabChange = (_, idx) => {
-    const paths = ['/enterprise/agro-plan', '/enterprise/agro-plan/library', '/enterprise/agro-plan/contracts'];
+    const paths = ['/enterprise/agro-plan', '/enterprise/agro-plan/library', '/enterprise/agro-plan/contracts', '/enterprise/agro-plan/coverage'];
     navigate(paths[idx] || paths[0]);
   };
 
@@ -393,6 +399,9 @@ export default function EnterpriseAgroPlan() {
           </Select>
         </FormControl>
         <Chip icon={<VisibilityIcon />} label="Read-Only" size="small" variant="outlined" />
+        <Box sx={{ ml: 'auto' }}>
+          <ProcurementExportButtons cropYear={year} />
+        </Box>
       </Box>
 
       {/* Tabs */}
@@ -406,6 +415,7 @@ export default function EnterpriseAgroPlan() {
         <Tab label="Procurement" icon={<AgricultureIcon />} iconPosition="start" />
         <Tab label="Product Library" icon={<InventoryIcon />} iconPosition="start" />
         <Tab label="Contracts" icon={<ReceiptLongIcon />} iconPosition="start" />
+        <Tab label="Plan vs Booked" icon={<CompareArrowsIcon />} iconPosition="start" />
       </Tabs>
 
       {/* Tab content */}
@@ -417,6 +427,9 @@ export default function EnterpriseAgroPlan() {
       )}
       {tabIndex === 2 && (
         <ProcurementContracts year={year} />
+      )}
+      {tabIndex === 3 && (
+        <PlanVsBooked year={year} />
       )}
     </Box>
   );

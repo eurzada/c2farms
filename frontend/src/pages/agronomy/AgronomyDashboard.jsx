@@ -13,6 +13,7 @@ import { useFarm } from '../../contexts/FarmContext';
 import ImportDialog from '../../components/agronomy/ImportDialog';
 import CwoImportDialog from '../../components/agronomy/CwoImportDialog';
 import WorkOrderImportDialog from '../../components/agronomy/WorkOrderImportDialog';
+import AgronomyExportButtons from '../../components/agronomy/AgronomyExportButtons';
 import api from '../../services/api';
 import { extractErrorMessage } from '../../utils/errorHelpers';
 
@@ -136,6 +137,7 @@ export default function AgronomyDashboard() {
         <Button variant="outlined" size="small" startIcon={<UploadFileIcon />} onClick={() => setWoOpen(true)}>
           Import Work Orders
         </Button>
+        <AgronomyExportButtons farmId={currentFarm.id} year={year} />
       </Box>
       <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} year={year} onImported={load} />
       <CwoImportDialog open={cwoOpen} onClose={() => setCwoOpen(false)} year={year} onImported={load} />

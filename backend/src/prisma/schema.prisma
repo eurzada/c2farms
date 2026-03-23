@@ -894,6 +894,7 @@ model CropInput {
   rate             Float
   rate_unit        String         // lbs/acre, L/acre, US Gal/Acre, per acre
   cost_per_unit    Float
+  acres            Float?         // varietal-specific acres (seed/seed_treatment); null = use allocation.acres
   sort_order       Int            @default(0)
 
   allocation       CropAllocation @relation(fields: [allocation_id], references: [id], onDelete: Cascade)
@@ -921,6 +922,7 @@ model AgroProduct {
   dealer_name             String? // e.g. "LAKELAND"
   canonical_name          String? // normalized name for fuzzy matching
   cost_per_application_unit Float? // computed $/L or $/lb for merging with CropInput rates
+  timing_tags             String? // comma-separated: "preburn,incrop", "fungicide", "seeding"
 
   farm          Farm @relation(fields: [farm_id], references: [id])
 

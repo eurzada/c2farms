@@ -21,6 +21,14 @@ import FertilizerMatrix from '../../components/agronomy/FertilizerMatrix';
 function fmt(n) { return (n || 0).toLocaleString('en-CA', { maximumFractionDigits: 0 }); }
 function fmtDec(n, d = 2) { return (n || 0).toLocaleString('en-CA', { minimumFractionDigits: d, maximumFractionDigits: d }); }
 
+// For seed/seed_treatment inputs, use per-varietal acres if set; otherwise fall back to allocation acres
+function effectiveAcres(inp, alloc) {
+  if ((inp.category === 'seed' || inp.category === 'seed_treatment') && inp.acres != null) {
+    return inp.acres;
+  }
+  return alloc.acres;
+}
+
 const CATEGORY_LABELS = {
   seed: 'SEEDING',
   seed_treatment: 'SEEDING',
@@ -34,12 +42,25 @@ const TIMING_LABELS = {
   incrop: 'In-Crop',
   fungicide: 'Fungicide',
   desiccation: 'Desiccation',
+  seeding: 'Seeding',
 };
+
+const TIMING_OPTIONS = [
+  { value: 'fall_residual', label: 'Fall Residual' },
+  { value: 'preburn', label: 'Preburn' },
+  { value: 'incrop', label: 'In-Crop' },
+  { value: 'fungicide', label: 'Fungicide' },
+  { value: 'desiccation', label: 'Desiccation' },
+  { value: 'seeding', label: 'Seeding (Seed Treatment)' },
+];
 
 function InputSection({ title, inputs, allocation, canEdit, onAdd, onDelete, onUpdate, products = [] }) {
   const productOptions = products.map(p => p.name);
-  const costPerAcre = inputs.reduce((s, i) => s + i.rate * i.cost_per_unit, 0);
-  const totalCost = costPerAcre * allocation.acres;
+  const totalCost = inputs.reduce((s, i) => s + i.rate * i.cost_per_unit * effectiveAcres(i, allocation), 0);
+  const costPerAcre = allocation.acres ? totalCost / allocation.acres : 0;
+  const isSeeding = title === 'SEEDING';
+  const seedAcresSum = isSeeding ? inputs.filter(i => i.category === 'seed').reduce((s, i) => s + (i.acres ?? 0), 0) : 0;
+  const hasAcresWarning = isSeeding && seedAcresSum > 0 && seedAcresSum > allocation.acres;
 
   return (
     <Box sx={{ mb: 2 }}>
@@ -53,6 +74,7 @@ function InputSection({ title, inputs, allocation, canEdit, onAdd, onDelete, onU
           <TableHead>
             <TableRow sx={{ '& th': { py: 0.5, fontSize: '0.75rem', fontWeight: 'bold' } }}>
               <TableCell>Product</TableCell>
+              {isSeeding && <TableCell align="right">Acres</TableCell>}
               {title === 'FERTILIZER' && <TableCell>Analysis</TableCell>}
               {title === 'CHEMICALS' && <TableCell>Timing</TableCell>}
               <TableCell align="right">Rate</TableCell>
@@ -78,8 +100,10 @@ function InputSection({ title, inputs, allocation, canEdit, onAdd, onDelete, onU
                         onChange={(_, val) => {
                           const match = products.find(p => p.name === val);
                           const updates = { product_name: val || '' };
-                          if (match?.cost_per_application_unit && !inp.cost_per_unit) {
-                            updates.cost_per_unit = match.cost_per_application_unit;
+                          if (match) {
+                            updates.cost_per_unit = match.cost_per_application_unit ?? match.default_cost ?? inp.cost_per_unit;
+                            if (match.default_rate && !inp.rate) updates.rate = match.default_rate;
+                            if (match.default_unit) updates.rate_unit = match.default_unit;
                           }
                           onUpdate(inp.id, updates);
                         }}
@@ -97,12 +121,33 @@ function InputSection({ title, inputs, allocation, canEdit, onAdd, onDelete, onU
                       />
                     ) : inp.product_name}
                   </TableCell>
+                  {isSeeding && (
+                    <TableCell align="right">
+                      {canEdit && inp.category === 'seed' ? (
+                        <TextField size="small" type="number"
+                          key={`${inp.id}-acres`}
+                          defaultValue={inp.acres ?? ''}
+                          placeholder={String(allocation.acres)}
+                          onBlur={e => {
+                            const val = e.target.value;
+                            const newAcres = val === '' ? null : (parseFloat(val) || 0);
+                            if (newAcres !== inp.acres) onUpdate(inp.id, { acres: newAcres });
+                          }}
+                          sx={{ width: 80 }} inputProps={{ style: { textAlign: 'right', fontSize: '0.8rem' } }} />
+                      ) : inp.category === 'seed' ? fmt(inp.acres ?? allocation.acres) : '—'}
+                    </TableCell>
+                  )}
                   {title === 'FERTILIZER' && <TableCell sx={{ color: 'text.secondary' }}>{inp.product_analysis || '—'}</TableCell>}
                   {title === 'CHEMICALS' && <TableCell><Chip label={TIMING_LABELS[inp.timing] || inp.timing || '—'} size="small" variant="outlined" /></TableCell>}
                   <TableCell align="right">
                     {canEdit ? (
-                      <TextField size="small" type="number" value={inp.rate}
-                        onChange={e => onUpdate(inp.id, { rate: parseFloat(e.target.value) || 0 })}
+                      <TextField size="small" type="number"
+                        key={`${inp.id}-rate`}
+                        defaultValue={inp.rate}
+                        onBlur={e => {
+                          const val = parseFloat(e.target.value) || 0;
+                          if (val !== inp.rate) onUpdate(inp.id, { rate: val });
+                        }}
                         sx={{ width: 70 }} inputProps={{ style: { textAlign: 'right', fontSize: '0.8rem' } }} />
                     ) : fmtDec(inp.rate)}
                   </TableCell>
@@ -115,14 +160,19 @@ function InputSection({ title, inputs, allocation, canEdit, onAdd, onDelete, onU
                         <WarningAmberIcon sx={{ fontSize: 14, color: 'warning.main' }} />
                       )}
                       {canEdit ? (
-                        <TextField size="small" type="number" value={inp.cost_per_unit}
-                          onChange={e => onUpdate(inp.id, { cost_per_unit: parseFloat(e.target.value) || 0 })}
+                        <TextField size="small" type="number"
+                          key={`${inp.id}-cpu`}
+                          defaultValue={inp.cost_per_unit}
+                          onBlur={e => {
+                            const val = parseFloat(e.target.value) || 0;
+                            if (val !== inp.cost_per_unit) onUpdate(inp.id, { cost_per_unit: val });
+                          }}
                           sx={{ width: 80 }} inputProps={{ style: { textAlign: 'right', fontSize: '0.8rem' } }} />
                       ) : `$${fmtDec(inp.cost_per_unit, 4)}`}
                     </Box>
                   </TableCell>
                   <TableCell align="right" sx={{ fontWeight: 500 }}>${fmtDec(cpa)}</TableCell>
-                  <TableCell align="right">${fmt(cpa * allocation.acres)}</TableCell>
+                  <TableCell align="right">${fmt(cpa * effectiveAcres(inp, allocation))}</TableCell>
                   {canEdit && (
                     <TableCell>
                       <IconButton size="small" color="error" onClick={() => onDelete(inp.id)}>
@@ -141,6 +191,11 @@ function InputSection({ title, inputs, allocation, canEdit, onAdd, onDelete, onU
           Add {title === 'SEEDING' ? 'Seed' : title === 'FERTILIZER' ? 'Fertilizer' : 'Chemical'}
         </Button>
       )}
+      {hasAcresWarning && (
+        <Alert severity="warning" sx={{ mt: 0.5, py: 0 }}>
+          Seed varietal acres ({fmt(seedAcresSum)}) exceed crop allocation ({fmt(allocation.acres)} ac)
+        </Alert>
+      )}
     </Box>
   );
 }
@@ -151,10 +206,11 @@ export default function CropInputPlan() {
   const [plan, setPlan] = useState(null);
   const [loading, setLoading] = useState(true);
   const [addDialog, setAddDialog] = useState(null); // { allocId, category }
-  const [newInput, setNewInput] = useState({ product_name: '', rate: '', rate_unit: 'lbs/acre', cost_per_unit: '', product_analysis: '', timing: '' });
+  const [newInput, setNewInput] = useState({ product_name: '', rate: '', rate_unit: 'lbs/acre', cost_per_unit: '', product_analysis: '', timing: '', acres: '' });
   const [error, setError] = useState('');
   const [fertProducts, setFertProducts] = useState([]);
   const [chemProducts, setChemProducts] = useState([]);
+  const [seedProducts, setSeedProducts] = useState([]);
   const [copyDialog, setCopyDialog] = useState(null); // { allocId, crop }
   const [copySourceFarm, setCopySourceFarm] = useState('');
   const [copySourceAllocs, setCopySourceAllocs] = useState([]);
@@ -166,14 +222,16 @@ export default function CropInputPlan() {
     if (!currentFarm) return;
     setLoading(true);
     try {
-      const [planRes, fertRes, chemRes] = await Promise.all([
+      const [planRes, fertRes, chemRes, seedRes] = await Promise.all([
         api.get(`/api/farms/${currentFarm.id}/agronomy/plans?year=${year}`),
         api.get(`/api/farms/${currentFarm.id}/agronomy/products?type=fertilizer`),
         api.get(`/api/farms/${currentFarm.id}/agronomy/products?type=chemical`),
+        api.get(`/api/farms/${currentFarm.id}/agronomy/products?type=seed`),
       ]);
       setPlan(planRes.data);
       setFertProducts(fertRes.data);
       setChemProducts(chemRes.data);
+      setSeedProducts(seedRes.data);
     } catch (err) {
       console.error(err);
     } finally {
@@ -222,20 +280,34 @@ export default function CropInputPlan() {
 
   const addInput = async () => {
     if (!addDialog || !newInput.product_name) return;
-    const cat = addDialog.category === 'seeding' ? 'seed' : addDialog.category === 'chemicals' ? 'chemical' : addDialog.category;
+    // Map UI category to DB category
+    let cat;
+    if (addDialog.category === 'seeding') {
+      cat = 'seed';
+    } else if (addDialog.category === 'chemicals') {
+      // Seeding timing in chemicals section → seed_treatment category
+      cat = newInput.timing === 'seeding' ? 'seed_treatment' : 'chemical';
+    } else {
+      cat = addDialog.category;
+    }
     try {
-      await api.post(`/api/farms/${currentFarm.id}/agronomy/allocations/${addDialog.allocId}/inputs`, {
+      const body = {
         category: cat,
         product_name: newInput.product_name,
         rate: parseFloat(newInput.rate) || 0,
         rate_unit: newInput.rate_unit,
         cost_per_unit: parseFloat(newInput.cost_per_unit) || 0,
         product_analysis: newInput.product_analysis || null,
-        timing: newInput.timing || null,
+        timing: newInput.timing === 'seeding' ? null : (newInput.timing || null),
         sort_order: 99,
-      });
+      };
+      // Include per-varietal acres for seed inputs
+      if (cat === 'seed' && newInput.acres !== '') {
+        body.acres = parseFloat(newInput.acres) || null;
+      }
+      await api.post(`/api/farms/${currentFarm.id}/agronomy/allocations/${addDialog.allocId}/inputs`, body);
       setAddDialog(null);
-      setNewInput({ product_name: '', rate: '', rate_unit: 'lbs/acre', cost_per_unit: '', product_analysis: '', timing: '' });
+      setNewInput({ product_name: '', rate: '', rate_unit: 'lbs/acre', cost_per_unit: '', product_analysis: '', timing: '', acres: '' });
       load();
     } catch (err) {
       setError(extractErrorMessage(err, 'Error adding input'));
@@ -338,8 +410,8 @@ export default function CropInputPlan() {
         const seedInputs = alloc.inputs?.filter(i => i.category === 'seed' || i.category === 'seed_treatment') || [];
         const fertInputs = alloc.inputs?.filter(i => i.category === 'fertilizer') || [];
         const chemInputs = alloc.inputs?.filter(i => i.category === 'chemical') || [];
-        const totalPerAcre = alloc.inputs?.reduce((s, i) => s + i.rate * i.cost_per_unit, 0) || 0;
-        const totalCost = totalPerAcre * alloc.acres;
+        const totalCost = alloc.inputs?.reduce((s, i) => s + i.rate * i.cost_per_unit * effectiveAcres(i, alloc), 0) || 0;
+        const totalPerAcre = alloc.acres ? totalCost / alloc.acres : 0;
         const revenue = alloc.acres * alloc.target_yield_bu * alloc.commodity_price;
 
         return (
@@ -367,7 +439,10 @@ export default function CropInputPlan() {
               {(seedInputs.length > 0 || canEdit) && (
                 <InputSection title="SEEDING" inputs={seedInputs} allocation={alloc}
                   canEdit={canEdit} onAdd={() => setAddDialog({ allocId: alloc.id, category: 'seeding' })}
-                  onDelete={deleteInput} onUpdate={updateInput} />
+                  onDelete={deleteInput} onUpdate={updateInput}
+                  products={seedProducts.filter(p =>
+                    !p.crop_filter || p.crop_filter.split(',').map(s => s.trim()).includes(alloc.crop)
+                  )} />
               )}
               {/* Fertilizer matrix — always show if has inputs, products exist, or can edit */}
               {(fertInputs.length > 0 || fertProducts.length > 0 || canEdit) && (
@@ -401,9 +476,35 @@ export default function CropInputPlan() {
         <DialogTitle>Add {addDialog?.category === 'seeding' ? 'Seed' : 'Chemical'} Input</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
+            {/* Chemicals: timing first, then filtered product list */}
+            {addDialog?.category === 'chemicals' && (
+              <FormControl fullWidth>
+                <InputLabel>Timing *</InputLabel>
+                <Select value={newInput.timing} label="Timing *" onChange={e => setNewInput({ ...newInput, timing: e.target.value, product_name: '', rate: '', cost_per_unit: '' })}>
+                  {TIMING_OPTIONS.map(t => (
+                    <MenuItem key={t.value} value={t.value}>{t.label}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            )}
             {(() => {
-              const prods = addDialog?.category === 'chemicals' ? chemProducts
-                : addDialog?.category === 'fertilizer' ? fertProducts : [];
+              let prods = [];
+              if (addDialog?.category === 'seeding') {
+                // Seed products filtered by crop
+                const alloc = plan?.allocations?.find(a => a.id === addDialog?.allocId);
+                prods = seedProducts.filter(p =>
+                  !p.crop_filter || p.crop_filter.split(',').map(s => s.trim()).includes(alloc?.crop)
+                );
+              } else if (addDialog?.category === 'chemicals' && newInput.timing) {
+                // Filter chemical products by selected timing
+                prods = chemProducts.filter(p => {
+                  if (!p.timing_tags) return true; // null timing_tags = show everywhere
+                  const tags = p.timing_tags.split(',').map(s => s.trim());
+                  return tags.includes(newInput.timing);
+                });
+              } else if (addDialog?.category === 'fertilizer') {
+                prods = fertProducts;
+              }
               return prods.length > 0 ? (
                 <Autocomplete
                   freeSolo
@@ -414,30 +515,29 @@ export default function CropInputPlan() {
                     setNewInput({
                       ...newInput,
                       product_name: val || '',
-                      cost_per_unit: match?.cost_per_application_unit ? String(match.cost_per_application_unit) : newInput.cost_per_unit,
+                      cost_per_unit: match?.cost_per_application_unit ? String(match.cost_per_application_unit)
+                        : match?.default_cost ? String(match.default_cost) : newInput.cost_per_unit,
+                      rate: match?.default_rate ? String(match.default_rate) : newInput.rate,
+                      rate_unit: match?.default_unit || newInput.rate_unit,
                     });
                   }}
                   onInputChange={(_, val, reason) => {
                     if (reason === 'input') setNewInput({ ...newInput, product_name: val });
                   }}
                   renderInput={(params) => <TextField {...params} label="Product Name" fullWidth />}
+                  disabled={addDialog?.category === 'chemicals' && !newInput.timing}
                 />
               ) : (
-                <TextField label="Product Name" value={newInput.product_name} onChange={e => setNewInput({ ...newInput, product_name: e.target.value })} fullWidth />
+                <TextField
+                  label="Product Name"
+                  value={newInput.product_name}
+                  onChange={e => setNewInput({ ...newInput, product_name: e.target.value })}
+                  fullWidth
+                  disabled={addDialog?.category === 'chemicals' && !newInput.timing}
+                  helperText={addDialog?.category === 'chemicals' && !newInput.timing ? 'Select timing first' : ''}
+                />
               );
             })()}
-            {addDialog?.category === 'chemicals' && (
-              <FormControl fullWidth>
-                <InputLabel>Timing</InputLabel>
-                <Select value={newInput.timing} label="Timing" onChange={e => setNewInput({ ...newInput, timing: e.target.value })}>
-                  <MenuItem value="fall_residual">Fall Residual</MenuItem>
-                  <MenuItem value="preburn">Preburn</MenuItem>
-                  <MenuItem value="incrop">In-Crop</MenuItem>
-                  <MenuItem value="fungicide">Fungicide</MenuItem>
-                  <MenuItem value="desiccation">Desiccation</MenuItem>
-                </Select>
-              </FormControl>
-            )}
             <Stack direction="row" spacing={2}>
               <TextField label="Rate" type="number" value={newInput.rate} onChange={e => setNewInput({ ...newInput, rate: e.target.value })} sx={{ flex: 1 }} />
               <FormControl sx={{ flex: 1 }}>
@@ -451,6 +551,21 @@ export default function CropInputPlan() {
               </FormControl>
             </Stack>
             <TextField label="Cost per Unit ($)" type="number" value={newInput.cost_per_unit} onChange={e => setNewInput({ ...newInput, cost_per_unit: e.target.value })} fullWidth />
+            {addDialog?.category === 'seeding' && (() => {
+              const alloc = plan?.allocations?.find(a => a.id === addDialog?.allocId);
+              const existingSeedAcres = alloc?.inputs?.filter(i => i.category === 'seed').reduce((s, i) => s + (i.acres || 0), 0) || 0;
+              const remaining = alloc ? alloc.acres - existingSeedAcres : 0;
+              return (
+                <TextField
+                  label="Acres for this varietal"
+                  type="number"
+                  value={newInput.acres}
+                  onChange={e => setNewInput({ ...newInput, acres: e.target.value })}
+                  fullWidth
+                  helperText={remaining > 0 ? `${fmt(remaining)} of ${fmt(alloc?.acres)} ac remaining` : `Total crop: ${fmt(alloc?.acres)} ac`}
+                />
+              );
+            })()}
           </Stack>
         </DialogContent>
         <DialogActions>

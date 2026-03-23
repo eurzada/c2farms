@@ -166,13 +166,17 @@ const FARM_PLANS = {
 // Realistic 2025-2026 western Canada input costs
 
 // Canola — Lewvan gets NH3 (own rig), everyone else dry blend
-function getCanolaInputs(farmName, soilZone, availableN, targetYield) {
+function getCanolaInputs(farmName, soilZone, availableN, targetYield, cropAcres) {
   const nRequired = Math.round(targetYield * 2.75);
   const nToApply = nRequired - (availableN || 0);
 
+  // Two varietals with split acres (L233P ~1/3, L340PC ~2/3)
+  const l233pAcres = cropAcres ? Math.round(cropAcres * 0.33) : null;
+  const l340pcAcres = cropAcres ? cropAcres - l233pAcres : null;
   const seed = [
-    { category: 'seed', product_name: 'InVigor L233P', rate: 5, rate_unit: 'lbs/acre', cost_per_unit: 12.50, sort_order: 0 },
-    { category: 'seed_treatment', product_name: 'Prosper EverGol', rate: 1, rate_unit: 'per acre', cost_per_unit: 9.25, sort_order: 1 },
+    { category: 'seed', product_name: 'InVigor L233P', rate: 5, rate_unit: 'lbs/acre', cost_per_unit: 12.50, acres: l233pAcres, sort_order: 0 },
+    { category: 'seed', product_name: 'InVigor L340PC', rate: 4.5, rate_unit: 'lbs/acre', cost_per_unit: 13.25, acres: l340pcAcres, sort_order: 1 },
+    { category: 'seed_treatment', product_name: 'Prosper EverGol', rate: 1, rate_unit: 'per acre', cost_per_unit: 9.25, sort_order: 2 },
   ];
 
   let fert;
@@ -354,9 +358,9 @@ function getYellowMustardInputs(soilZone, availableN, targetYield) {
   ];
 }
 
-function getInputProgram(crop, farmName, soilZone, availableN, targetYield) {
+function getInputProgram(crop, farmName, soilZone, availableN, targetYield, cropAcres) {
   switch (crop) {
-    case 'Canola': return getCanolaInputs(farmName, soilZone, availableN, targetYield);
+    case 'Canola': return getCanolaInputs(farmName, soilZone, availableN, targetYield, cropAcres);
     case 'Spring Durum Wheat': return getDurumInputs(soilZone, availableN, targetYield);
     case 'Large Green Lentils': return getLargeGreenLentilInputs();
     case 'Small Red Lentils': return getSmallRedLentilInputs();
@@ -420,36 +424,36 @@ const PRODUCTS = [
   { name: 'MAP', type: 'fertilizer', analysis_code: '11-52-0', form: 'dry', default_unit: 'lbs/acre', default_cost: 0.5299 },
   { name: 'Potash', type: 'fertilizer', analysis_code: '0-0-60', form: 'dry', default_unit: 'lbs/acre', default_cost: 0.294 },
   { name: 'AMS', type: 'fertilizer', analysis_code: '21-0-0-24', form: 'dry', default_unit: 'lbs/acre', default_cost: 0.30 },
-  // Chemicals
-  { name: 'Glyphosate', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 5.50 },
-  { name: 'Glyphosate 540', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 5.50 },
-  { name: 'Heat LQ', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 210.00 },
-  { name: 'Liberty 200SN', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 11.75 },
-  { name: 'Centurion', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 68.00 },
-  { name: 'Pixxaro', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 44.00 },
-  { name: 'Axial BIA', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 46.00 },
-  { name: 'Odyssey DLX', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 392.00 },
-  { name: 'Authority Supreme', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 67.00 },
-  { name: 'Bromoxynil', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 14.00 },
-  { name: 'Traxos', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 42.00 },
-  { name: 'Poast Ultra', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 52.00 },
-  { name: 'Buctril M', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 14.50 },
-  { name: 'Muster', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 1550.00 },
+  // Chemicals — with timing_tags for timing-based filtering
+  { name: 'Glyphosate', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 5.50, timing_tags: 'preburn,desiccation' },
+  { name: 'Glyphosate 540', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 5.50, timing_tags: 'preburn,desiccation' },
+  { name: 'Heat LQ', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 210.00, timing_tags: 'preburn' },
+  { name: 'Liberty 200SN', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 11.75, timing_tags: 'incrop' },
+  { name: 'Centurion', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 68.00, timing_tags: 'incrop' },
+  { name: 'Pixxaro', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 44.00, timing_tags: 'incrop' },
+  { name: 'Axial BIA', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 46.00, timing_tags: 'incrop' },
+  { name: 'Odyssey DLX', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 392.00, timing_tags: 'incrop' },
+  { name: 'Authority Supreme', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 67.00, timing_tags: 'fall_residual' },
+  { name: 'Bromoxynil', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 14.00, timing_tags: 'incrop' },
+  { name: 'Traxos', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 42.00, timing_tags: 'incrop' },
+  { name: 'Poast Ultra', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 52.00, timing_tags: 'incrop' },
+  { name: 'Buctril M', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 14.50, timing_tags: 'incrop' },
+  { name: 'Muster', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 1550.00, timing_tags: 'incrop' },
   // Fungicides
-  { name: 'Cotegra', type: 'chemical', sub_type: 'fungicide', default_unit: 'L/acre', default_cost: 82.00 },
-  { name: 'Prosaro XTR', type: 'chemical', sub_type: 'fungicide', default_unit: 'L/acre', default_cost: 58.00 },
-  { name: 'Headline', type: 'chemical', sub_type: 'fungicide', default_unit: 'L/acre', default_cost: 62.00 },
-  { name: 'Elatus', type: 'chemical', sub_type: 'fungicide', default_unit: 'L/acre', default_cost: 75.00 },
-  { name: 'Dyax', type: 'chemical', sub_type: 'fungicide', default_unit: 'L/acre', default_cost: 98.00 },
-  { name: 'Priaxor', type: 'chemical', sub_type: 'fungicide', default_unit: 'L/acre', default_cost: 85.00 },
+  { name: 'Cotegra', type: 'chemical', sub_type: 'fungicide', default_unit: 'L/acre', default_cost: 82.00, timing_tags: 'fungicide' },
+  { name: 'Prosaro XTR', type: 'chemical', sub_type: 'fungicide', default_unit: 'L/acre', default_cost: 58.00, timing_tags: 'fungicide' },
+  { name: 'Headline', type: 'chemical', sub_type: 'fungicide', default_unit: 'L/acre', default_cost: 62.00, timing_tags: 'fungicide' },
+  { name: 'Elatus', type: 'chemical', sub_type: 'fungicide', default_unit: 'L/acre', default_cost: 75.00, timing_tags: 'fungicide' },
+  { name: 'Dyax', type: 'chemical', sub_type: 'fungicide', default_unit: 'L/acre', default_cost: 98.00, timing_tags: 'fungicide' },
+  { name: 'Priaxor', type: 'chemical', sub_type: 'fungicide', default_unit: 'L/acre', default_cost: 85.00, timing_tags: 'fungicide' },
   // Desiccant
-  { name: 'Reglone', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 18.50 },
-  // Seed treatments (reference)
-  { name: 'Prosper EverGol', type: 'chemical', sub_type: 'seed_treatment', default_unit: 'per acre', default_cost: 9.25 },
-  { name: 'Raxil PRO', type: 'chemical', sub_type: 'seed_treatment', default_unit: 'per acre', default_cost: 5.80 },
-  { name: 'Vibrance Maxx + Nodulator XL', type: 'chemical', sub_type: 'seed_treatment', default_unit: 'per acre', default_cost: 14.50 },
-  { name: 'Vitaflo 280', type: 'chemical', sub_type: 'seed_treatment', default_unit: 'per acre', default_cost: 3.50 },
-  { name: 'Helix Vibrance', type: 'chemical', sub_type: 'seed_treatment', default_unit: 'per acre', default_cost: 5.50 },
+  { name: 'Reglone', type: 'chemical', sub_type: 'herbicide', default_unit: 'L/acre', default_cost: 18.50, timing_tags: 'desiccation' },
+  // Seed treatments — timing_tags: 'seeding' for chemical-section workflow
+  { name: 'Prosper EverGol', type: 'chemical', sub_type: 'seed_treatment', default_unit: 'per acre', default_cost: 9.25, timing_tags: 'seeding' },
+  { name: 'Raxil PRO', type: 'chemical', sub_type: 'seed_treatment', default_unit: 'per acre', default_cost: 5.80, timing_tags: 'seeding' },
+  { name: 'Vibrance Maxx + Nodulator XL', type: 'chemical', sub_type: 'seed_treatment', default_unit: 'per acre', default_cost: 14.50, timing_tags: 'seeding' },
+  { name: 'Vitaflo 280', type: 'chemical', sub_type: 'seed_treatment', default_unit: 'per acre', default_cost: 3.50, timing_tags: 'seeding' },
+  { name: 'Helix Vibrance', type: 'chemical', sub_type: 'seed_treatment', default_unit: 'per acre', default_cost: 5.50, timing_tags: 'seeding' },
 ];
 
 // ─── Main seed function ─────────────────────────────────────────────
@@ -548,7 +552,7 @@ async function seed() {
 
       const inputs = getInputProgram(
         cropCfg.crop, farmName, cfg.soilZone,
-        cropCfg.available_n, cropCfg.yield
+        cropCfg.available_n, cropCfg.yield, acres
       );
 
       for (const inp of inputs) {

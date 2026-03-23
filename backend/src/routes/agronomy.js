@@ -269,6 +269,15 @@ agronomyGeneralRouter.get('/consolidated-procurement', authenticate, async (req,
   } catch (err) { next(err); }
 });
 
+agronomyGeneralRouter.get('/plan-vs-booked', authenticate, async (req, res, next) => {
+  try {
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const { getPlanVsBooked } = await import('../services/planVsBookedService.js');
+    const result = await getPlanVsBooked(year);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 // ─── Procurement Contracts ──────────────────────────────────────────
 
 async function resolveEnterpriseFarmId() {
@@ -377,6 +386,15 @@ agronomyGeneralRouter.post('/sync-contract-pricing', authenticate, async (req, r
     const farmId = await resolveEnterpriseFarmId();
     const result = await procSvc.syncContractPricingToLibrary(farmId, cropYear);
     res.json({ success: true, ...result });
+  } catch (err) { next(err); }
+});
+
+// ─── Crop Options ────────────────────────────────────────────────────
+
+agronomyGeneralRouter.get('/crop-options', authenticate, async (req, res, next) => {
+  try {
+    const result = await svc.getCropOptions();
+    res.json(result);
   } catch (err) { next(err); }
 });
 

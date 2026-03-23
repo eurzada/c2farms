@@ -250,7 +250,7 @@ export async function generateExcel(farmId, fiscalYear) {
 /**
  * Build a pdfmake table body from structured statement rows.
  */
-function buildPdfTableBody(statementRows, months) {
+export function buildPdfTableBody(statementRows, months) {
   const noBorder = [false, false, false, false];
   const topBorder = [false, true, false, false];
   const topAndBottomBorder = [false, true, false, true];
@@ -328,7 +328,7 @@ function buildPdfTableBody(statementRows, months) {
   return tableBody;
 }
 
-const tableLayout = {
+export const tableLayout = {
   hLineWidth: function () { return 0.5; },
   vLineWidth: function () { return 0; },
   hLineColor: function () { return '#000000'; },

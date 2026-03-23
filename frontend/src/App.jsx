@@ -52,6 +52,7 @@ const TerminalOutgoing = lazy(() => import('./pages/terminal/TerminalOutgoing'))
 const TerminalBins = lazy(() => import('./pages/terminal/TerminalBins'));
 const TerminalContracts = lazy(() => import('./pages/terminal/TerminalContracts'));
 const TerminalSettlements = lazy(() => import('./pages/terminal/TerminalSettlements'));
+const ReportingDashboard = lazy(() => import('./pages/reporting/ReportingDashboard'));
 
 function LazyFallback() {
   return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 8 }}><CircularProgress /></Box>;
@@ -162,6 +163,7 @@ export default function App() {
                       <Route path="/chart-of-accounts" element={<Navigate to="/financials/chart-of-accounts" />} />
                       <Route path="/settings" element={<AdminRoute><Settings /></AdminRoute>} />
                       <Route path="/universal-settings" element={<AnyFarmAdminRoute><UniversalSettings /></AnyFarmAdminRoute>} />
+                      <Route path="/reporting" element={<AnyFarmAdminRoute><ReportingDashboard /></AnyFarmAdminRoute>} />
 
                       {/* Agronomy — Farm Unit only */}
                       <Route path="/agronomy" element={<FarmUnitRoute module="agronomy"><Navigate to="/agronomy/dashboard" /></FarmUnitRoute>} />
@@ -170,6 +172,7 @@ export default function App() {
                       <Route path="/agronomy/inputs" element={<FarmUnitRoute module="agronomy"><AgronomyLayout><CropInputPlan /></AgronomyLayout></FarmUnitRoute>} />
                       <Route path="/enterprise/agro-plan/library" element={<EnterpriseRoute><EnterpriseAgroPlan /></EnterpriseRoute>} />
                       <Route path="/enterprise/agro-plan/contracts" element={<EnterpriseRoute><EnterpriseAgroPlan /></EnterpriseRoute>} />
+                      <Route path="/enterprise/agro-plan/coverage" element={<EnterpriseRoute><EnterpriseAgroPlan /></EnterpriseRoute>} />
                       <Route path="/labour" element={<FarmUnitRoute module="agronomy"><LabourPlan /></FarmUnitRoute>} />
 
                       {/* Inventory — both modes, but different scope */}

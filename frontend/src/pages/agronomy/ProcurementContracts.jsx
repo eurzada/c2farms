@@ -574,7 +574,7 @@ function ContractDetail({ contract, onStatusChange, onDelete, onClose }) {
                   <TableCell sx={{ ...TD, textAlign: 'right' }}>{fmt(line.qty)}</TableCell>
                   <TableCell sx={TD}>{line.qty_unit || '—'}</TableCell>
                   <TableCell sx={{ ...TD, textAlign: 'right' }}>{fmtDec(line.unit_price)}</TableCell>
-                  <TableCell sx={{ ...TD, textAlign: 'right', fontWeight: 'bold' }}>{fmtDec(line.line_total)}</TableCell>
+                  <TableCell sx={{ ...TD, textAlign: 'right', fontWeight: 'bold' }}>{'$' + fmt(line.line_total)}</TableCell>
                   <TableCell sx={{ ...TD, textAlign: 'right' }}>{fmt(line.delivered_qty)}</TableCell>
                   <TableCell sx={TD}>{line.notes || '—'}</TableCell>
                 </TableRow>
@@ -590,7 +590,7 @@ function ContractDetail({ contract, onStatusChange, onDelete, onClose }) {
                 <TableCell sx={{ ...TD, borderTop: 2, borderColor: 'divider' }} />
                 <TableCell sx={{ ...TD, borderTop: 2, borderColor: 'divider' }} />
                 <TableCell sx={{ ...TD, textAlign: 'right', fontWeight: 'bold', borderTop: 2, borderColor: 'divider' }}>
-                  {fmtDec(contract.lines.reduce((s, l) => s + (l.line_total || 0), 0))}
+                  {'$' + fmt(contract.lines.reduce((s, l) => s + (l.line_total || 0), 0))}
                 </TableCell>
                 <TableCell sx={{ ...TD, textAlign: 'right', fontWeight: 'bold', borderTop: 2, borderColor: 'divider' }}>
                   {fmt(contract.lines.reduce((s, l) => s + (l.delivered_qty || 0), 0))}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Paper, Button, Chip, Alert, IconButton, TextField, Stack,
-  Dialog, DialogTitle, DialogContent, DialogActions, Snackbar,
+  Dialog, DialogTitle, DialogContent, DialogActions, Snackbar, Divider,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Select, MenuItem, FormControl, InputLabel, Tooltip,
 } from '@mui/material';
@@ -22,10 +22,7 @@ import { extractErrorMessage } from '../../utils/errorHelpers';
 function fmt(n) { return (n || 0).toLocaleString('en-CA', { maximumFractionDigits: 0 }); }
 function fmtDec(n) { return (n || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
-const CROP_OPTIONS = [
-  'Canola', 'Spring Wheat', 'Spring Durum Wheat', 'Spring Barley',
-  'Chickpeas', 'Small Red Lentils', 'Yellow Field Peas', 'Flax',
-];
+// Crop options loaded from API (most-used first, then master list)
 
 const STATUS_COLORS = { draft: 'default', submitted: 'warning', approved: 'success', locked: 'info', rejected: 'error' };
 
@@ -42,14 +39,21 @@ export default function PlanSetup() {
   const [error, setError] = useState('');
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectNotes, setRejectNotes] = useState('');
+  const [cropOptions, setCropOptions] = useState([]);
+  const [usedCrops, setUsedCrops] = useState(new Set());
   const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
   const load = useCallback(async () => {
     if (!currentFarm) return;
     setLoading(true);
     try {
-      const res = await api.get(`/api/farms/${currentFarm.id}/agronomy/plans?year=${year}`);
-      setPlan(res.data || null);
+      const [planRes, cropRes] = await Promise.all([
+        api.get(`/api/farms/${currentFarm.id}/agronomy/plans?year=${year}`),
+        api.get('/api/agronomy/crop-options'),
+      ]);
+      setPlan(planRes.data || null);
+      setCropOptions(cropRes.data.all || []);
+      setUsedCrops(new Set(cropRes.data.used || []));
     } catch (err) {
       console.error('Plan load error:', err);
       setPlan(null);
@@ -298,8 +302,8 @@ export default function PlanSetup() {
                             <Select size="small" value={alloc.crop}
                               onChange={e => updateAllocation(alloc.id, 'crop', e.target.value)}
                               sx={{ minWidth: 160, fontWeight: 'bold' }}>
-                              {CROP_OPTIONS.filter(c => c === alloc.crop || !plan?.allocations?.some(a => a.crop === c)).map(c => (
-                                <MenuItem key={c} value={c}>{c}</MenuItem>
+                              {cropOptions.filter(c => c === alloc.crop || !plan?.allocations?.some(a => a.crop === c)).map(c => (
+                                <MenuItem key={c} value={c} sx={usedCrops.has(c) ? { fontWeight: 'bold' } : {}}>{c}</MenuItem>
                               ))}
                             </Select>
                           ) : alloc.crop}
@@ -367,9 +371,14 @@ export default function PlanSetup() {
             <FormControl fullWidth>
               <InputLabel>Crop</InputLabel>
               <Select value={newCrop} label="Crop" onChange={e => setNewCrop(e.target.value)}>
-                {CROP_OPTIONS.filter(c => !plan?.allocations?.some(a => a.crop === c)).map(c => (
-                  <MenuItem key={c} value={c}>{c}</MenuItem>
-                ))}
+                {cropOptions.filter(c => !plan?.allocations?.some(a => a.crop === c)).map((c, i) => {
+                  // Add divider between used and unused crops
+                  const isFirstUnused = !usedCrops.has(c) && (i === 0 || usedCrops.has(cropOptions.filter(x => !plan?.allocations?.some(a => a.crop === x))[i - 1]));
+                  return [
+                    isFirstUnused && <Divider key={`div-${c}`} />,
+                    <MenuItem key={c} value={c} sx={usedCrops.has(c) ? { fontWeight: 'bold' } : {}}>{c}</MenuItem>,
+                  ];
+                })}
               </Select>
             </FormControl>
             <TextField label="Acres" type="number" value={newAcres} onChange={e => setNewAcres(e.target.value)} fullWidth />
