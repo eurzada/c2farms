@@ -16,11 +16,25 @@ model User {
   modules       Json           @default("[\"forecast\",\"inventory\",\"marketing\",\"logistics\",\"agronomy\",\"enterprise\"]")
   created_at    DateTime       @default(now())
   updated_at    DateTime       @updatedAt
-  farm_roles     UserFarmRole[]
-  audit_logs     AuditLog[]
-  activity_logs  ActivityLog[]
+  farm_roles      UserFarmRole[]
+  audit_logs      AuditLog[]
+  activity_logs   ActivityLog[]
+  reset_tokens    PasswordResetToken[]
 
   @@map("users")
+}
+
+model PasswordResetToken {
+  id          String    @id @default(uuid())
+  user_id     String
+  token_hash  String
+  expires_at  DateTime
+  used_at     DateTime?
+  created_at  DateTime  @default(now())
+
+  user User @relation(fields: [user_id], references: [id])
+
+  @@map("password_reset_tokens")
 }
 
 model Farm {

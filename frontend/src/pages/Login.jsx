@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { Box, Card, CardContent, TextField, Button, Typography, Alert } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -57,8 +57,18 @@ export default function Login() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              sx={{ mb: 3 }}
+              sx={{ mb: 1 }}
             />
+            <Box sx={{ textAlign: 'right', mb: 2 }}>
+              <Typography
+                component={Link}
+                to="/forgot-password"
+                variant="body2"
+                sx={{ color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+              >
+                Forgot password?
+              </Typography>
+            </Box>
             <Button
               fullWidth
               variant="contained"

@@ -4,6 +4,8 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { FarmProvider, useFarm } from './contexts/FarmContext';
 import AppLayout from './components/layout/AppLayout';
 import Login from './pages/Login';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import Home from './pages/Home';
 import PerUnit from './pages/PerUnit';
 import Accounting from './pages/Accounting';
@@ -136,6 +138,8 @@ export default function App() {
         <FarmProvider>
           <Routes>
             <Route path="/login" element={<LoginRoute />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route
               path="/*"
               element={
