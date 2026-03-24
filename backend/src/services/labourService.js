@@ -8,26 +8,29 @@ const log = createLogger('labour');
 
 const DEFAULT_SEASONS = [
   {
-    name: 'Seeding', sort_order: 1, months: ['May'],
+    name: 'Winter', sort_order: 1, months: ['Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr'],
+    roles: ['Grain Truckers', 'Winter Yard', 'Mechanic'],
+  },
+  {
+    name: 'Seeding', sort_order: 2, months: ['May'],
     roles: ['Seeders', 'Truckers', 'Sprayer', 'Roller/Spreader'],
   },
   {
-    name: 'Summer', sort_order: 2, months: ['Jun', 'Jul', 'Aug'],
+    name: 'Summer', sort_order: 3, months: ['Jun', 'Jul', 'Aug'],
     roles: ['Sprayer', 'Spray Trucker', 'Grain Trucker', 'Yard', 'Mechanic'],
   },
   {
-    name: 'Harvest', sort_order: 3, months: ['Sep', 'Oct'],
+    name: 'Harvest', sort_order: 4, months: ['Sep', 'Oct'],
     roles: ['Combines', 'Trucks/Bagger', 'Grain Carts'],
   },
   {
-    name: 'Fall Work', sort_order: 4, months: ['Oct'],
+    name: 'Fall Work', sort_order: 5, months: ['Oct'],
     roles: ['Sprayer Desiccate', 'Sprayer Fall Burn', 'Spreading'],
   },
-  {
-    name: 'Winter', sort_order: 5, months: ['Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr'],
-    roles: ['Grain Truckers', 'Winter Yard', 'Mechanic'],
-  },
 ];
+
+// Canonical season sort order (Winter first — matches fiscal year start)
+const SEASON_ORDER = { 'Winter': 1, 'Seeding': 2, 'Summer': 3, 'Harvest': 4, 'Fall Work': 5 };
 
 // ─── Acre Resolution (always from Assumption — source of truth) ─────
 
@@ -60,6 +63,26 @@ export async function getPlan(farmId, fiscalYear) {
       data: { total_acres: currentAcres },
     });
     plan.total_acres = currentAcres;
+  }
+
+  // Fix season sort order if needed (Winter should be first)
+  let needsReorder = false;
+  for (const s of plan.seasons) {
+    const expected = SEASON_ORDER[s.name];
+    if (expected && s.sort_order !== expected) {
+      needsReorder = true;
+      break;
+    }
+  }
+  if (needsReorder) {
+    for (const s of plan.seasons) {
+      const expected = SEASON_ORDER[s.name];
+      if (expected && s.sort_order !== expected) {
+        await prisma.labourSeason.update({ where: { id: s.id }, data: { sort_order: expected } });
+        s.sort_order = expected;
+      }
+    }
+    plan.seasons.sort((a, b) => a.sort_order - b.sort_order);
   }
 
   return plan;
@@ -341,10 +364,11 @@ export async function getDashboard(farmId, fiscalYear) {
   const fuelRate = Number(plan.fuel_rate_per_acre) || 0;
   const fuelCostPerLitre = Number(plan.fuel_cost_per_litre) || 1;
   let totalHours = 0;
+
   const seasonSummary = plan.seasons.map(s => {
     const hours = s.roles.reduce((sum, r) => sum + Number(r.hours), 0);
     totalHours += hours;
-    return { name: s.name, hours, cost: hours * wage, role_count: s.roles.length };
+    return { name: s.name, months: s.months, hours, cost: hours * wage, role_count: s.roles.length };
   });
 
   // Add fuel allocation per season (proportional to hours)

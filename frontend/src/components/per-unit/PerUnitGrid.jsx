@@ -74,7 +74,7 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
         headerName: 'Category',
         field: 'display_name',
         pinned: 'left',
-        width: 220,
+        width: 200,
         cellStyle: (params) => {
           if (params.data?.isComputed) {
             return { fontWeight: 'bold', borderTop: `2px solid ${colors.computedBorder}` };
@@ -90,9 +90,26 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
         },
       },
       {
-        headerName: 'Prior Year',
+        headerName: `FY${(fiscalYear || 2026) - 2}`,
+        field: 'priorYear2',
+        flex: 1,
+        minWidth: 70,
+        type: 'numericColumn',
+        valueFormatter: (p) => formatNumber(p.value),
+        cellStyle: (params) => {
+          const style = { backgroundColor: colors.priorYearBg, color: colors.priorYearText };
+          if (isLevel0OrComputed(params)) {
+            style.fontWeight = 'bold';
+            style.borderTop = `2px solid ${colors.computedBorder}`;
+          }
+          return style;
+        },
+      },
+      {
+        headerName: `FY${(fiscalYear || 2026) - 1}`,
         field: 'priorYear',
-        width: 100,
+        flex: 1,
+        minWidth: 70,
         type: 'numericColumn',
         valueFormatter: (p) => formatNumber(p.value),
         cellStyle: (params) => {
@@ -110,7 +127,8 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
       cols.push({
         headerName: month,
         field: `months.${month}`,
-        width: 90,
+        flex: 1,
+        minWidth: 70,
         type: 'numericColumn',
         editable: (params) => {
           if (!canEdit) return false;
@@ -159,7 +177,8 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
     cols.push({
       headerName: 'Year Total',
       field: 'currentAggregate',
-      width: 110,
+      flex: 1,
+      minWidth: 75,
       type: 'numericColumn',
       valueFormatter: (p) => formatNumber(p.value),
       cellStyle: (params) => ({

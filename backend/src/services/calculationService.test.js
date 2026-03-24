@@ -45,41 +45,38 @@ beforeEach(() => {
 });
 
 describe('updateAccountingCell', () => {
-  it('preserves is_actual flag when isActual not passed', async () => {
-    // Existing record is already actual
+  it('does not set is_actual on plan data (Two-Books: actuals go to MonthlyActual)', async () => {
     prismaMock.monthlyData.findUnique.mockResolvedValue({
       data_json: { rev_canola: 500 },
-      is_actual: true,
     });
     prismaMock.monthlyData.upsert.mockResolvedValue({});
 
     await updateAccountingCell(FARM_ID, FY, MONTH, 'rev_canola', 1000);
 
-    // First upsert = accounting
+    // Accounting upsert should not contain is_actual at all
     const accountingUpsert = prismaMock.monthlyData.upsert.mock.calls[0][0];
-    // update should NOT contain is_actual (since isActual defaults to false)
     expect(accountingUpsert.update).not.toHaveProperty('is_actual');
-    // create should preserve existing flag via actualFlag = false || true = true
-    expect(accountingUpsert.create.is_actual).toBe(true);
+    expect(accountingUpsert.create).not.toHaveProperty('is_actual');
   });
 
-  it('sets is_actual when isActual=true', async () => {
+  it('upserts both accounting and per-unit records', async () => {
     prismaMock.monthlyData.findUnique.mockResolvedValue({
       data_json: {},
-      is_actual: false,
     });
     prismaMock.monthlyData.upsert.mockResolvedValue({});
 
-    await updateAccountingCell(FARM_ID, FY, MONTH, 'rev_canola', 1000, { isActual: true });
+    await updateAccountingCell(FARM_ID, FY, MONTH, 'rev_canola', 1000);
 
-    // Accounting upsert
+    // Should have 2 upsert calls: accounting + per-unit
+    expect(prismaMock.monthlyData.upsert).toHaveBeenCalledTimes(2);
+
+    // First = accounting
     const accountingUpsert = prismaMock.monthlyData.upsert.mock.calls[0][0];
-    expect(accountingUpsert.update.is_actual).toBe(true);
-    expect(accountingUpsert.create.is_actual).toBe(true);
+    expect(accountingUpsert.where.farm_id_fiscal_year_month_type.type).toBe('accounting');
 
-    // Per-unit upsert
+    // Second = per-unit
     const perUnitUpsert = prismaMock.monthlyData.upsert.mock.calls[1][0];
-    expect(perUnitUpsert.update.is_actual).toBe(true);
+    expect(perUnitUpsert.where.farm_id_fiscal_year_month_type.type).toBe('per_unit');
   });
 
   it('cascades to per-unit with correct division', async () => {

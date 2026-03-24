@@ -45,6 +45,10 @@ function makePlan(overrides = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default mocks for acre resolution and season reorder (used by getPlan/getPlanById)
+  prismaMock.assumption.findUnique.mockResolvedValue({ total_acres: 10000 });
+  prismaMock.labourSeason.update.mockResolvedValue({});
+  prismaMock.labourPlan.update.mockResolvedValue({});
 });
 
 // ─── getPlan ────────────────────────────────────────────────────────
@@ -56,7 +60,8 @@ describe('getPlan', () => {
 
     const result = await svc.getPlan(FARM_ID, FY);
 
-    expect(result).toEqual(plan);
+    expect(result.id).toBe('plan-1');
+    expect(result.seasons).toHaveLength(2);
     expect(prismaMock.labourPlan.findUnique).toHaveBeenCalledWith({
       where: { farm_id_fiscal_year: { farm_id: FARM_ID, fiscal_year: FY } },
       include: expect.objectContaining({
@@ -206,26 +211,23 @@ describe('pushToForecast', () => {
     expect(mockUpdatePerUnitCell).toHaveBeenCalled();
   });
 
-  it('skips months with actuals', async () => {
+  it('pushes to all months including those with actuals (Two-Books: plan always writable)', async () => {
     const plan = makePlan();
     prismaMock.labourPlan.findUnique.mockResolvedValue(plan);
-    // May has actuals, Sep/Oct do not
-    prismaMock.monthlyData.findUnique.mockImplementation(async (args) => {
-      if (args.where.farm_id_fiscal_year_month_type.month === 'May') {
-        return { is_actual: true };
-      }
-      return null;
-    });
+    prismaMock.monthlyData.findUnique.mockResolvedValue(null);
 
     const result = await svc.pushToForecast('plan-1');
 
     expect(result.pushed).toBe(true);
-    expect(result.monthsUpdated).not.toContain('May');
+    // All months with hours should be updated (May from Seeding, Sep+Oct from Harvest)
+    expect(result.monthsUpdated).toContain('May');
     expect(result.monthsUpdated).toContain('Sep');
+    expect(result.monthsUpdated).toContain('Oct');
   });
 
   it('returns not pushed when no total acres', async () => {
     prismaMock.labourPlan.findUnique.mockResolvedValue(makePlan({ total_acres: 0 }));
+    prismaMock.assumption.findUnique.mockResolvedValue({ total_acres: 0 });
 
     const result = await svc.pushToForecast('plan-1');
 
@@ -403,6 +405,7 @@ describe('getDashboard', () => {
 
   it('handles zero acres without division error', async () => {
     prismaMock.labourPlan.findUnique.mockResolvedValue(makePlan({ total_acres: 0 }));
+    prismaMock.assumption.findUnique.mockResolvedValue({ total_acres: 0 });
 
     const result = await svc.getDashboard(FARM_ID, FY);
 

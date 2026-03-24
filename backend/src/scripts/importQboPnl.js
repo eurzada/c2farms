@@ -7,7 +7,7 @@
  *   GlAccount → GlActualDetail → rollupGlActuals → MonthlyData
  *
  * Usage:
- *   node src/scripts/importQboPnl.js <path> [--dry-run] [--force]
+ *   node src/scripts/importQboPnl.js <path> [--dry-run] [--force] [--basis accrual|cash]
  *
  * File naming: <FarmName>_FY<year>.xlsx  (e.g. Lewvan_FY2025.xlsx)
  * Override file: qbo-account-overrides.json in the same directory
@@ -433,7 +433,7 @@ async function ensureFarmCategory(farmId, code, displayName, parentCode, dryRun)
 
 // ─── Main Import Logic ──────────────────────────────────────────────────────
 
-async function processFile(filePath, overrides, dryRun) {
+async function processFile(filePath, overrides, dryRun, basis = 'cash') {
   const filename = path.basename(filePath);
   const parsed = parseFilename(filename);
   if (!parsed) {
@@ -523,7 +523,7 @@ async function processFile(filePath, overrides, dryRun) {
   };
 }
 
-async function executeImport(result) {
+async function executeImport(result, basis = 'cash') {
   const { farm, fiscalYears, mapped, newCategories, assumptions, isMultiFY } = result;
 
   // 1. Ensure assumptions exist for all fiscal years
@@ -609,7 +609,7 @@ async function executeImport(result) {
   // 5. Rollup each affected FY+month (outside transaction)
   for (const target of rollupTargets) {
     const [fy, month] = target.split(':');
-    await rollupGlActuals(farm.id, parseInt(fy), month);
+    await rollupGlActuals(farm.id, parseInt(fy), month, { basis });
   }
 
   return { months: rollupTargets.size, accounts: mapped.length, fiscalYears };
@@ -723,11 +723,12 @@ async function main() {
 
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
     console.log(`
-Usage: node src/scripts/importQboPnl.js <path> [--dry-run] [--force]
+Usage: node src/scripts/importQboPnl.js <path> [--dry-run] [--force] [--basis accrual|cash]
 
   <path>       Directory of .xlsx files, or a single .xlsx file
   --dry-run    Preview only, no database changes
   --force      Skip confirmation prompt
+  --basis      Accounting basis: 'accrual' or 'cash' (default: cash)
 
 File naming (pick one):
   FarmName.xlsx            One file per BU, full date range (fiscal years auto-detected from headers)
@@ -744,12 +745,15 @@ Override unmapped accounts by placing qbo-account-overrides.json alongside the f
   const targetPath = args.find(a => !a.startsWith('--'));
   const dryRun = args.includes('--dry-run');
   const force = args.includes('--force');
+  const basisIdx = args.indexOf('--basis');
+  const basis = basisIdx !== -1 && args[basisIdx + 1] ? args[basisIdx + 1] : 'cash';
 
   if (!targetPath) {
     console.error('Error: No path provided');
     process.exit(1);
   }
 
+  console.log(`Accounting basis: ${basis.toUpperCase()}`);
   const resolvedPath = path.resolve(targetPath);
 
   // Collect xlsx files
@@ -786,7 +790,7 @@ Override unmapped accounts by placing qbo-account-overrides.json alongside the f
   const results = [];
   for (const file of files) {
     try {
-      const result = await processFile(file, overrides, true); // always preview first
+      const result = await processFile(file, overrides, true, basis); // always preview first
       results.push(result);
     } catch (err) {
       results.push({ file: path.basename(file), error: err.message });
@@ -836,13 +840,13 @@ Override unmapped accounts by placing qbo-account-overrides.json alongside the f
   for (const result of importable) {
     try {
       // Re-process without dry-run to create assumptions/categories
-      const freshResult = await processFile(result.filePath, overrides, false);
+      const freshResult = await processFile(result.filePath, overrides, false, basis);
       if (freshResult.error) {
         console.log(`  ❌ ${result.file}: ${freshResult.error}`);
         failed++;
         continue;
       }
-      const importResult = await executeImport(freshResult);
+      const importResult = await executeImport(freshResult, basis);
       console.log(`  ✓ ${result.file}: ${importResult.accounts} accounts, ${importResult.months} month-slots, FY ${importResult.fiscalYears.join('+')}`);
       success++;
     } catch (err) {

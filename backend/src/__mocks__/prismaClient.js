@@ -31,6 +31,8 @@ export function createPrismaMock() {
     labourPlan: mockModel(),
     labourSeason: mockModel(),
     labourRole: mockModel(),
+    labourActual: mockModel(),
+    monthlyActual: mockModel(),
     commodity: mockModel(),
     inventoryBin: mockModel(),
     inventoryLocation: mockModel(),

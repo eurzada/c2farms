@@ -66,23 +66,27 @@ describe('rollupGlActuals', () => {
     expect(Object.values(result.accounting)).not.toContain(999);
   });
 
-  it('marks records as is_actual: true', async () => {
+  it('writes actuals to MonthlyActual (Two-Books: separate from plan)', async () => {
     prismaMock.glActualDetail.findMany.mockResolvedValue([
       { amount: 100, gl_account: { category: { code: 'input_seed' } } },
     ]);
-    prismaMock.monthlyData.findUnique.mockResolvedValue(null);
-    prismaMock.monthlyData.upsert.mockResolvedValue({});
+    prismaMock.monthlyActual.upsert.mockResolvedValue({});
 
     await rollupGlActuals(FARM_ID, FY, MONTH);
 
-    // Both accounting and per_unit upserts should set is_actual: true
-    const accountingUpsert = prismaMock.monthlyData.upsert.mock.calls[0][0];
-    expect(accountingUpsert.update.is_actual).toBe(true);
-    expect(accountingUpsert.create.is_actual).toBe(true);
+    // Should upsert into monthlyActual (not monthlyData)
+    expect(prismaMock.monthlyActual.upsert).toHaveBeenCalledTimes(2);
 
-    const perUnitUpsert = prismaMock.monthlyData.upsert.mock.calls[1][0];
-    expect(perUnitUpsert.update.is_actual).toBe(true);
-    expect(perUnitUpsert.create.is_actual).toBe(true);
+    // First = accounting actuals
+    const accountingUpsert = prismaMock.monthlyActual.upsert.mock.calls[0][0];
+    expect(accountingUpsert.where.farm_id_fiscal_year_month_type.type).toBe('accounting');
+
+    // Second = per-unit actuals
+    const perUnitUpsert = prismaMock.monthlyActual.upsert.mock.calls[1][0];
+    expect(perUnitUpsert.where.farm_id_fiscal_year_month_type.type).toBe('per_unit');
+
+    // monthlyData should NOT be called (plan stays untouched)
+    expect(prismaMock.monthlyData.upsert).not.toHaveBeenCalled();
   });
 
   it('cascades to per-unit using total acres', async () => {

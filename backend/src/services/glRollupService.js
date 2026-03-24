@@ -2,7 +2,7 @@ import prisma from '../config/database.js';
 import { getFarmCategories, recalcParentSums } from './categoryService.js';
 
 // Roll up GL actual details into category-level MonthlyData
-export async function rollupGlActuals(farmId, fiscalYear, month) {
+export async function rollupGlActuals(farmId, fiscalYear, month, { basis = 'cash' } = {}) {
   const farmCategories = await getFarmCategories(farmId);
 
   // Query all GL actuals for this farm/year/month, joined with GL accounts for category mapping
@@ -45,7 +45,7 @@ export async function rollupGlActuals(farmId, fiscalYear, month) {
     update: { data_json: withParents },
     create: {
       farm_id: farmId, fiscal_year: fiscalYear, month, type: 'accounting',
-      data_json: withParents, basis: 'cash', source: 'gl_rollup',
+      data_json: withParents, basis, source: 'gl_rollup',
     },
   });
 

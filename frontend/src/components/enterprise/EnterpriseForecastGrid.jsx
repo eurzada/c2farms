@@ -1,24 +1,23 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useCallback } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import { Box } from '@mui/material';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import { getGridColors } from '../../utils/gridColors';
-import { formatNumber, formatCurrency, formatPercent } from '../../utils/formatting';
+import { formatNumber, formatCurrency } from '../../utils/formatting';
 
 /**
  * Read-only ag-Grid for consolidated forecast data.
- * @param {Object} props
- * @param {Array} props.rows - Row data (same shape as financial.js response)
- * @param {Array} props.months - Fiscal months array ['Nov',..,'Oct']
- * @param {'per-unit'|'accounting'} props.mode - Display mode
- * @param {Function} [props.onRowClick] - Called with row data on click
  */
-export default function EnterpriseForecastGrid({ rows, months, mode, onRowClick }) {
+export default function EnterpriseForecastGrid({ rows, months, mode, fiscalYear, onRowClick }) {
   const gridRef = useRef();
   const { mode: themeMode } = useThemeMode();
   const colors = useMemo(() => getGridColors(themeMode), [themeMode]);
+
+  const onGridReady = useCallback((params) => {
+    params.api.sizeColumnsToFit();
+  }, []);
 
   const columnDefs = useMemo(() => {
     const valueFmt = mode === 'per-unit'
@@ -26,12 +25,22 @@ export default function EnterpriseForecastGrid({ rows, months, mode, onRowClick 
       : (p) => formatCurrency(p.value, 0);
     const isLevel0OrComputed = (params) => params.data?.level === 0 || params.data?.isComputed;
 
+    const priorYearStyle = (params) => {
+      const style = { backgroundColor: colors.priorYearBg, color: colors.priorYearText };
+      if (isLevel0OrComputed(params)) {
+        style.fontWeight = 'bold';
+        style.borderTop = `2px solid ${colors.computedBorder}`;
+      }
+      return style;
+    };
+
     const cols = [
       {
         headerName: 'Category',
         field: 'display_name',
         pinned: 'left',
-        width: 220,
+        minWidth: 180,
+        width: 200,
         cellStyle: (params) => {
           if (params.data?.isComputed) {
             return { fontWeight: 'bold', borderTop: `2px solid ${colors.computedBorder}` };
@@ -47,19 +56,22 @@ export default function EnterpriseForecastGrid({ rows, months, mode, onRowClick 
         },
       },
       {
-        headerName: 'Prior Year',
-        field: 'priorYear',
-        width: 100,
+        headerName: `FY${(fiscalYear || 2026) - 2}`,
+        field: 'priorYear2',
+        flex: 1,
+        minWidth: 75,
         type: 'numericColumn',
         valueFormatter: valueFmt,
-        cellStyle: (params) => {
-          const style = { backgroundColor: colors.priorYearBg, color: colors.priorYearText };
-          if (isLevel0OrComputed(params)) {
-            style.fontWeight = 'bold';
-            style.borderTop = `2px solid ${colors.computedBorder}`;
-          }
-          return style;
-        },
+        cellStyle: priorYearStyle,
+      },
+      {
+        headerName: `FY${(fiscalYear || 2026) - 1}`,
+        field: 'priorYear',
+        flex: 1,
+        minWidth: 75,
+        type: 'numericColumn',
+        valueFormatter: valueFmt,
+        cellStyle: priorYearStyle,
       },
     ];
 
@@ -67,7 +79,8 @@ export default function EnterpriseForecastGrid({ rows, months, mode, onRowClick 
       cols.push({
         headerName: month,
         field: `months.${month}`,
-        width: 90,
+        flex: 1,
+        minWidth: 70,
         type: 'numericColumn',
         valueGetter: (params) => params.data?.months?.[month] || 0,
         valueFormatter: valueFmt,
@@ -87,58 +100,22 @@ export default function EnterpriseForecastGrid({ rows, months, mode, onRowClick 
       });
     }
 
-    cols.push(
-      {
-        headerName: 'Forecast',
-        field: 'forecastTotal',
-        width: 110,
-        type: 'numericColumn',
-        valueFormatter: valueFmt,
-        cellStyle: (params) => ({
-          backgroundColor: colors.aggregateBg,
-          fontWeight: 'bold',
-          borderTop: isLevel0OrComputed(params) ? `2px solid ${colors.computedBorder}` : undefined,
-        }),
-      },
-      {
-        headerName: 'Budget',
-        field: 'frozenBudgetTotal',
-        width: 110,
-        type: 'numericColumn',
-        valueFormatter: valueFmt,
-        cellStyle: (params) => ({
-          backgroundColor: colors.forecastBg,
-          fontWeight: 'bold',
-          borderTop: isLevel0OrComputed(params) ? `2px solid ${colors.computedBorder}` : undefined,
-        }),
-      },
-      {
-        headerName: 'Variance',
-        field: 'variance',
-        width: 110,
-        type: 'numericColumn',
-        valueFormatter: valueFmt,
-        cellStyle: (params) => ({
-          color: (params.value || 0) < 0 ? colors.negativeText : (params.value || 0) > 0 ? colors.negativeText : colors.positiveText,
-          fontWeight: 'bold',
-          borderTop: isLevel0OrComputed(params) ? `2px solid ${colors.computedBorder}` : undefined,
-        }),
-      },
-      {
-        headerName: '% Diff',
-        field: 'pctDiff',
-        width: 80,
-        type: 'numericColumn',
-        valueFormatter: (p) => formatPercent(p.value),
-        cellStyle: (params) => ({
-          color: Math.abs(params.value || 0) > 10 ? colors.negativeText : colors.mutedText,
-          borderTop: isLevel0OrComputed(params) ? `2px solid ${colors.computedBorder}` : undefined,
-        }),
-      },
-    );
+    cols.push({
+      headerName: 'Total',
+      field: 'forecastTotal',
+      flex: 1,
+      minWidth: 80,
+      type: 'numericColumn',
+      valueFormatter: valueFmt,
+      cellStyle: (params) => ({
+        backgroundColor: colors.aggregateBg,
+        fontWeight: 'bold',
+        borderTop: isLevel0OrComputed(params) ? `2px solid ${colors.computedBorder}` : undefined,
+      }),
+    });
 
     return cols;
-  }, [months, colors, mode]);
+  }, [months, colors, mode, fiscalYear]);
 
   const defaultColDef = useMemo(() => ({
     resizable: true,
@@ -159,6 +136,7 @@ export default function EnterpriseForecastGrid({ rows, months, mode, onRowClick 
           defaultColDef={defaultColDef}
           getRowId={(params) => params.data.code}
           animateRows={false}
+          onGridReady={onGridReady}
           onRowClicked={onRowClick ? (e) => onRowClick(e.data) : undefined}
           rowStyle={{ cursor: onRowClick ? 'pointer' : 'default' }}
         />

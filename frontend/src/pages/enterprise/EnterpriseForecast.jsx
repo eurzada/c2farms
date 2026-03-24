@@ -5,7 +5,7 @@ import {
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import TableChartIcon from '@mui/icons-material/TableChart';
-import PercentIcon from '@mui/icons-material/Percent';
+import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import TabPanel from '../../components/shared/TabPanel';
 import EnterpriseForecastGrid from '../../components/enterprise/EnterpriseForecastGrid';
 import EnterpriseForecastDashboard from '../../components/enterprise/EnterpriseForecastDashboard';
@@ -85,7 +85,7 @@ export default function EnterpriseForecast() {
             <Tabs value={tab} onChange={(_, v) => setTab(v)}>
               <Tab icon={<DashboardIcon />} iconPosition="start" label="Dashboard" />
               <Tab icon={<TableChartIcon />} iconPosition="start" label="Cost Forecast" />
-              <Tab icon={<PercentIcon />} iconPosition="start" label="Per Acre" />
+              <Tab icon={<AttachMoneyIcon />} iconPosition="start" label="Per Acre" />
             </Tabs>
           </Box>
 
@@ -101,6 +101,7 @@ export default function EnterpriseForecast() {
               rows={data.accountingRows}
               months={data.months}
               mode="accounting"
+              fiscalYear={data.fiscalYear}
               onRowClick={handleRowClick('accounting')}
             />
           </TabPanel>
@@ -113,6 +114,7 @@ export default function EnterpriseForecast() {
               rows={data.perUnitRows}
               months={data.months}
               mode="per-unit"
+              fiscalYear={data.fiscalYear}
               onRowClick={handleRowClick('per-unit')}
             />
           </TabPanel>

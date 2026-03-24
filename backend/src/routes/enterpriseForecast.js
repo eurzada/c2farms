@@ -37,7 +37,7 @@ router.get('/forecast-rollup/:year', authenticate, async (req, res, next) => {
 
     // Fetch data for all BUs in parallel
     const buResults = await Promise.all(buFarms.map(async (farm) => {
-      const [assumption, acctData, acctFrozen, priorAcct, categories] = await Promise.all([
+      const [assumption, acctData, acctFrozen, priorAcct, prior2Acct, categories] = await Promise.all([
         prisma.assumption.findUnique({
           where: { farm_id_fiscal_year: { farm_id: farm.id, fiscal_year: fiscalYear } },
         }),
@@ -47,8 +47,12 @@ router.get('/forecast-rollup/:year', authenticate, async (req, res, next) => {
         prisma.monthlyDataFrozen.findMany({
           where: { farm_id: farm.id, fiscal_year: fiscalYear, type: 'accounting' },
         }),
-        prisma.monthlyData.findMany({
+        // Prior years: read from MonthlyActual (Book 2: GL actuals), not MonthlyData (Book 1: Plan)
+        prisma.monthlyActual.findMany({
           where: { farm_id: farm.id, fiscal_year: fiscalYear - 1, type: 'accounting' },
+        }),
+        prisma.monthlyActual.findMany({
+          where: { farm_id: farm.id, fiscal_year: fiscalYear - 2, type: 'accounting' },
         }),
         getFarmCategories(farm.id),
       ]);
@@ -71,6 +75,13 @@ router.get('/forecast-rollup/:year', authenticate, async (req, res, next) => {
         }
       }
 
+      const prior2Map = {};
+      for (const row of prior2Acct) {
+        for (const [key, val] of Object.entries(row.data_json || {})) {
+          prior2Map[key] = (prior2Map[key] || 0) + val;
+        }
+      }
+
       return {
         farm,
         assumption,
@@ -78,6 +89,7 @@ router.get('/forecast-rollup/:year', authenticate, async (req, res, next) => {
         monthMap,
         frozenMap,
         priorMap,
+        prior2Map,
         totalAcres: assumption?.total_acres || 0,
         isFrozen: assumption?.is_frozen || false,
         cropCount: assumption?.crops_json?.length || 0,
@@ -114,9 +126,9 @@ router.get('/forecast-rollup/:year', authenticate, async (req, res, next) => {
     const unifiedCategories = [...categoryMap.values()].sort((a, b) => a.sort_order - b.sort_order);
 
     // Aggregate accounting values across all BUs
-    const consolidated = {}; // code -> { months: {Nov: sum}, priorYear: sum, frozen: {Nov: sum} }
+    const consolidated = {}; // code -> { months: {Nov: sum}, priorYear: sum, priorYear2: sum, frozen: {Nov: sum} }
     for (const cat of unifiedCategories) {
-      consolidated[cat.code] = { months: {}, priorYear: 0, frozen: {} };
+      consolidated[cat.code] = { months: {}, priorYear: 0, priorYear2: 0, frozen: {} };
       for (const month of months) {
         consolidated[cat.code].months[month] = 0;
         consolidated[cat.code].frozen[month] = 0;
@@ -148,6 +160,7 @@ router.get('/forecast-rollup/:year', authenticate, async (req, res, next) => {
         }
 
         consolidated[cat.code].priorYear += bu.priorMap[cat.code] || 0;
+        consolidated[cat.code].priorYear2 += bu.prior2Map[cat.code] || 0;
 
         drillDown[cat.code].push({
           farmId: bu.farm.id,
@@ -187,6 +200,7 @@ router.get('/forecast-rollup/:year', authenticate, async (req, res, next) => {
         sort_order: cat.sort_order,
         months: c.months,
         priorYear: c.priorYear,
+        priorYear2: c.priorYear2,
         forecastTotal,
         frozenBudgetTotal: budgetVal,
         variance,
@@ -201,6 +215,7 @@ router.get('/forecast-rollup/:year', authenticate, async (req, res, next) => {
       let totalExpForecast = 0;
       let totalExpBudget = 0;
       let totalExpPrior = 0;
+      let totalExpPrior2 = 0;
 
       for (const month of months) {
         const val = expenseParentRows.reduce((sum, r) => sum + (r.months[month] || 0), 0);
@@ -210,6 +225,7 @@ router.get('/forecast-rollup/:year', authenticate, async (req, res, next) => {
       totalExpForecast = expenseParentRows.reduce((sum, r) => sum + r.forecastTotal, 0);
       totalExpBudget = expenseParentRows.reduce((sum, r) => sum + r.frozenBudgetTotal, 0);
       totalExpPrior = expenseParentRows.reduce((sum, r) => sum + r.priorYear, 0);
+      totalExpPrior2 = expenseParentRows.reduce((sum, r) => sum + r.priorYear2, 0);
 
       accountingRows.push({
         code: '_total_expense',
@@ -220,6 +236,7 @@ router.get('/forecast-rollup/:year', authenticate, async (req, res, next) => {
         sort_order: 998,
         months: totalExpMonths,
         priorYear: totalExpPrior,
+        priorYear2: totalExpPrior2,
         isComputed: true,
         forecastTotal: totalExpForecast,
         frozenBudgetTotal: totalExpBudget,
@@ -239,6 +256,7 @@ router.get('/forecast-rollup/:year', authenticate, async (req, res, next) => {
         ...row,
         months: puMonths,
         priorYear: row.priorYear / divisor,
+        priorYear2: row.priorYear2 / divisor,
         forecastTotal: row.forecastTotal / divisor,
         frozenBudgetTotal: row.frozenBudgetTotal / divisor,
         variance: row.variance / divisor,

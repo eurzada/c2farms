@@ -411,7 +411,7 @@ export default function LabourPlan() {
                       Labour: {fmt(seasonHours)} hrs &nbsp; {formatCurrency(seasonCost)}
                     </Typography>
                     {totalFuelCost > 0 && totalHours > 0 && (
-                      <Typography variant="body2" color="warning.main" fontWeight="bold">
+                      <Typography variant="body2" color="text.secondary" fontWeight="bold">
                         Fuel: {formatCurrency(totalFuelCost * (seasonHours / totalHours))} &nbsp; ({(seasonHours / totalHours * 100).toFixed(1)}%)
                       </Typography>
                     )}

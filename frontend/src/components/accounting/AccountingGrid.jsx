@@ -80,7 +80,7 @@ export default function AccountingGrid({ farmId, fiscalYear, onSummaryLoaded }) 
         headerName: 'Category',
         field: 'display_name',
         pinned: 'left',
-        width: 260,
+        width: 200,
         cellStyle: (params) => {
           if (params.data?.isComputed) {
             return { fontWeight: 'bold', borderTop: `2px solid ${colors.computedBorder}` };
@@ -96,9 +96,29 @@ export default function AccountingGrid({ farmId, fiscalYear, onSummaryLoaded }) 
         },
       },
       {
-        headerName: 'Prior Year',
+        headerName: `FY${(fiscalYear || 2026) - 2}`,
+        field: 'priorYear2',
+        flex: 1,
+        minWidth: 80,
+        type: 'numericColumn',
+        valueFormatter: (params) => {
+          if (isLevel0OrComputed(params)) return formatCurrency(params.value, 0);
+          return formatNumber(params.value, 0);
+        },
+        cellStyle: (params) => {
+          const style = { backgroundColor: colors.priorYearBg, color: colors.priorYearText };
+          if (isLevel0OrComputed(params)) {
+            style.fontWeight = 'bold';
+            style.borderTop = `2px solid ${colors.computedBorder}`;
+          }
+          return style;
+        },
+      },
+      {
+        headerName: `FY${(fiscalYear || 2026) - 1}`,
         field: 'priorYear',
-        width: 110,
+        flex: 1,
+        minWidth: 80,
         type: 'numericColumn',
         valueFormatter: (params) => {
           if (isLevel0OrComputed(params)) return formatCurrency(params.value, 0);
@@ -119,7 +139,8 @@ export default function AccountingGrid({ farmId, fiscalYear, onSummaryLoaded }) 
       cols.push({
         headerName: month,
         field: `months.${month}`,
-        width: 110,
+        flex: 1,
+        minWidth: 80,
         type: 'numericColumn',
         editable: (params) => {
           if (!canEdit) return false;
@@ -168,7 +189,8 @@ export default function AccountingGrid({ farmId, fiscalYear, onSummaryLoaded }) 
     cols.push({
       headerName: 'Year Total',
       field: 'total',
-      width: 120,
+      flex: 1,
+      minWidth: 85,
       type: 'numericColumn',
       valueFormatter: (params) => formatCurrency(params.value, 0),
       cellStyle: (params) => ({

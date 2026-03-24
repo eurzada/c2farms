@@ -68,7 +68,7 @@ describe('PATCH /api/farms/:farmId/accounting/:year/:month', () => {
     app = createApp();
   });
 
-  it('rejects edit on actual month — 403', async () => {
+  it('allows edit on month with actuals — Two-Books plan always writable', async () => {
     prismaMock.assumption.findUnique.mockResolvedValue({
       farm_id: FARM_ID,
       fiscal_year: 2025,
@@ -76,21 +76,18 @@ describe('PATCH /api/farms/:farmId/accounting/:year/:month', () => {
     });
     prismaMock.monthlyData.findUnique.mockResolvedValue({
       data_json: {},
-      is_actual: true,
     });
 
     const res = await request(app)
       .patch(`/api/farms/${FARM_ID}/accounting/2025/Jan`)
       .send({ category_code: 'rev_canola', value: 1000 });
 
-    expect(res.status).toBe(403);
-    expect(res.body.error).toMatch(/actual/i);
+    expect(res.status).toBe(200);
   });
 
   it('allows edit when budget is frozen but month is not actual — 200', async () => {
     prismaMock.monthlyData.findUnique.mockResolvedValue({
       data_json: {},
-      is_actual: false,
     });
 
     const res = await request(app)
@@ -146,7 +143,7 @@ describe('PATCH /api/farms/:farmId/per-unit/:year/:month', () => {
     app = createApp();
   });
 
-  it('rejects edit on actual month — 403', async () => {
+  it('allows edit on month with actuals — Two-Books plan always writable', async () => {
     prismaMock.assumption.findUnique.mockResolvedValue({
       farm_id: FARM_ID,
       fiscal_year: 2025,
@@ -154,21 +151,18 @@ describe('PATCH /api/farms/:farmId/per-unit/:year/:month', () => {
     });
     prismaMock.monthlyData.findUnique.mockResolvedValue({
       data_json: {},
-      is_actual: true,
     });
 
     const res = await request(app)
       .patch(`/api/farms/${FARM_ID}/per-unit/2025/Jan`)
       .send({ category_code: 'rev_canola', value: 10 });
 
-    expect(res.status).toBe(403);
-    expect(res.body.error).toMatch(/actual/i);
+    expect(res.status).toBe(200);
   });
 
   it('allows edit when budget is frozen but month is not actual — 200', async () => {
     prismaMock.monthlyData.findUnique.mockResolvedValue({
       data_json: {},
-      is_actual: false,
     });
 
     const res = await request(app)

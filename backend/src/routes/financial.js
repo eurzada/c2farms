@@ -37,7 +37,7 @@ router.get('/:farmId/per-unit/:year', authenticate, async (req, res, next) => {
 
     const farmCategories = await getFarmCategories(farmId);
 
-    const [monthlyData, frozenData, priorYearData, actualMonths] = await Promise.all([
+    const [monthlyData, frozenData, priorYearData, prior2YearData, actualMonths] = await Promise.all([
       prisma.monthlyData.findMany({
         where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'per_unit' },
         orderBy: { month: 'asc' },
@@ -45,8 +45,12 @@ router.get('/:farmId/per-unit/:year', authenticate, async (req, res, next) => {
       prisma.monthlyDataFrozen.findMany({
         where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'per_unit' },
       }),
-      prisma.monthlyData.findMany({
+      // Prior years: read from MonthlyActual (Book 2: GL actuals)
+      prisma.monthlyActual.findMany({
         where: { farm_id: farmId, fiscal_year: fiscalYear - 1, type: 'per_unit' },
+      }),
+      prisma.monthlyActual.findMany({
+        where: { farm_id: farmId, fiscal_year: fiscalYear - 2, type: 'per_unit' },
       }),
       // Check which months have actuals available (Book 2)
       prisma.monthlyActual.findMany({
@@ -69,11 +73,17 @@ router.get('/:farmId/per-unit/:year', authenticate, async (req, res, next) => {
       frozenMap[row.month] = row.data_json || {};
     }
 
-    // Aggregate prior year
+    // Aggregate prior years
     const priorYearAgg = {};
     for (const row of priorYearData) {
       for (const [key, val] of Object.entries(row.data_json || {})) {
         priorYearAgg[key] = (priorYearAgg[key] || 0) + val;
+      }
+    }
+    const prior2YearAgg = {};
+    for (const row of prior2YearData) {
+      for (const [key, val] of Object.entries(row.data_json || {})) {
+        prior2YearAgg[key] = (prior2YearAgg[key] || 0) + val;
       }
     }
 
@@ -115,6 +125,7 @@ router.get('/:farmId/per-unit/:year', authenticate, async (req, res, next) => {
         category_type: cat.category_type,
         sort_order: cat.sort_order,
         priorYear: priorYearAgg[cat.code] || 0,
+        priorYear2: prior2YearAgg[cat.code] || 0,
         months: monthValues,
         actuals: monthActuals,
         comments: monthComments,
@@ -157,6 +168,7 @@ router.get('/:farmId/per-unit/:year', authenticate, async (req, res, next) => {
         category_type: 'COMPUTED',
         sort_order: 998,
         priorYear: expenseParentRows.reduce((sum, r) => sum + (r.priorYear || 0), 0),
+        priorYear2: expenseParentRows.reduce((sum, r) => sum + (r.priorYear2 || 0), 0),
         months: totalExpMonths,
         actuals: firstRow?.actuals || {},
         comments: {},
@@ -236,12 +248,16 @@ router.get('/:farmId/accounting/:year', authenticate, async (req, res, next) => 
 
     const farmCategories = await getFarmCategories(farmId);
 
-    const [monthlyData, priorYearData, acctActualMonths] = await Promise.all([
+    const [monthlyData, priorYearData, prior2YearData, acctActualMonths] = await Promise.all([
       prisma.monthlyData.findMany({
         where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'accounting' },
       }),
-      prisma.monthlyData.findMany({
+      // Prior years: read from MonthlyActual (Book 2: GL actuals)
+      prisma.monthlyActual.findMany({
         where: { farm_id: farmId, fiscal_year: fiscalYear - 1, type: 'accounting' },
+      }),
+      prisma.monthlyActual.findMany({
+        where: { farm_id: farmId, fiscal_year: fiscalYear - 2, type: 'accounting' },
       }),
       // Check which months have actuals available (Book 2)
       prisma.monthlyActual.findMany({
@@ -256,6 +272,12 @@ router.get('/:farmId/accounting/:year', authenticate, async (req, res, next) => 
     for (const row of priorYearData) {
       for (const [key, val] of Object.entries(row.data_json || {})) {
         priorYearAgg[key] = (priorYearAgg[key] || 0) + val;
+      }
+    }
+    const prior2YearAgg = {};
+    for (const row of prior2YearData) {
+      for (const [key, val] of Object.entries(row.data_json || {})) {
+        prior2YearAgg[key] = (prior2YearAgg[key] || 0) + val;
       }
     }
 
@@ -316,6 +338,7 @@ router.get('/:farmId/accounting/:year', authenticate, async (req, res, next) => 
         comments,
         total,
         priorYear: priorYearAgg[cat.code] || 0,
+        priorYear2: prior2YearAgg[cat.code] || 0,
         forecastTotal: forecastVal,
         frozenBudgetTotal: budgetVal,
         variance: varianceVal,
@@ -365,6 +388,7 @@ router.get('/:farmId/accounting/:year', authenticate, async (req, res, next) => 
         actuals: firstRow?.actuals || {},
         total: totalExpTotal,
         priorYear: expenseParentRows.reduce((sum, r) => sum + (r.priorYear || 0), 0),
+        priorYear2: expenseParentRows.reduce((sum, r) => sum + (r.priorYear2 || 0), 0),
         isComputed: true,
         forecastTotal: totalExpForecast,
         frozenBudgetTotal: totalExpBudget,
