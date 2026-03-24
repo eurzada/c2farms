@@ -65,10 +65,8 @@ export async function updatePerUnitCell(farmId, fiscalYear, month, categoryCode,
   return { perUnit: recalcedPerUnit, accounting: accountingData };
 }
 
-// Update accounting cell and cascade to per-unit
-// isActual: when true, marks the record as actual data (used by QB sync / manual-actual).
-//           when false (default), preserves the existing is_actual flag (used by grid editing).
-export async function updateAccountingCell(farmId, fiscalYear, month, categoryCode, value, { isActual = false } = {}) {
+// Update accounting cell and cascade to per-unit (Book 1: Plan only)
+export async function updateAccountingCell(farmId, fiscalYear, month, categoryCode, value, comment) {
   await validateLeafCategory(farmId, categoryCode);
   const assumption = await prisma.assumption.findUnique({
     where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: fiscalYear } },
@@ -91,7 +89,11 @@ export async function updateAccountingCell(farmId, fiscalYear, month, categoryCo
   accountingData[categoryCode] = value;
   const recalcedAccounting = recalcParentSums(accountingData, farmCategories);
 
-  const actualFlag = isActual || (accounting?.is_actual ?? false);
+  // Track comment provenance on both layers
+  const acctComments = { ...(accounting?.comments_json || {}) };
+  if (comment !== undefined) {
+    acctComments[categoryCode] = comment;
+  }
 
   await prisma.monthlyData.upsert({
     where: {
@@ -99,10 +101,10 @@ export async function updateAccountingCell(farmId, fiscalYear, month, categoryCo
         farm_id: farmId, fiscal_year: fiscalYear, month, type: 'accounting',
       },
     },
-    update: { data_json: recalcedAccounting, ...(isActual && { is_actual: true }) },
+    update: { data_json: recalcedAccounting, comments_json: acctComments },
     create: {
       farm_id: farmId, fiscal_year: fiscalYear, month, type: 'accounting',
-      data_json: recalcedAccounting, is_actual: actualFlag, comments_json: {},
+      data_json: recalcedAccounting, comments_json: acctComments,
     },
   });
 
@@ -112,16 +114,28 @@ export async function updateAccountingCell(farmId, fiscalYear, month, categoryCo
     perUnitData[key] = totalAcres > 0 ? val / totalAcres : 0;
   }
 
+  const perUnit = await prisma.monthlyData.findUnique({
+    where: {
+      farm_id_fiscal_year_month_type: {
+        farm_id: farmId, fiscal_year: fiscalYear, month, type: 'per_unit',
+      },
+    },
+  });
+  const puComments = { ...(perUnit?.comments_json || {}) };
+  if (comment !== undefined) {
+    puComments[categoryCode] = comment;
+  }
+
   await prisma.monthlyData.upsert({
     where: {
       farm_id_fiscal_year_month_type: {
         farm_id: farmId, fiscal_year: fiscalYear, month, type: 'per_unit',
       },
     },
-    update: { data_json: perUnitData, ...(isActual && { is_actual: true }) },
+    update: { data_json: perUnitData, comments_json: puComments },
     create: {
       farm_id: farmId, fiscal_year: fiscalYear, month, type: 'per_unit',
-      data_json: perUnitData, is_actual: actualFlag, comments_json: {},
+      data_json: perUnitData, comments_json: puComments,
     },
   });
 

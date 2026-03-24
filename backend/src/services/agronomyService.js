@@ -219,14 +219,14 @@ export async function copyInputs(sourceAllocId, targetAllocId) {
 // Seasonal distribution: maps category (and chemical timing) to fiscal months + weights
 const SEASONAL_DISTRIBUTION = {
   seed: [
-    { month: 'Apr', pct: 0.50 },
-    { month: 'May', pct: 0.50 },
+    { month: 'May', pct: 1.0 },
   ],
   fertilizer: [
-    { month: 'Apr', pct: 0.25 },
-    { month: 'May', pct: 0.25 },
-    { month: 'Jun', pct: 0.25 },
-    { month: 'Sep', pct: 0.25 },
+    { month: 'Nov', pct: 0.35 },
+    { month: 'Apr', pct: 0.20 },
+    { month: 'May', pct: 0.20 },
+    { month: 'Jun', pct: 0.15 },
+    { month: 'Jul', pct: 0.10 },
   ],
   // Chemical timing → months
   chemical_preburn: [
@@ -338,24 +338,17 @@ export async function pushToForecast(farmId, cropYear) {
     }
   }
 
-  // Write to forecast — skip months that already have actuals
+  // Zero out all input categories across all 12 months first (agronomy is sole source of truth for inputs)
+  const ALL_MONTHS = ['Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'];
+  for (const month of ALL_MONTHS) {
+    for (const catCode of Object.values(CATEGORY_CODES)) {
+      await updatePerUnitCell(farmId, fiscalYear, month, catCode, 0);
+    }
+  }
+
+  // Write agronomy distribution to forecast (Book 1: Plan)
   const updated = [];
   for (const [month, costs] of Object.entries(monthTotals)) {
-    // Check if this month already has actual data
-    const existing = await prisma.monthlyData.findUnique({
-      where: {
-        farm_id_fiscal_year_month_type: {
-          farm_id: farmId, fiscal_year: fiscalYear, month, type: 'per_unit',
-        },
-      },
-    });
-
-    if (existing?.is_actual) {
-      log.info(`Skipping ${month} — already has actuals`);
-      continue;
-    }
-
-    // Write each category as $/acre (total$ / totalAcres)
     for (const [catCode, totalDollars] of Object.entries(costs)) {
       const perAcre = totalDollars / totalAcres;
       await updatePerUnitCell(

@@ -144,7 +144,7 @@ router.post('/:farmId/accounting/import-csv', authenticate, requireRole('admin',
 
 // DELETE /:farmId/accounting/clear-year
 // Body: { fiscal_year }
-// Clears all GL actual details and resets MonthlyData for a farm + fiscal year.
+// Clears actuals only (GlActualDetail + MonthlyActual). Does NOT touch MonthlyData (plan).
 router.delete('/:farmId/accounting/clear-year', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const { farmId } = req.params;
@@ -155,31 +155,30 @@ router.delete('/:farmId/accounting/clear-year', authenticate, requireRole('admin
     }
 
     const fy = parseInt(fiscal_year);
-    log.info(`Clear year: farmId=${farmId}, FY=${fy}`);
+    log.info(`Clear actuals: farmId=${farmId}, FY=${fy}`);
 
-    // Delete all GL actual detail records for this farm + year
+    // Delete GL actual detail records
     const deletedDetails = await prisma.glActualDetail.deleteMany({
       where: { farm_id: farmId, fiscal_year: fy },
     });
 
-    // Reset MonthlyData for both accounting and per_unit types
-    const updatedMonthly = await prisma.monthlyData.updateMany({
-      where: { farm_id: farmId, fiscal_year: fy, type: { in: ['accounting', 'per_unit'] } },
-      data: { data_json: {}, is_actual: false },
+    // Delete MonthlyActual records (Book 2: Actual P&L) — plan (MonthlyData) is untouched
+    const deletedActuals = await prisma.monthlyActual.deleteMany({
+      where: { farm_id: farmId, fiscal_year: fy },
     });
 
-    log.info(`Deleted ${deletedDetails.count} GL details, reset ${updatedMonthly.count} monthly records`);
+    log.info(`Deleted ${deletedDetails.count} GL details, ${deletedActuals.count} monthly actuals`);
 
     const io = req.app.get('io');
     if (io) broadcastCellChange(io, farmId, { fiscalYear: fy, type: 'full_refresh' });
 
     res.json({
-      message: `Cleared FY ${fy}: ${deletedDetails.count} GL detail(s) removed, ${updatedMonthly.count} monthly record(s) reset`,
+      message: `Cleared actuals FY ${fy}: ${deletedDetails.count} GL detail(s), ${deletedActuals.count} actual record(s) removed. Plan data preserved.`,
       deletedDetails: deletedDetails.count,
-      resetMonthly: updatedMonthly.count,
+      deletedActuals: deletedActuals.count,
     });
   } catch (err) {
-    log.error('Clear year error', err.message);
+    log.error('Clear actuals error', err.message);
     next(err);
   }
 });

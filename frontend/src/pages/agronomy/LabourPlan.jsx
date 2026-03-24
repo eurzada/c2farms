@@ -81,19 +81,22 @@ export default function LabourPlan() {
   const priorWage = priorPlan ? Number(priorPlan.avg_wage) || 0 : 0;
 
   // ─── Computed KPIs ────────────────────────────────────────────────
-  const { totalHours, totalCost, costPerAcre, hoursPerAcre } = useMemo(() => {
-    if (!plan) return { totalHours: 0, totalCost: 0, costPerAcre: 0, hoursPerAcre: 0 };
+  const { totalHours, totalCost, costPerAcre, hoursPerAcre, totalFuelCost } = useMemo(() => {
+    if (!plan) return { totalHours: 0, totalCost: 0, costPerAcre: 0, hoursPerAcre: 0, totalFuelCost: 0 };
     const wage = Number(plan.avg_wage) || 0;
+    const fuelRate = Number(plan.fuel_rate_per_acre) || 0;
     let hrs = 0;
     for (const s of plan.seasons) {
       for (const r of s.roles) hrs += Number(r.hours) || 0;
     }
     const cost = hrs * wage;
+    const fuelCost = fuelRate * (plan.total_acres || 0);
     return {
       totalHours: hrs,
       totalCost: cost,
       costPerAcre: plan.total_acres ? cost / plan.total_acres : 0,
       hoursPerAcre: plan.total_acres ? hrs / plan.total_acres : 0,
+      totalFuelCost: fuelCost,
     };
   }, [plan]);
 
@@ -125,6 +128,8 @@ export default function LabourPlan() {
     try {
       await api.patch(`/api/farms/${currentFarm.id}/labour/plan/${plan.id}`, {
         avg_wage: Number(plan.avg_wage),
+        fuel_rate_per_acre: Number(plan.fuel_rate_per_acre) || 0,
+        fuel_cost_per_litre: Number(plan.fuel_cost_per_litre) || 1,
         total_acres: plan.total_acres,
         notes: plan.notes,
       });
@@ -156,7 +161,7 @@ export default function LabourPlan() {
     }
     const ok = await confirm({
       title: 'Push to Forecast',
-      message: 'This will write the labour cost into the Personnel category (lpm_personnel) for each month in the forecast. Months with actuals will be skipped. Continue?',
+      message: `This will write labour cost (lpm_personnel) and${Number(plan.fuel_rate_per_acre) > 0 ? ` fuel cost at $${fmtDec(Number(plan.fuel_rate_per_acre))}/acre (lpm_fog)` : ' no fuel (rate not set)'} into the forecast for each month, allocated by hours. Continue?`,
       confirmText: 'Push',
     });
     if (!ok) return;
@@ -286,9 +291,9 @@ export default function LabourPlan() {
   if (!plan) {
     return (
       <Box sx={{ textAlign: 'center', py: 8 }}>
-        <Typography variant="h5" gutterBottom>No Labour Plan for FY{year}</Typography>
+        <Typography variant="h5" gutterBottom>No Labour & Fuel Plan for FY{year}</Typography>
         <Typography color="text.secondary" sx={{ mb: 3 }}>
-          Create a labour plan to budget hours by season and role.
+          Create a plan to budget labour hours and fuel costs by season.
         </Typography>
         {canEdit && (
           <Stack direction="row" spacing={2} justifyContent="center">
@@ -314,7 +319,7 @@ export default function LabourPlan() {
     <Box>
       {/* Header */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
-        <Typography variant="h5" fontWeight="bold">Labour Plan — FY{year}</Typography>
+        <Typography variant="h5" fontWeight="bold">Labour & Fuel — FY{year}</Typography>
         <Chip
           label={plan.status === 'draft' ? 'Draft' : 'Locked'}
           color={plan.status === 'draft' ? 'default' : 'primary'}
@@ -344,15 +349,36 @@ export default function LabourPlan() {
             onChange={e => updatePlanField('total_acres', parseInt(e.target.value) || 0)}
             disabled={!isEditable}
           />
+          <TextField
+            label="Fuel $/Acre"
+            type="number"
+            size="small"
+            sx={{ width: 140 }}
+            value={plan.fuel_rate_per_acre ?? 0}
+            onChange={e => updatePlanField('fuel_rate_per_acre', e.target.value)}
+            disabled={!isEditable}
+            InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment>, endAdornment: <InputAdornment position="end">/ac</InputAdornment> }}
+          />
+          <TextField
+            label="Fuel $/L"
+            type="number"
+            size="small"
+            sx={{ width: 120 }}
+            value={plan.fuel_cost_per_litre ?? 1}
+            onChange={e => updatePlanField('fuel_cost_per_litre', e.target.value)}
+            disabled={!isEditable}
+            InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment>, endAdornment: <InputAdornment position="end">/L</InputAdornment> }}
+          />
         </Box>
       </Box>
 
       {/* KPI Cards */}
-      <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
+      <Stack direction="row" spacing={2} sx={{ mb: 3, flexWrap: 'wrap' }}>
         <KpiCard label="Total Hours" value={fmt(totalHours)} sub={`${fmtDec(hoursPerAcre)} hrs/acre`} />
-        <KpiCard label="Total Cost" value={formatCurrency(totalCost)} sub={`@ $${fmtDec(wage)}/hr`} />
-        <KpiCard label="Cost / Acre" value={formatCurrency(costPerAcre)} />
-        <KpiCard label="Hours / Acre" value={fmtDec(hoursPerAcre)} />
+        <KpiCard label="Labour Cost" value={formatCurrency(totalCost)} sub={`@ $${fmtDec(wage)}/hr`} />
+        <KpiCard label="Labour $/Acre" value={formatCurrency(costPerAcre)} />
+        <KpiCard label="Fuel Cost" value={formatCurrency(totalFuelCost)} sub={totalFuelCost > 0 ? `$${fmtDec(Number(plan.fuel_rate_per_acre) || 0)}/acre` : 'Not set'} />
+        <KpiCard label="Fuel $/Acre" value={Number(plan.fuel_rate_per_acre) > 0 ? `$${fmtDec(Number(plan.fuel_rate_per_acre))}` : '—'} />
       </Stack>
 
       {/* Seasons */}
@@ -379,9 +405,17 @@ export default function LabourPlan() {
                 <Typography variant="body2" color="text.secondary">
                   — {season.months.join(', ') || 'no months'}
                 </Typography>
-                <Box sx={{ ml: 'auto', display: 'flex', gap: 2, alignItems: 'center' }}>
-                  <Typography variant="body2" fontWeight="bold">{fmt(seasonHours)} hrs</Typography>
-                  <Typography variant="body2" fontWeight="bold">{formatCurrency(seasonCost)}</Typography>
+                <Box sx={{ ml: 'auto', display: 'flex', alignItems: 'flex-end', gap: 1 }}>
+                  <Box sx={{ textAlign: 'right' }}>
+                    <Typography variant="body2" fontWeight="bold">
+                      Labour: {fmt(seasonHours)} hrs &nbsp; {formatCurrency(seasonCost)}
+                    </Typography>
+                    {totalFuelCost > 0 && totalHours > 0 && (
+                      <Typography variant="body2" color="warning.main" fontWeight="bold">
+                        Fuel: {formatCurrency(totalFuelCost * (seasonHours / totalHours))} &nbsp; ({(seasonHours / totalHours * 100).toFixed(1)}%)
+                      </Typography>
+                    )}
+                  </Box>
                   {isEditable && (
                     <IconButton size="small" color="error" onClick={(e) => { e.stopPropagation(); deleteSeason(si); }}>
                       <DeleteIcon fontSize="small" />
@@ -527,7 +561,7 @@ export default function LabourPlan() {
         {/* Totals + actions */}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <Typography variant="h6" fontWeight="bold">
-            TOTAL: {fmt(totalHours)} hrs — {formatCurrency(totalCost)}
+            TOTAL: {fmt(totalHours)} hrs &nbsp;|&nbsp; Labour: {formatCurrency(totalCost)} &nbsp;|&nbsp; Fuel: {totalFuelCost > 0 ? formatCurrency(totalFuelCost) : '—'}
           </Typography>
           {isEditable && (
             <Button variant="contained" onClick={handleSave} disabled={saving || !dirty}>

@@ -4,6 +4,7 @@ import { authenticate } from '../middleware/auth.js';
 import { parseYear } from '../utils/fiscalYear.js';
 import { calculateForecast } from '../services/forecastService.js';
 import { getExecutiveDashboard } from '../services/agronomyService.js';
+import { getDashboard as getLabourDashboard } from '../services/labourService.js';
 import createLogger from '../utils/logger.js';
 
 const logger = createLogger('dashboard');
@@ -240,6 +241,106 @@ router.get('/:farmId/dashboard/v2/:year', authenticate, async (req, res, next) =
     });
   } catch (err) {
     logger.error('Dashboard v2 error:', err);
+    next(err);
+  }
+});
+
+// V3 — Two Books Dashboard (Plan vs Actual)
+router.get('/:farmId/dashboard/v3/:year', authenticate, async (req, res, next) => {
+  try {
+    const { farmId, year } = req.params;
+    const fiscalYear = parseYear(year);
+    if (!fiscalYear) return res.status(400).json({ error: 'Invalid fiscal year' });
+
+    const { calculateVariance } = await import('../services/varianceService.js');
+
+    const [assumption, variance, agroDashboard, labourDashboard] = await Promise.all([
+      prisma.assumption.findUnique({
+        where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: fiscalYear } },
+      }),
+      calculateVariance(farmId, fiscalYear),
+      getExecutiveDashboard(farmId, fiscalYear).catch(() => null),
+      getLabourDashboard(farmId, fiscalYear).catch(() => null),
+    ]);
+
+    const totalAcres = assumption?.total_acres || 0;
+    const crops = assumption?.crops_json || [];
+    const divisor = totalAcres || 1;
+
+    // KPI summary
+    const planPerAcre = variance.planGrandTotal / divisor;
+    const actualPerAcre = variance.actualGrandTotal / divisor;
+    const variancePerAcre = variance.totalVariance / divisor;
+
+    // Input plan breakdown (seed/fert/chem from plan data)
+    const inputCategories = variance.byCategory.filter(c =>
+      ['input_seed', 'input_fert', 'input_chem'].includes(c.code)
+    );
+
+    // Crop plan from agronomy
+    const cropPlan = agroDashboard?.crops?.map(c => ({
+      crop: c.crop,
+      acres: c.acres,
+      input_per_acre: c.total_per_acre || 0,
+      pct_of_farm: totalAcres > 0 ? Math.round((c.acres / totalAcres) * 100) : 0,
+    })) || [];
+
+    // Monthly plan vs actual trend (for chart)
+    const months = variance.months || [];
+    const monthlyTrend = months.map(month => {
+      let planMonth = 0;
+      let actualMonth = 0;
+      for (const cat of variance.byCategory.filter(c => ['inputs', 'lpm', 'lbf', 'insurance'].includes(c.code))) {
+        planMonth += cat.planMonths?.[month] || 0;
+        actualMonth += cat.actualMonths?.[month] || 0;
+      }
+      return { month, plan: planMonth, actual: actualMonth };
+    });
+
+    res.json({
+      totalAcres,
+      cropCount: crops.length,
+      planPerAcre: Math.round(planPerAcre),
+      actualPerAcre: Math.round(actualPerAcre),
+      variancePerAcre: Math.round(variancePerAcre),
+      variancePct: variance.totalPctDiff,
+      planTotal: variance.planGrandTotal,
+      actualTotal: variance.actualGrandTotal,
+      varianceTotal: variance.totalVariance,
+      hasActuals: variance.hasActuals,
+      waterfall: variance.waterfall,
+      inputBreakdown: inputCategories.map(c => ({
+        code: c.code,
+        name: c.display_name,
+        planTotal: c.planTotal,
+        planPerAcre: c.planTotal / divisor,
+      })),
+      cropPlan,
+      agroPlanStatus: agroDashboard?.plan_status || null,
+      monthlyTrend,
+      // Labour & fuel plan vs actual
+      labour: labourDashboard ? {
+        totalHours: labourDashboard.total_hours,
+        avgWage: labourDashboard.avg_wage,
+        planCost: labourDashboard.total_cost,
+        planCostPerAcre: labourDashboard.cost_per_acre,
+        hoursPerAcre: labourDashboard.hours_per_acre,
+        actualCost: variance.byCategory.find(c => c.code === 'lpm_personnel')?.actualTotal || 0,
+        actualCostPerAcre: (variance.byCategory.find(c => c.code === 'lpm_personnel')?.actualTotal || 0) / divisor,
+        seasons: labourDashboard.seasons,
+      } : null,
+      fuel: labourDashboard ? {
+        planCost: labourDashboard.total_fuel_cost,
+        planCostPerAcre: labourDashboard.fuel_rate_per_acre || (labourDashboard.total_fuel_cost / divisor),
+        fuelCostPerLitre: labourDashboard.fuel_cost_per_litre,
+        totalLitres: labourDashboard.total_fuel_litres,
+        litresPerAcre: labourDashboard.litres_per_acre,
+        actualCost: variance.byCategory.find(c => c.code === 'lpm_fog')?.actualTotal || 0,
+        actualCostPerAcre: (variance.byCategory.find(c => c.code === 'lpm_fog')?.actualTotal || 0) / divisor,
+      } : null,
+    });
+  } catch (err) {
+    logger.error('Dashboard v3 error:', err);
     next(err);
   }
 });

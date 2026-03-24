@@ -23,18 +23,7 @@ export async function rollupGlActuals(farmId, fiscalYear, month) {
     categorySums[categoryCode] = (categorySums[categoryCode] || 0) + actual.amount;
   }
 
-  // Merge with existing accounting data (preserve any manually-entered data for unmapped categories)
-  const existing = await prisma.monthlyData.findUnique({
-    where: {
-      farm_id_fiscal_year_month_type: {
-        farm_id: farmId, fiscal_year: fiscalYear, month, type: 'accounting',
-      },
-    },
-  });
-
-  const currentData = existing?.data_json || {};
-
-  // Zero out all leaf categories first so deactivated/remapped accounts don't leave stale values
+  // Build clean actual data from GL sums (no merge with plan data — Two Books architecture)
   const parentIdSet = new Set(farmCategories.filter(c => c.parent_id).map(c => c.parent_id));
   const leafCodes = farmCategories.filter(c => !parentIdSet.has(c.id)).map(c => c.code);
   const zeroed = {};
@@ -42,25 +31,25 @@ export async function rollupGlActuals(farmId, fiscalYear, month) {
     zeroed[code] = 0;
   }
 
-  // Merge: start with existing data, zero all leaf categories, then apply GL sums
-  const merged = { ...currentData, ...zeroed, ...categorySums };
+  // Start clean: zero all leaves, then overlay GL sums
+  const merged = { ...zeroed, ...categorySums };
   const withParents = recalcParentSums(merged, farmCategories);
 
-  // Upsert accounting data
-  await prisma.monthlyData.upsert({
+  // Upsert into MonthlyActual (Book 2: Actual P&L) — NOT MonthlyData (Book 1: Plan)
+  await prisma.monthlyActual.upsert({
     where: {
       farm_id_fiscal_year_month_type: {
         farm_id: farmId, fiscal_year: fiscalYear, month, type: 'accounting',
       },
     },
-    update: { data_json: withParents, is_actual: true },
+    update: { data_json: withParents },
     create: {
       farm_id: farmId, fiscal_year: fiscalYear, month, type: 'accounting',
-      data_json: withParents, is_actual: true, comments_json: {},
+      data_json: withParents, basis: 'cash', source: 'gl_rollup',
     },
   });
 
-  // Cascade to per-unit
+  // Cascade to per-unit actuals
   const assumption = await prisma.assumption.findUnique({
     where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: fiscalYear } },
   });
@@ -74,16 +63,16 @@ export async function rollupGlActuals(farmId, fiscalYear, month) {
     perUnitData[key] = totalAcres > 0 ? val / totalAcres : 0;
   }
 
-  await prisma.monthlyData.upsert({
+  await prisma.monthlyActual.upsert({
     where: {
       farm_id_fiscal_year_month_type: {
         farm_id: farmId, fiscal_year: fiscalYear, month, type: 'per_unit',
       },
     },
-    update: { data_json: perUnitData, is_actual: true },
+    update: { data_json: perUnitData },
     create: {
       farm_id: farmId, fiscal_year: fiscalYear, month, type: 'per_unit',
-      data_json: perUnitData, is_actual: true, comments_json: {},
+      data_json: perUnitData, basis: 'cash', source: 'gl_rollup',
     },
   });
 

@@ -94,44 +94,59 @@ export default function MarketingDashboard() {
 
   // ─── Contract Fulfillment columns ───
   const fulfillmentColDefs = useMemo(() => [
-    { field: 'contract_number', headerName: 'Contract #', width: 110, pinned: 'left' },
-    { field: 'buyer', headerName: 'Buyer', width: 120 },
-    { field: 'commodity', headerName: 'Crop', width: 100 },
-    { field: 'grade', headerName: 'Grade', width: 80 },
-    { field: 'contracted_mt', headerName: 'Contracted MT', width: 110, type: 'rightAligned', valueFormatter: p => fmt(p.value) },
-    { field: 'hauled_mt', headerName: 'Delivered (Unload)', width: 120, type: 'rightAligned', valueFormatter: p => fmt(p.value),
+    { field: 'contract_number', headerName: 'Contract #', width: 140, pinned: 'left' },
+    { field: 'buyer', headerName: 'Buyer', width: 150, minWidth: 120 },
+    { field: 'commodity', headerName: 'Crop', width: 110 },
+    { field: 'grade', headerName: 'Grade', width: 100 },
+    { field: 'contracted_mt', headerName: 'Contracted', width: 110, type: 'rightAligned', valueFormatter: p => fmt(p.value),
+      headerTooltip: 'Contracted MT',
+    },
+    { field: 'hauled_mt', headerName: 'Unload', width: 100, type: 'rightAligned', valueFormatter: p => fmt(p.value),
       headerTooltip: 'Unload weight from truck tickets — dirty grain before dockage',
     },
-    { field: 'settled_net_mt', headerName: 'Delivered (Net)', width: 110, type: 'rightAligned',
+    { field: 'settled_net_mt', headerName: 'Net (Settled)', width: 110, type: 'rightAligned',
       valueFormatter: p => p.value ? fmt(p.value) : '—',
       headerTooltip: 'Net (clean) weight from buyer settlements — what fulfills contract obligations',
       cellStyle: p => !p.value ? { color: '#9e9e9e', fontStyle: 'italic' } : null,
     },
-    { field: 'remaining_mt', headerName: 'Remaining MT', width: 110, type: 'rightAligned', valueFormatter: p => fmt(p.value),
+    { field: 'remaining_mt', headerName: 'Remaining', width: 100, type: 'rightAligned', valueFormatter: p => fmt(p.value),
+      headerTooltip: 'Remaining MT to deliver',
       cellStyle: p => p.value > 0 ? { color: '#e65100', fontWeight: 600 } : { color: '#2e7d32' },
     },
     {
-      field: 'pct_complete', headerName: 'Progress (Net)', width: 130,
+      field: 'pct_complete', headerName: 'Progress', width: 160,
       headerTooltip: 'Contract fulfillment based on Net (clean) weight from settlements. Falls back to Unload weight when no settlement data.',
       cellRenderer: p => {
         const hasNet = p.data?.settled_net_mt > 0;
         const pct = Math.min(100, p.value || 0);
-        const color = pct >= 100 ? '#2e7d32' : pct >= 50 ? '#1976d2' : '#e65100';
+        // Settled = solid green/blue; Unsettled = amber/orange to signal "unconfirmed"
+        const color = hasNet
+          ? (pct >= 100 ? '#2e7d32' : pct >= 50 ? '#1976d2' : '#e65100')
+          : '#ed6c02'; // amber for all unsettled — even at 100%
+        const tooltip = hasNet
+          ? 'Based on Net (settlement) weight'
+          : 'Based on Unload (ticket) weight — awaiting settlement confirmation';
+        const label = hasNet ? `${pct.toFixed(0)}%` : `${pct.toFixed(0)}% (unload)`;
         return (
-          <Tooltip title={hasNet ? 'Based on Net (settlement) weight' : 'Based on Unload (ticket) weight — no settlement yet'} arrow>
+          <Tooltip title={tooltip} arrow>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
               <Box sx={{ flex: 1, bgcolor: 'action.hover', borderRadius: 1, height: 8 }}>
-                <Box sx={{ width: `${pct}%`, bgcolor: color, borderRadius: 1, height: 8, ...(hasNet ? {} : { backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(255,255,255,0.3) 3px, rgba(255,255,255,0.3) 6px)' }) }} />
+                <Box sx={{
+                  width: `${pct}%`, bgcolor: color, borderRadius: 1, height: 8,
+                  ...(hasNet ? {} : { backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.4) 2px, rgba(255,255,255,0.4) 4px)' }),
+                }} />
               </Box>
-              <Typography variant="caption" sx={{ minWidth: 35 }}>{pct.toFixed(0)}%{!hasNet ? '*' : ''}</Typography>
+              <Typography variant="caption" sx={{ minWidth: hasNet ? 35 : 70, color: hasNet ? 'text.primary' : '#ed6c02', fontWeight: hasNet ? 400 : 600 }}>
+                {label}
+              </Typography>
             </Box>
           </Tooltip>
         );
       },
     },
-    { field: 'delivery_end', headerName: 'Delivery End', width: 110, valueFormatter: p => p.value ? new Date(p.value).toLocaleDateString('en-CA') : '\u2014' },
-    { field: 'elevator_site', headerName: 'Delivery Point', width: 120 },
-    { field: 'price_per_bu', headerName: '$/bu', width: 76, type: 'rightAligned', valueFormatter: p => p.value ? `$${p.value.toFixed(2)}` : '\u2014' },
+    { field: 'delivery_end', headerName: 'Delivery End', width: 115, valueFormatter: p => p.value ? new Date(p.value).toLocaleDateString('en-CA') : '\u2014' },
+    { field: 'elevator_site', headerName: 'Delivery Point', width: 140, minWidth: 100 },
+    { field: 'price_per_bu', headerName: '$/bu', width: 80, type: 'rightAligned', valueFormatter: p => p.value ? `$${p.value.toFixed(2)}` : '\u2014' },
   ], []);
 
   // ─── Commitment Matrix: crops as columns, buyers as rows ───

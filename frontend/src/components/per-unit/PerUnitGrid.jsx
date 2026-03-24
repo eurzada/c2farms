@@ -8,14 +8,12 @@ import { useRealtime } from '../../hooks/useRealtime';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import { useFarm } from '../../contexts/FarmContext';
 import { getGridColors } from '../../utils/gridColors';
-import { FISCAL_MONTHS, isPastMonth } from '../../utils/fiscalYear';
-import { formatNumber, formatPercent } from '../../utils/formatting';
+import { FISCAL_MONTHS } from '../../utils/fiscalYear';
+import { formatNumber } from '../../utils/formatting';
 
 export default function PerUnitGrid({ farmId, fiscalYear }) {
   const [rowData, setRowData] = useState([]);
   const [months, setMonths] = useState(FISCAL_MONTHS);
-  const [startMonth, setStartMonth] = useState('Nov');
-  const [isFrozen, setIsFrozen] = useState(false);
   const [error, setError] = useState('');
   const gridRef = useRef();
   const { mode } = useThemeMode();
@@ -27,9 +25,7 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
     try {
       const res = await api.get(`/api/farms/${farmId}/per-unit/${fiscalYear}`);
       setRowData(res.data.rows || []);
-      setIsFrozen(res.data.isFrozen || false);
       if (res.data.months) setMonths(res.data.months);
-      if (res.data.startMonth) setStartMonth(res.data.startMonth);
     } catch {
       setError('Failed to load per-unit data');
     }
@@ -80,14 +76,12 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
         pinned: 'left',
         width: 220,
         cellStyle: (params) => {
-          const style = {};
           if (params.data?.isComputed) {
             return { fontWeight: 'bold', borderTop: `2px solid ${colors.computedBorder}` };
           }
           const indent = (params.data?.level || 0) * 20;
           const bold = params.data?.level === 0;
-          style.paddingLeft = `${indent + 8}px`;
-          style.fontWeight = bold ? 'bold' : 'normal';
+          const style = { paddingLeft: `${indent + 8}px`, fontWeight: bold ? 'bold' : 'normal' };
           if (bold) {
             style.backgroundColor = colors.parentRow;
             style.borderTop = `2px solid ${colors.computedBorder}`;
@@ -113,7 +107,6 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
     ];
 
     for (const month of months) {
-      const past = isPastMonth(fiscalYear, month, startMonth);
       cols.push({
         headerName: month,
         field: `months.${month}`,
@@ -122,10 +115,8 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
         editable: (params) => {
           if (!canEdit) return false;
           if (params.data?.isComputed) return false;
-          // Parent categories are not directly editable
           if (params.data?.level === 0 && params.context?.rowData?.some(r => r.parent_code === params.data?.code)) return false;
           if (params.data?.level === 1 && params.context?.rowData?.some(r => r.parent_code === params.data?.code)) return false;
-          if (params.data?.actuals?.[month]) return false;
           return true;
         },
         valueGetter: (params) => params.data?.months?.[month] || 0,
@@ -135,7 +126,12 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
           return true;
         },
         valueFormatter: (p) => formatNumber(p.value),
-        tooltipValueGetter: (params) => params.data?.comments?.[month] || null,
+        tooltipValueGetter: (params) => {
+          const c = params.data?.comments?.[month];
+          if (!c) return null;
+          if (c === 'Manual') return 'Manual entry';
+          return c;
+        },
         cellStyle: (params) => {
           const style = {};
           if (params.data?.isComputed) {
@@ -147,71 +143,34 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
             style.fontWeight = 'bold';
             style.borderTop = `2px solid ${colors.computedBorder}`;
           }
-          if (past) {
-            style.backgroundColor = colors.actualCell;
-          }
-          // Module-driven values get a subtle colored font
-          const comment = params.data?.comments?.[month];
-          if (comment && comment.startsWith('From ')) {
+          // Provenance styling: blue = module-driven, bold = manual override, normal = default/seeded
+          const comment = params.data?.comments?.[month] || '';
+          if (comment.startsWith('From ')) {
             style.color = colors.moduleDrivenText;
+          } else if (comment === 'Manual') {
+            style.fontWeight = '600';
           }
           return style;
         },
       });
     }
 
-    cols.push(
-      {
-        headerName: 'Forecast',
-        field: 'forecastTotal',
-        width: 100,
-        type: 'numericColumn',
-        valueFormatter: (p) => formatNumber(p.value),
-        cellStyle: (params) => ({
-          backgroundColor: colors.aggregateBg,
-          fontWeight: 'bold',
-          borderTop: isLevel0OrComputed(params) ? `2px solid ${colors.computedBorder}` : undefined,
-        }),
-      },
-      {
-        headerName: 'Budget',
-        field: 'frozenBudgetTotal',
-        width: 100,
-        type: 'numericColumn',
-        valueFormatter: (p) => formatNumber(p.value),
-        cellStyle: (params) => ({
-          backgroundColor: colors.forecastBg,
-          fontWeight: 'bold',
-          borderTop: isLevel0OrComputed(params) ? `2px solid ${colors.computedBorder}` : undefined,
-        }),
-      },
-      {
-        headerName: 'Variance',
-        field: 'variance',
-        width: 100,
-        type: 'numericColumn',
-        valueFormatter: (p) => formatNumber(p.value),
-        cellStyle: (params) => ({
-          color: (params.value || 0) < 0 ? colors.negativeText : colors.positiveText,
-          fontWeight: 'bold',
-          borderTop: isLevel0OrComputed(params) ? `2px solid ${colors.computedBorder}` : undefined,
-        }),
-      },
-      {
-        headerName: '% Diff',
-        field: 'pctDiff',
-        width: 80,
-        type: 'numericColumn',
-        valueFormatter: (p) => formatPercent(p.value),
-        cellStyle: (params) => ({
-          color: Math.abs(params.value || 0) > 10 ? colors.negativeText : colors.mutedText,
-          borderTop: isLevel0OrComputed(params) ? `2px solid ${colors.computedBorder}` : undefined,
-        }),
-      },
-    );
+    // Year Total column (replaces Forecast/Budget/Variance/% Diff)
+    cols.push({
+      headerName: 'Year Total',
+      field: 'currentAggregate',
+      width: 110,
+      type: 'numericColumn',
+      valueFormatter: (p) => formatNumber(p.value),
+      cellStyle: (params) => ({
+        backgroundColor: colors.aggregateBg,
+        fontWeight: 'bold',
+        borderTop: isLevel0OrComputed(params) ? `2px solid ${colors.computedBorder}` : undefined,
+      }),
+    });
 
     return cols;
-  }, [fiscalYear, colors, months, startMonth]);
+  }, [fiscalYear, colors, months, canEdit]);
 
   const defaultColDef = useMemo(() => ({
     resizable: true,
@@ -230,7 +189,7 @@ export default function PerUnitGrid({ farmId, fiscalYear }) {
           rowData={rowData}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
-          context={{ rowData, isFrozen }}
+          context={{ rowData }}
           onCellValueChanged={onCellValueChanged}
           getRowId={(params) => params.data.code}
           animateRows={false}

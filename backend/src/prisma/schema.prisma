@@ -112,6 +112,23 @@ model MonthlyDataFrozen {
   @@map("monthly_data_frozen")
 }
 
+model MonthlyActual {
+  id          String   @id @default(uuid())
+  farm_id     String
+  fiscal_year Int
+  month       String
+  type        String   // 'per_unit' or 'accounting'
+  data_json   Json     @default("{}")
+  basis       String   @default("cash")  // 'cash' or 'accrual'
+  source      String   @default("gl_rollup")
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@unique([farm_id, fiscal_year, month, type])
+  @@index([farm_id, fiscal_year])
+  @@map("monthly_actuals")
+}
+
 model FinancialCategory {
   id            Int     @id
   code          String  @unique
@@ -1065,9 +1082,11 @@ model LabourPlan {
   farm_id     String
   fiscal_year Int
   status      String   @default("draft") // draft | approved | locked
-  avg_wage    Decimal  @default(0)
-  total_acres Int      @default(0)
-  notes       String?
+  avg_wage             Decimal  @default(0)
+  fuel_rate_per_acre   Decimal  @default(0)
+  fuel_cost_per_litre  Decimal  @default(1)
+  total_acres          Int      @default(0)
+  notes              String?
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt
 

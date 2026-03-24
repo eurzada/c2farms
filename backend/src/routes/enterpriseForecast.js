@@ -311,4 +311,131 @@ router.get('/forecast-rollup/:year', authenticate, async (req, res, next) => {
   }
 });
 
+/**
+ * GET /api/enterprise/bu-summary/:year
+ *
+ * BU-level P&L summary: Revenue, Inputs, Gross Margin, then cost categories,
+ * with per-acre values and a break-even $/acre for each BU + consolidated.
+ */
+router.get('/bu-summary/:year', authenticate, async (req, res, next) => {
+  try {
+    const fiscalYear = parseYear(req.params.year);
+    if (!fiscalYear) return res.status(400).json({ error: 'Invalid fiscal year' });
+
+    const buFarms = await prisma.farm.findMany({
+      where: { is_enterprise: false, farm_type: { not: 'terminal' } },
+      orderBy: { name: 'asc' },
+    });
+
+    const buSummaries = await Promise.all(buFarms.map(async (farm) => {
+      const [assumption, acctData, agroAllocations] = await Promise.all([
+        prisma.assumption.findUnique({
+          where: { farm_id_fiscal_year: { farm_id: farm.id, fiscal_year: fiscalYear } },
+        }),
+        prisma.monthlyData.findMany({
+          where: { farm_id: farm.id, fiscal_year: fiscalYear, type: 'accounting' },
+        }),
+        prisma.cropAllocation.findMany({
+          where: { plan: { farm_id: farm.id, crop_year: fiscalYear } },
+        }),
+      ]);
+
+      const acres = assumption?.total_acres || 0;
+      const div = acres || 1;
+
+      // Aggregate expense categories from plan MonthlyData
+      const agg = {};
+      for (const row of acctData) {
+        for (const [key, val] of Object.entries(row.data_json || {})) {
+          agg[key] = (agg[key] || 0) + val;
+        }
+      }
+
+      // Revenue from agronomy crop allocations
+      const grossRevenue = agroAllocations.reduce(
+        (sum, ca) => sum + (ca.acres || 0) * (ca.target_yield_bu || 0) * (ca.commodity_price || 0), 0
+      );
+
+      const inputs = agg['inputs'] || 0;
+      const personnel = agg['lpm_personnel'] || 0;
+      const fuel = agg['lpm_fog'] || 0;
+      const repairs = agg['lpm_repairs'] || 0;
+      const shop = agg['lpm_shop'] || 0;
+      const lbf = agg['lbf'] || 0;
+      const insurance = agg['insurance'] || 0;
+      const totalExpense = inputs + personnel + fuel + repairs + shop + lbf + insurance;
+      const grossMargin = grossRevenue - inputs;
+      const netMargin = grossRevenue - totalExpense;
+      const breakEvenPerAcre = acres > 0 ? totalExpense / acres : 0;
+
+      return {
+        farmId: farm.id,
+        name: farm.name,
+        acres,
+        revenue: grossRevenue,
+        revenuePerAcre: grossRevenue / div,
+        inputs,
+        inputsPerAcre: inputs / div,
+        grossMargin,
+        grossMarginPerAcre: grossMargin / div,
+        personnel,
+        personnelPerAcre: personnel / div,
+        fuel,
+        fuelPerAcre: fuel / div,
+        repairs,
+        repairsPerAcre: repairs / div,
+        shop,
+        shopPerAcre: shop / div,
+        lbf,
+        lbfPerAcre: lbf / div,
+        insurance,
+        insurancePerAcre: insurance / div,
+        totalExpense,
+        totalExpensePerAcre: totalExpense / div,
+        netMargin,
+        netMarginPerAcre: netMargin / div,
+        breakEvenPerAcre,
+      };
+    }));
+
+    // Consolidated totals
+    const totalAcres = buSummaries.reduce((s, bu) => s + bu.acres, 0);
+    const div = totalAcres || 1;
+    const sumField = (field) => buSummaries.reduce((s, bu) => s + bu[field], 0);
+
+    const consolidated = {
+      name: 'Consolidated',
+      acres: totalAcres,
+      revenue: sumField('revenue'),
+      revenuePerAcre: sumField('revenue') / div,
+      inputs: sumField('inputs'),
+      inputsPerAcre: sumField('inputs') / div,
+      grossMargin: sumField('grossMargin'),
+      grossMarginPerAcre: sumField('grossMargin') / div,
+      personnel: sumField('personnel'),
+      personnelPerAcre: sumField('personnel') / div,
+      fuel: sumField('fuel'),
+      fuelPerAcre: sumField('fuel') / div,
+      repairs: sumField('repairs'),
+      repairsPerAcre: sumField('repairs') / div,
+      shop: sumField('shop'),
+      shopPerAcre: sumField('shop') / div,
+      lbf: sumField('lbf'),
+      lbfPerAcre: sumField('lbf') / div,
+      insurance: sumField('insurance'),
+      insurancePerAcre: sumField('insurance') / div,
+      totalExpense: sumField('totalExpense'),
+      totalExpensePerAcre: sumField('totalExpense') / div,
+      netMargin: sumField('netMargin'),
+      netMarginPerAcre: sumField('netMargin') / div,
+      breakEvenPerAcre: sumField('totalExpense') / div,
+    };
+
+    res.json({ fiscalYear, buSummaries, consolidated });
+  } catch (err) {
+    log.error('BU summary error', err);
+    next(err);
+  }
+});
+
 export default router;

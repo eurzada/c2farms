@@ -60,14 +60,14 @@ const ENTERPRISE_MODULES = [
   },
   // Row 3 — Rollups
   {
-    key: 'forecast', label: 'Forecast Rollup', row: 3,
+    key: 'forecast', label: 'Financial', row: 3,
     description: 'Consolidated budget across all farm units',
     path: '/enterprise/forecast', icon: DashboardIcon, color: '#6d6e70',
     readOnly: true,
   },
   {
-    key: 'agronomy', label: 'Labour Rollup', row: 3,
-    description: 'Labour hours and costs across all farm units',
+    key: 'agronomy', label: 'Labour & Fuel', row: 3,
+    description: 'Labour hours and fuel costs across all farm units',
     path: '/enterprise/labour', icon: GroupsIcon, color: '#5c6bc0',
     readOnly: true,
   },

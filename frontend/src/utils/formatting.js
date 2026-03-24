@@ -28,7 +28,14 @@ export function currencyParser(value) {
 
 export const fmt = (v, d = 2) => v != null ? v.toLocaleString('en-CA', { maximumFractionDigits: d }) : '—';
 export const fmtDollar = (v, d = 2) => v != null ? `$${v.toLocaleString('en-CA', { minimumFractionDigits: d, maximumFractionDigits: d })}` : '—';
-export const fmtDollarK = (v) => v != null ? `$${(v / 1000).toFixed(0)}K` : '—';
+export const fmtDollarK = (v) => {
+  if (v == null) return '—';
+  const abs = Math.abs(v);
+  const sign = v < 0 ? '-' : '';
+  if (abs >= 1000000) return `${sign}$${(abs / 1000000).toLocaleString('en-CA', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}M`;
+  if (abs >= 1000) return `${sign}$${(abs / 1000).toLocaleString('en-CA', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}K`;
+  return `${sign}$${abs.toLocaleString('en-CA', { maximumFractionDigits: 0 })}`;
+};
 export const fmtSigned = (v) => {
   if (v == null) return '—';
   const s = v >= 0 ? '+' : '-';

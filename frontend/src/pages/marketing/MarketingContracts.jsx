@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
-  Box, Typography, Button, Stack, Chip, Tabs, Tab, LinearProgress,
+  Box, Typography, Button, Stack, Chip, Tabs, Tab,
   Snackbar, Alert, IconButton, Tooltip, Paper, Menu, MenuItem, Checkbox, ListItemText, Divider, CircularProgress,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
@@ -54,17 +54,6 @@ function PricingChip({ value }) {
   return <Chip label={PRICING_LABELS[value] || value} size="small" variant="filled" sx={{ fontSize: 11 }} />;
 }
 
-function ProgressCell({ value }) {
-  const pct = value || 0;
-  const color = pct >= 100 ? 'success' : pct >= 75 ? 'warning' : 'primary';
-  return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%', py: 0.5 }}>
-      <LinearProgress variant="determinate" value={Math.min(pct, 100)} color={color} sx={{ flex: 1, height: 8, borderRadius: 4 }} />
-      <Typography variant="caption" sx={{ minWidth: 40 }}>{pct.toFixed(0)}%</Typography>
-    </Box>
-  );
-}
-
 export default function MarketingContracts() {
   const { currentFarm, canEdit, isAdmin } = useFarm();
   const { mode } = useThemeMode();
@@ -91,26 +80,33 @@ export default function MarketingContracts() {
     { key: 'counterparty.name', label: 'Buyer' },
     { key: 'commodity.name', label: 'Crop' },
     { key: 'grade', label: 'Grade' },
+    { key: 'crop_year', label: 'Crop Year' },
     { key: 'pricing_type', label: 'Type' },
     { key: 'contracted_mt', label: 'Qty (MT)' },
-    { key: 'delivered_mt', label: 'Hauled' },
-    { key: 'remaining_mt', label: 'Remaining' },
-    { key: 'pct_complete', label: '% Done' },
     { key: 'price_per_bu', label: '$/bu' },
     { key: 'price_per_mt', label: '$/MT' },
+    { key: 'basis_level', label: 'Basis' },
+    { key: 'futures_reference', label: 'Futures Ref' },
     { key: 'contract_value', label: 'Value' },
+    { key: 'broker', label: 'Broker' },
     { key: 'elevator_site', label: 'Elevator' },
+    { key: 'farm_origin', label: 'Origin' },
     { key: 'delivery_window', label: 'Delivery Window' },
+    { key: 'tolerance_pct', label: 'Tolerance' },
     { key: 'status', label: 'Status' },
     { key: 'pricing_status', label: 'Pricing' },
+    { key: 'settlement_date', label: 'Settled Date' },
+    { key: 'settlement_amount', label: 'Settlement $' },
+    { key: 'cop_per_mt', label: 'COP/MT' },
     { key: 'notes', label: 'Notes' },
   ];
 
+  const DEFAULT_HIDDEN = ['tolerance_pct', 'farm_origin', 'settlement_date', 'settlement_amount', 'cop_per_mt'];
   const [hiddenColumns, setHiddenColumns] = useState(() => {
     try {
       const saved = localStorage.getItem('c2farms_contracts_hidden_cols');
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
+      return saved ? JSON.parse(saved) : DEFAULT_HIDDEN;
+    } catch { return DEFAULT_HIDDEN; }
   });
 
   const toggleColumn = (key) => {
@@ -331,15 +327,17 @@ export default function MarketingContracts() {
     { field: 'counterparty.name', headerName: 'Buyer', width: 140, hide: isHidden('counterparty.name') },
     { field: 'commodity.name', headerName: 'Crop', width: 120, hide: isHidden('commodity.name') },
     { field: 'grade', headerName: 'Grade', width: 100, hide: isHidden('grade') },
+    { field: 'crop_year', headerName: 'Crop Year', width: 90, hide: isHidden('crop_year') },
     { field: 'pricing_type', headerName: 'Type', width: 90, cellRenderer: p => <PricingChip value={p.value} />, hide: isHidden('pricing_type') },
     { field: 'contracted_mt', headerName: 'Qty (MT)', width: 110, valueFormatter: p => fmt(p.value), hide: isHidden('contracted_mt') },
-    { field: 'delivered_mt', headerName: 'Hauled', width: 100, valueFormatter: p => fmt(p.value), hide: isHidden('delivered_mt') },
-    { field: 'remaining_mt', headerName: 'Remaining', width: 100, valueFormatter: p => fmt(p.value), hide: isHidden('remaining_mt') },
-    { field: 'pct_complete', headerName: '% Done', width: 140, cellRenderer: ProgressCell, hide: isHidden('pct_complete') },
     { field: 'price_per_bu', headerName: '$/bu', width: 90, valueFormatter: p => p.value ? `$${p.value.toFixed(2)}` : '—', hide: isHidden('price_per_bu') },
     { field: 'price_per_mt', headerName: '$/MT', width: 100, valueFormatter: p => p.value ? `$${fmt(p.value)}` : '—', hide: isHidden('price_per_mt') },
+    { field: 'basis_level', headerName: 'Basis', width: 80, valueFormatter: p => p.value ? `$${p.value.toFixed(2)}` : '—', hide: isHidden('basis_level') },
+    { field: 'futures_reference', headerName: 'Futures Ref', width: 120, hide: isHidden('futures_reference') },
     { field: 'contract_value', headerName: 'Value', width: 120, valueFormatter: p => p.value ? `$${(p.value / 1000).toFixed(0)}K` : '—', hide: isHidden('contract_value') },
+    { field: 'broker', headerName: 'Broker', width: 110, hide: isHidden('broker') },
     { field: 'elevator_site', headerName: 'Elevator', width: 120, hide: isHidden('elevator_site') },
+    { field: 'farm_origin', headerName: 'Origin', width: 100, hide: isHidden('farm_origin') },
     {
       field: 'delivery_window', headerName: 'Delivery Window', width: 160, hide: isHidden('delivery_window'),
       valueGetter: p => {
@@ -348,8 +346,12 @@ export default function MarketingContracts() {
         return s || e ? `${s} — ${e}` : '—';
       },
     },
+    { field: 'tolerance_pct', headerName: 'Tolerance', width: 80, valueFormatter: p => p.value ? `${p.value}%` : '—', hide: isHidden('tolerance_pct') },
     { field: 'status', headerName: 'Status', width: 120, cellRenderer: p => <StatusChip value={p.value} />, hide: isHidden('status') },
     { field: 'pricing_status', headerName: 'Pricing', width: 110, cellRenderer: p => <Chip label={p.value?.replace('_', ' ')} size="small" variant="outlined" sx={{ fontSize: 11 }} />, hide: isHidden('pricing_status') },
+    { field: 'settlement_date', headerName: 'Settled Date', width: 110, valueFormatter: p => p.value ? new Date(p.value).toLocaleDateString('en-CA') : '—', hide: isHidden('settlement_date') },
+    { field: 'settlement_amount', headerName: 'Settlement $', width: 120, valueFormatter: p => p.value ? fmtDollar(p.value) : '—', hide: isHidden('settlement_amount') },
+    { field: 'cop_per_mt', headerName: 'COP/MT', width: 90, valueFormatter: p => p.value ? `$${fmt(p.value)}` : '—', hide: isHidden('cop_per_mt') },
     { field: 'notes', headerName: 'Notes', width: 150, flex: 1, hide: isHidden('notes') },
     {
       headerName: 'Doc', width: 70, sortable: false, filter: false,
@@ -439,6 +441,20 @@ export default function MarketingContracts() {
   }, [canEdit, isAdmin, hiddenColumns, currentFarm, fetchData]);
 
   const defaultColDef = useMemo(() => ({ sortable: true, resizable: true, filter: true }), []);
+
+  // Persist column order/width/sort across refreshes
+  const COLUMN_STATE_KEY = 'c2farms_contracts_col_state';
+  const onGridReady = useCallback((params) => {
+    const saved = localStorage.getItem(COLUMN_STATE_KEY);
+    if (saved) {
+      try { params.api.applyColumnState({ state: JSON.parse(saved), applyOrder: true }); } catch { /* ignore */ }
+    }
+  }, []);
+  const saveColumnState = useCallback(() => {
+    if (!gridRef.current?.api) return;
+    const state = gridRef.current.api.getColumnState();
+    localStorage.setItem(COLUMN_STATE_KEY, JSON.stringify(state));
+  }, []);
 
   return (
     <Box>
@@ -542,6 +558,10 @@ export default function MarketingContracts() {
           suppressRowClickSelection
           getRowId={p => p.data?.id}
           onSelectionChanged={onSelectionChanged}
+          onGridReady={onGridReady}
+          onColumnMoved={saveColumnState}
+          onColumnResized={saveColumnState}
+          onSortChanged={saveColumnState}
         />
       </Box>
 

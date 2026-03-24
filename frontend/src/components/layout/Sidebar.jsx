@@ -24,7 +24,7 @@ import { useFarm } from '../../contexts/FarmContext';
 const FARM_UNIT_ITEMS = [
   { section: 'Planning' },
   { label: 'Crop Plan', path: '/agronomy', icon: <GrassIcon />, module: 'agronomy' },
-  { label: 'Labour Plan', path: '/labour', icon: <GroupsIcon />, module: 'agronomy' },
+  { label: 'Labour & Fuel', path: '/labour', icon: <GroupsIcon />, module: 'agronomy' },
   { section: 'Financials' },
   { label: 'Financials', path: '/financials', icon: <AccountBalanceIcon />, module: 'forecast' },
   { section: 'Operations' },
@@ -34,15 +34,15 @@ const FARM_UNIT_ITEMS = [
 // Enterprise nav items
 const ENTERPRISE_ITEMS = [
   { section: 'Agronomy' },
-  { label: 'Agronomy Rollup', path: '/enterprise/agronomy', icon: <GrassIcon />, module: 'agronomy', readOnly: true },
+  { label: 'Agronomy', path: '/enterprise/agronomy', icon: <GrassIcon />, module: 'agronomy', readOnly: true },
   { label: 'Procurement', path: '/enterprise/agro-plan', icon: <AgricultureIcon />, module: 'agronomy', readOnly: true },
-  { label: 'Labour Rollup', path: '/enterprise/labour', icon: <GroupsIcon />, module: 'agronomy', readOnly: true },
+  { label: 'Labour & Fuel', path: '/enterprise/labour', icon: <GroupsIcon />, module: 'agronomy', readOnly: true },
   { section: 'Data Entry' },
   { label: 'Grain Marketing', path: '/marketing', icon: <TrendingUpIcon />, module: 'marketing' },
   { label: 'Logistics', path: '/logistics', icon: <LocalShippingIcon />, module: 'logistics' },
   { label: 'Inventory', path: '/inventory', icon: <WarehouseIcon />, module: 'inventory' },
-  { section: 'Forecast' },
-  { label: 'Forecast Rollup', path: '/enterprise/forecast', icon: <DashboardIcon />, module: 'forecast', readOnly: true },
+  { section: 'Financial' },
+  { label: 'Financial', path: '/enterprise/forecast', icon: <DashboardIcon />, module: 'forecast', readOnly: true },
 ];
 
 // Terminal nav items (shown when a terminal farm is selected)

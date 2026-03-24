@@ -1,62 +1,44 @@
 import { useState, useEffect } from 'react';
-import { Typography, Box, Button, Alert, Chip, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions } from '@mui/material';
+import { Typography, Box, Button, Alert, Tabs, Tab, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions } from '@mui/material';
 import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
-import AcUnitIcon from '@mui/icons-material/AcUnit';
-import LockIcon from '@mui/icons-material/Lock';
-import LockOpenIcon from '@mui/icons-material/LockOpen';
+import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
+import EditIcon from '@mui/icons-material/Edit';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import AccountingGrid from '../components/accounting/AccountingGrid';
 import CashFlowSummary from '../components/accounting/CashFlowSummary';
 import ExportButtons from '../components/accounting/ExportButtons';
 import CsvImportButton from '../components/accounting/CsvImportButton';
-import FreezeDialog from '../components/assumptions/FreezeDialog';
-import UnfreezeDialog from '../components/assumptions/UnfreezeDialog';
+import ActualsGrid from '../components/shared/ActualsGrid';
+import VarianceGrid from '../components/shared/VarianceGrid';
+import TabPanel from '../components/shared/TabPanel';
 import { useFarm } from '../contexts/FarmContext';
 import api from '../services/api';
 
 export default function Accounting() {
-  const { currentFarm, fiscalYear, canEdit, isAdmin } = useFarm();
+  const { currentFarm, fiscalYear, canEdit } = useFarm();
   const [summary, setSummary] = useState({});
   const [months, setMonths] = useState(null);
   const [syncMessage, setSyncMessage] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
-  const [isFrozen, setIsFrozen] = useState(false);
-  const [freezeOpen, setFreezeOpen] = useState(false);
-  const [unfreezeOpen, setUnfreezeOpen] = useState(false);
+  const [viewTab, setViewTab] = useState(0);
+  const [varianceData, setVarianceData] = useState(null);
 
-  // Load frozen status
+  // Load variance data when variance tab is selected (tab 0)
   useEffect(() => {
-    if (!currentFarm?.id || !fiscalYear) return;
-    api.get(`/api/farms/${currentFarm.id}/assumptions/${fiscalYear}`)
-      .then(res => setIsFrozen(res.data?.is_frozen || false))
-      .catch(() => setIsFrozen(false));
-  }, [currentFarm, fiscalYear, refreshKey]);
-
-  const handleFreeze = async () => {
-    try {
-      await api.post(`/api/farms/${currentFarm.id}/assumptions/${fiscalYear}/freeze`);
-      setIsFrozen(true); setFreezeOpen(false);
-      setSyncMessage('Budget frozen successfully');
-      setRefreshKey(k => k + 1);
-    } catch (err) { setSyncMessage(err.response?.data?.error || 'Failed to freeze'); }
-  };
-
-  const handleUnfreeze = async () => {
-    try {
-      await api.post(`/api/farms/${currentFarm.id}/assumptions/${fiscalYear}/unfreeze`);
-      setIsFrozen(false); setUnfreezeOpen(false);
-      setSyncMessage('Budget unfrozen successfully');
-      setRefreshKey(k => k + 1);
-    } catch (err) { setSyncMessage(err.response?.data?.error || 'Failed to unfreeze'); }
-  };
+    if (!currentFarm?.id || !fiscalYear || viewTab !== 0) return;
+    api.get(`/api/farms/${currentFarm.id}/variance/${fiscalYear}`)
+      .then(res => setVarianceData(res.data))
+      .catch(() => setVarianceData(null));
+  }, [currentFarm?.id, fiscalYear, viewTab, refreshKey]);
 
   const handleSummaryLoaded = (newSummary, newMonths) => {
     setSummary(newSummary);
     if (newMonths) setMonths(newMonths);
   };
 
-  const handleClearYear = async () => {
+  const handleClearActuals = async () => {
     setClearing(true);
     try {
       const res = await api.delete(`/api/farms/${currentFarm.id}/accounting/clear-year`, {
@@ -65,7 +47,7 @@ export default function Accounting() {
       setSyncMessage(res.data.message);
       setRefreshKey(k => k + 1);
     } catch {
-      setSyncMessage('Failed to clear year data.');
+      setSyncMessage('Failed to clear actuals.');
     } finally {
       setClearing(false);
       setClearDialogOpen(false);
@@ -83,43 +65,15 @@ export default function Accounting() {
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          <Typography variant="h5">Cost Forecast</Typography>
-          {isFrozen && <Chip icon={<LockIcon />} label="Budget Frozen" color="warning" size="small" />}
-        </Box>
+        <Typography variant="h5">Cost Forecast</Typography>
         <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-          {!isFrozen && canEdit && (
-            <Button variant="outlined" color="warning" size="small" startIcon={<AcUnitIcon />}
-              onClick={() => setFreezeOpen(true)}>
-              Freeze Budget
-            </Button>
-          )}
-          {isFrozen && isAdmin && (
-            <Button variant="outlined" color="info" size="small" startIcon={<LockOpenIcon />}
-              onClick={() => setUnfreezeOpen(true)}>
-              Unfreeze
-            </Button>
-          )}
-          {canEdit && (
-            <>
-              <Button variant="outlined" color="error" size="small" startIcon={<DeleteSweepIcon />}
-                onClick={() => setClearDialogOpen(true)}>
-                Clear Year
-              </Button>
-              <CsvImportButton
-                farmId={currentFarm.id}
-                fiscalYear={fiscalYear}
-                onImportComplete={() => setRefreshKey(k => k + 1)}
-              />
-            </>
-          )}
           <ExportButtons farmId={currentFarm.id} fiscalYear={fiscalYear} />
         </Box>
       </Box>
 
       {syncMessage && (
         <Alert
-          severity={syncMessage.includes('failed') || syncMessage.includes('not connected') ? 'warning' : 'info'}
+          severity={syncMessage.includes('failed') || syncMessage.includes('Failed') ? 'warning' : 'info'}
           sx={{ mb: 2 }}
           onClose={() => setSyncMessage('')}
         >
@@ -127,29 +81,59 @@ export default function Accounting() {
         </Alert>
       )}
 
-      <AccountingGrid
-        farmId={currentFarm.id}
-        fiscalYear={fiscalYear}
-        key={refreshKey}
-        onSummaryLoaded={handleSummaryLoaded}
-      />
-      <CashFlowSummary summary={summary} months={months} />
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+        <Tabs value={viewTab} onChange={(_, v) => setViewTab(v)}>
+          <Tab icon={<CompareArrowsIcon />} iconPosition="start" label="Variance" />
+          <Tab icon={<EditIcon />} iconPosition="start" label="Plan" />
+          <Tab icon={<ReceiptLongIcon />} iconPosition="start" label="Actuals" />
+        </Tabs>
+      </Box>
 
-      <FreezeDialog open={freezeOpen} onConfirm={handleFreeze} onCancel={() => setFreezeOpen(false)} fiscalYear={fiscalYear} />
-      <UnfreezeDialog open={unfreezeOpen} onConfirm={handleUnfreeze} onCancel={() => setUnfreezeOpen(false)} fiscalYear={fiscalYear} />
+      <TabPanel value={viewTab} index={0}>
+        <VarianceGrid data={varianceData} />
+      </TabPanel>
+
+      <TabPanel value={viewTab} index={1}>
+        <AccountingGrid
+          farmId={currentFarm.id}
+          fiscalYear={fiscalYear}
+          key={refreshKey}
+          onSummaryLoaded={handleSummaryLoaded}
+        />
+        <CashFlowSummary summary={summary} months={months} />
+      </TabPanel>
+
+      <TabPanel value={viewTab} index={2}>
+        <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+          {canEdit && (
+            <>
+              <CsvImportButton
+                farmId={currentFarm.id}
+                fiscalYear={fiscalYear}
+                onImportComplete={() => setRefreshKey(k => k + 1)}
+              />
+              <Button variant="outlined" color="error" size="small" startIcon={<DeleteSweepIcon />}
+                onClick={() => setClearDialogOpen(true)}>
+                Clear Actuals
+              </Button>
+            </>
+          )}
+        </Box>
+        <ActualsGrid mode="accounting" />
+      </TabPanel>
 
       <Dialog open={clearDialogOpen} onClose={() => setClearDialogOpen(false)}>
-        <DialogTitle>Clear Year Data</DialogTitle>
+        <DialogTitle>Clear Actuals</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            Clear all imported accounting data for FY {fiscalYear}? This will remove all GL detail
-            and reset monthly data to zero. This cannot be undone.
+            Clear all imported QB actuals for FY {fiscalYear}? This removes GL detail records and
+            actual monthly data. Your plan data will not be affected. This cannot be undone.
           </DialogContentText>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setClearDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleClearYear} color="error" variant="contained" disabled={clearing}>
-            {clearing ? 'Clearing...' : 'Clear Year Data'}
+          <Button onClick={handleClearActuals} color="error" variant="contained" disabled={clearing}>
+            {clearing ? 'Clearing...' : 'Clear Actuals'}
           </Button>
         </DialogActions>
       </Dialog>

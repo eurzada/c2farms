@@ -25,13 +25,23 @@ export default function EnterpriseForecast() {
   const [drillOpen, setDrillOpen] = useState(false);
   const [drillCategory, setDrillCategory] = useState(null);
   const [drillMode, setDrillMode] = useState('accounting');
+  const [varianceData, setVarianceData] = useState(null);
+  const [buSummaryData, setBuSummaryData] = useState(null);
 
   useEffect(() => {
     if (!fiscalYear) return;
     setLoading(true);
     setError('');
-    api.get(`/api/enterprise/forecast-rollup/${fiscalYear}`)
-      .then(res => setData(res.data))
+    Promise.all([
+      api.get(`/api/enterprise/forecast-rollup/${fiscalYear}`),
+      api.get(`/api/enterprise/variance/${fiscalYear}`),
+      api.get(`/api/enterprise/bu-summary/${fiscalYear}`),
+    ])
+      .then(([rollupRes, varRes, summaryRes]) => {
+        setData(rollupRes.data);
+        setVarianceData(varRes.data);
+        setBuSummaryData(summaryRes.data);
+      })
       .catch(err => setError(extractErrorMessage(err, 'Failed to load consolidated forecast')))
       .finally(() => setLoading(false));
   }, [fiscalYear]);
@@ -75,12 +85,12 @@ export default function EnterpriseForecast() {
             <Tabs value={tab} onChange={(_, v) => setTab(v)}>
               <Tab icon={<DashboardIcon />} iconPosition="start" label="Dashboard" />
               <Tab icon={<TableChartIcon />} iconPosition="start" label="Cost Forecast" />
-              <Tab icon={<PercentIcon />} iconPosition="start" label="Per-Unit ($/acre)" />
+              <Tab icon={<PercentIcon />} iconPosition="start" label="Per Acre" />
             </Tabs>
           </Box>
 
           <TabPanel value={tab} index={0}>
-            <EnterpriseForecastDashboard data={data} />
+            <EnterpriseForecastDashboard data={data} varianceData={varianceData} buSummaryData={buSummaryData} />
           </TabPanel>
 
           <TabPanel value={tab} index={1}>

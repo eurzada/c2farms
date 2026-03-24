@@ -37,25 +37,31 @@ router.get('/:farmId/per-unit/:year', authenticate, async (req, res, next) => {
 
     const farmCategories = await getFarmCategories(farmId);
 
-    const monthlyData = await prisma.monthlyData.findMany({
-      where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'per_unit' },
-      orderBy: { month: 'asc' },
-    });
+    const [monthlyData, frozenData, priorYearData, actualMonths] = await Promise.all([
+      prisma.monthlyData.findMany({
+        where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'per_unit' },
+        orderBy: { month: 'asc' },
+      }),
+      prisma.monthlyDataFrozen.findMany({
+        where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'per_unit' },
+      }),
+      prisma.monthlyData.findMany({
+        where: { farm_id: farmId, fiscal_year: fiscalYear - 1, type: 'per_unit' },
+      }),
+      // Check which months have actuals available (Book 2)
+      prisma.monthlyActual.findMany({
+        where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'per_unit' },
+        select: { month: true },
+      }),
+    ]);
 
-    // Get frozen budget for comparison
-    const frozenData = await prisma.monthlyDataFrozen.findMany({
-      where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'per_unit' },
-    });
-
-    // Get prior year data (aggregate)
-    const priorYearData = await prisma.monthlyData.findMany({
-      where: { farm_id: farmId, fiscal_year: fiscalYear - 1, type: 'per_unit' },
-    });
+    // Build hasActuals map for frontend indicator
+    const hasActualsSet = new Set(actualMonths.map(r => r.month));
 
     // Build month map
     const monthMap = {};
     for (const row of monthlyData) {
-      monthMap[row.month] = { data: row.data_json || {}, isActual: row.is_actual, comments: row.comments_json || {} };
+      monthMap[row.month] = { data: row.data_json || {}, comments: row.comments_json || {} };
     }
 
     const frozenMap = {};
@@ -83,7 +89,7 @@ router.get('/:farmId/per-unit/:year', authenticate, async (req, res, next) => {
       for (const month of months) {
         const val = monthMap[month]?.data?.[cat.code] || 0;
         monthValues[month] = val;
-        monthActuals[month] = monthMap[month]?.isActual || false;
+        monthActuals[month] = hasActualsSet.has(month);
         monthComments[month] = monthMap[month]?.comments?.[cat.code] || '';
         currentAgg += val;
       }
@@ -187,20 +193,10 @@ router.patch('/:farmId/per-unit/:year/:month', authenticate, requireRole('admin'
       return res.status(400).json({ error: 'Cannot edit parent category directly' });
     }
 
-    // Check if month is locked (actual data)
-    const existing = await prisma.monthlyData.findUnique({
-      where: {
-        farm_id_fiscal_year_month_type: {
-          farm_id: farmId, fiscal_year: fiscalYear, month, type: 'per_unit',
-        },
-      },
-    });
-
-    if (existing?.is_actual) {
-      return res.status(403).json({ error: 'Cannot edit actual data. Month is locked.' });
-    }
-
-    const result = await updatePerUnitCell(farmId, fiscalYear, month, category_code, parseFloat(value), comment);
+    // Plan is always editable (Two Books architecture — actuals live in MonthlyActual)
+    // Tag as 'Manual' when user edits directly (module pushes pass their own comment)
+    const effectiveComment = comment !== undefined ? comment : 'Manual';
+    const result = await updatePerUnitCell(farmId, fiscalYear, month, category_code, parseFloat(value), effectiveComment);
 
     // Broadcast via socket
     const io = req.app.get('io');
@@ -240,14 +236,21 @@ router.get('/:farmId/accounting/:year', authenticate, async (req, res, next) => 
 
     const farmCategories = await getFarmCategories(farmId);
 
-    const monthlyData = await prisma.monthlyData.findMany({
-      where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'accounting' },
-    });
+    const [monthlyData, priorYearData, acctActualMonths] = await Promise.all([
+      prisma.monthlyData.findMany({
+        where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'accounting' },
+      }),
+      prisma.monthlyData.findMany({
+        where: { farm_id: farmId, fiscal_year: fiscalYear - 1, type: 'accounting' },
+      }),
+      // Check which months have actuals available (Book 2)
+      prisma.monthlyActual.findMany({
+        where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'accounting' },
+        select: { month: true },
+      }),
+    ]);
 
-    // Get prior year accounting data
-    const priorYearData = await prisma.monthlyData.findMany({
-      where: { farm_id: farmId, fiscal_year: fiscalYear - 1, type: 'accounting' },
-    });
+    const acctHasActualsSet = new Set(acctActualMonths.map(r => r.month));
 
     const priorYearAgg = {};
     for (const row of priorYearData) {
@@ -267,11 +270,9 @@ router.get('/:farmId/accounting/:year', authenticate, async (req, res, next) => 
     }
 
     const monthMap = {};
-    const monthActualMap = {};
     const monthCommentsMap = {};
     for (const row of monthlyData) {
       monthMap[row.month] = row.data_json || {};
-      monthActualMap[row.month] = row.is_actual || false;
       monthCommentsMap[row.month] = row.comments_json || {};
     }
 
@@ -285,7 +286,7 @@ router.get('/:farmId/accounting/:year', authenticate, async (req, res, next) => 
       for (const month of months) {
         const val = monthMap[month]?.[cat.code] || 0;
         monthValues[month] = val;
-        actuals[month] = monthActualMap[month] || false;
+        actuals[month] = acctHasActualsSet.has(month);
         comments[month] = monthCommentsMap[month]?.[cat.code] || '';
         total += val;
       }
@@ -404,20 +405,9 @@ router.patch('/:farmId/accounting/:year/:month', authenticate, requireRole('admi
       return res.status(400).json({ error: 'Cannot edit parent category directly' });
     }
 
-    // Check if month is locked (actual data)
-    const existing = await prisma.monthlyData.findUnique({
-      where: {
-        farm_id_fiscal_year_month_type: {
-          farm_id: farmId, fiscal_year: fiscalYear, month, type: 'accounting',
-        },
-      },
-    });
-
-    if (existing?.is_actual) {
-      return res.status(403).json({ error: 'Cannot edit actual data. Month is locked.' });
-    }
-
-    const result = await updateAccountingCell(farmId, fiscalYear, month, category_code, parseFloat(value));
+    // Plan is always editable (Two Books architecture — actuals live in MonthlyActual)
+    // Tag as 'Manual' when user edits directly
+    const result = await updateAccountingCell(farmId, fiscalYear, month, category_code, parseFloat(value), 'Manual');
 
     // Broadcast via socket
     const io = req.app.get('io');
@@ -450,8 +440,8 @@ router.post('/:farmId/financial/manual-actual', authenticate, requireRole('admin
 
     const farmCategories = await getFarmCategories(farmId);
 
-    // Update accounting data as actuals
-    const existing = await prisma.monthlyData.findUnique({
+    // Write to MonthlyActual (Book 2: Actual P&L) — NOT MonthlyData (Book 1: Plan)
+    const existing = await prisma.monthlyActual.findUnique({
       where: {
         farm_id_fiscal_year_month_type: {
           farm_id: farmId, fiscal_year: parseInt(fiscal_year), month, type: 'accounting',
@@ -463,20 +453,20 @@ router.post('/:farmId/financial/manual-actual', authenticate, requireRole('admin
     const merged = { ...currentData, ...data };
     const withParents = recalcParentSums(merged, farmCategories);
 
-    await prisma.monthlyData.upsert({
+    await prisma.monthlyActual.upsert({
       where: {
         farm_id_fiscal_year_month_type: {
           farm_id: farmId, fiscal_year: parseInt(fiscal_year), month, type: 'accounting',
         },
       },
-      update: { data_json: withParents, is_actual: true },
+      update: { data_json: withParents },
       create: {
         farm_id: farmId, fiscal_year: parseInt(fiscal_year), month, type: 'accounting',
-        data_json: withParents, is_actual: true, comments_json: {},
+        data_json: withParents, basis: 'cash', source: 'manual',
       },
     });
 
-    // Recalc per-unit
+    // Recalc per-unit actuals
     const assumption = await prisma.assumption.findUnique({
       where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: parseInt(fiscal_year) } },
     });
@@ -486,16 +476,16 @@ router.post('/:farmId/financial/manual-actual', authenticate, requireRole('admin
       perUnitData[key] = val / totalAcres;
     }
 
-    await prisma.monthlyData.upsert({
+    await prisma.monthlyActual.upsert({
       where: {
         farm_id_fiscal_year_month_type: {
           farm_id: farmId, fiscal_year: parseInt(fiscal_year), month, type: 'per_unit',
         },
       },
-      update: { data_json: perUnitData, is_actual: true },
+      update: { data_json: perUnitData },
       create: {
         farm_id: farmId, fiscal_year: parseInt(fiscal_year), month, type: 'per_unit',
-        data_json: perUnitData, is_actual: true, comments_json: {},
+        data_json: perUnitData, basis: 'cash', source: 'manual',
       },
     });
 
@@ -535,6 +525,77 @@ router.get('/:farmId/prior-year/:year', authenticate, async (req, res, next) => 
     }
 
     res.json({ fiscalYear: priorYear, aggregate });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET actuals data (Book 2: Actual P&L from QB imports)
+router.get('/:farmId/actuals/:year', authenticate, async (req, res, next) => {
+  try {
+    const { farmId } = req.params;
+    const fiscalYear = parseYear(req.params.year);
+    if (!fiscalYear) return res.status(400).json({ error: 'Invalid fiscal year' });
+
+    const assumption = await prisma.assumption.findUnique({
+      where: { farm_id_fiscal_year: { farm_id: farmId, fiscal_year: fiscalYear } },
+    });
+    const months = generateFiscalMonths(assumption?.start_month || 'Nov');
+    const totalAcres = assumption?.total_acres || 0;
+    const farmCategories = await getFarmCategories(farmId);
+
+    const [acctData, puData] = await Promise.all([
+      prisma.monthlyActual.findMany({
+        where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'accounting' },
+      }),
+      prisma.monthlyActual.findMany({
+        where: { farm_id: farmId, fiscal_year: fiscalYear, type: 'per_unit' },
+      }),
+    ]);
+
+    const acctMap = {};
+    for (const row of acctData) acctMap[row.month] = row.data_json || {};
+    const puMap = {};
+    for (const row of puData) puMap[row.month] = row.data_json || {};
+
+    const rows = farmCategories
+      .filter(c => c.category_type !== 'REVENUE' && !c.code?.startsWith('rev_'))
+      .map(cat => {
+        const monthValues = {};
+        let total = 0;
+        for (const month of months) {
+          const val = acctMap[month]?.[cat.code] || 0;
+          monthValues[month] = val;
+          total += val;
+        }
+        return {
+          code: cat.code,
+          display_name: cat.display_name,
+          level: cat.level,
+          category_type: cat.category_type,
+          sort_order: cat.sort_order,
+          months: monthValues,
+          total,
+        };
+      })
+      .sort((a, b) => a.sort_order - b.sort_order);
+
+    res.json({ fiscalYear, months, totalAcres, rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET variance (Plan vs Actual)
+router.get('/:farmId/variance/:year', authenticate, async (req, res, next) => {
+  try {
+    const { farmId } = req.params;
+    const fiscalYear = parseYear(req.params.year);
+    if (!fiscalYear) return res.status(400).json({ error: 'Invalid fiscal year' });
+
+    const { calculateVariance } = await import('../services/varianceService.js');
+    const variance = await calculateVariance(farmId, fiscalYear);
+    res.json(variance);
   } catch (err) {
     next(err);
   }

@@ -200,6 +200,63 @@ export default function AgronomyDashboard() {
         </Table>
       </TableContainer>
 
+      {/* Gross Margin Summary */}
+      <Typography variant="h6" sx={{ mb: 1 }}>Gross Margin Summary</Typography>
+      <TableContainer component={Paper} sx={{ mb: 3, maxWidth: 480 }}>
+        <Table size="small">
+          <TableHead>
+            <TableRow sx={{ '& th': { fontWeight: 'bold', bgcolor: 'action.hover' } }}>
+              <TableCell>Line Item</TableCell>
+              <TableCell align="right">$/Acre</TableCell>
+              <TableCell align="right">Total</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            <TableRow>
+              <TableCell sx={{ color: 'success.main', fontWeight: 500 }}>Revenue</TableCell>
+              <TableCell align="right" sx={{ color: 'success.main' }}>${fmtDec(farm.acres ? farm.revenue / farm.acres : 0)}</TableCell>
+              <TableCell align="right" sx={{ color: 'success.main' }}>${fmt(farm.revenue)}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell sx={{ pl: 3 }}>Less: Seed</TableCell>
+              <TableCell align="right">({fmtDec(farm.acres ? farm.seed_total / farm.acres : 0)})</TableCell>
+              <TableCell align="right">({fmt(farm.seed_total)})</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell sx={{ pl: 3 }}>Less: Fertilizer</TableCell>
+              <TableCell align="right">({fmtDec(farm.acres ? farm.fert_total / farm.acres : 0)})</TableCell>
+              <TableCell align="right">({fmt(farm.fert_total)})</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell sx={{ pl: 3 }}>Less: Chemical</TableCell>
+              <TableCell align="right">({fmtDec(farm.acres ? farm.chem_total / farm.acres : 0)})</TableCell>
+              <TableCell align="right">({fmt(farm.chem_total)})</TableCell>
+            </TableRow>
+            <TableRow sx={{ '& td': { fontWeight: 'bold', borderTop: 1, borderColor: 'divider' } }}>
+              <TableCell>Total Inputs</TableCell>
+              <TableCell align="right">${fmtDec(farm.cost_per_acre)}</TableCell>
+              <TableCell align="right">${fmt(farm.total_cost)}</TableCell>
+            </TableRow>
+            <TableRow sx={{ '& td': { fontWeight: 'bold', borderTop: 2, borderColor: 'divider' } }}>
+              <TableCell>Gross Margin</TableCell>
+              <TableCell align="right" sx={{ color: farm.margin >= 0 ? 'success.main' : 'error.main' }}>
+                ${fmtDec(farm.margin_per_acre)}
+              </TableCell>
+              <TableCell align="right" sx={{ color: farm.margin >= 0 ? 'success.main' : 'error.main' }}>
+                ${fmt(farm.margin)}
+              </TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell sx={{ fontWeight: 'bold' }}>Margin %</TableCell>
+              <TableCell />
+              <TableCell align="right" sx={{ fontWeight: 'bold', color: farm.margin >= 0 ? 'success.main' : 'error.main' }}>
+                {fmtPct(farm.margin_pct)}
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </TableContainer>
+
       {/* Cost Coverage & Pricing */}
       {costCoverage && costCoverage.total > 0 && (
         <Paper sx={{ p: 2, mb: 3 }}>

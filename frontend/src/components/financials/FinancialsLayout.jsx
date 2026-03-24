@@ -9,7 +9,7 @@ import { useFarm } from '../../contexts/FarmContext';
 const TABS = [
   { label: 'Dashboard', path: '/financials/dashboard', icon: <DashboardIcon /> },
   { label: 'Cost Forecast', path: '/financials/cost-forecast', icon: <AccountBalanceIcon /> },
-  { label: 'Per-Unit', path: '/financials/per-unit', icon: <TableChartIcon /> },
+  { label: 'Per Acre', path: '/financials/per-unit', icon: <TableChartIcon /> },
   { label: 'Chart of Accounts', path: '/financials/chart-of-accounts', icon: <ListAltIcon />, roles: ['admin'] },
 ];
 

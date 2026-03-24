@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
-  Box, Typography, Paper, Stack, Chip, Alert, Button,
+  Box, Typography, Paper, Stack, Chip, Alert, Button, Divider,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   useTheme,
 } from '@mui/material';
@@ -79,8 +79,8 @@ export default function EnterpriseLabour() {
 
   const handleBulkPush = async () => {
     const ok = await confirm({
-      title: 'Push All Labour Plans to Forecast?',
-      message: `This will write labour costs into the Personnel category (lpm_personnel) for all ${farmsWithPlans.length} farms for FY${year}. Months with actuals will be skipped.`,
+      title: 'Push All Labour & Fuel Plans to Forecast?',
+      message: `This will write labour costs (lpm_personnel) and fuel costs (lpm_fog) for all ${farmsWithPlans.length} farms for FY${year}. Fuel is allocated proportionally to labour hours per month.`,
       confirmText: 'Push All',
     });
     if (!ok) return;
@@ -99,11 +99,13 @@ export default function EnterpriseLabour() {
   const { farmsWithPlans, farmsWithout, totals } = useMemo(() => {
     const withPlans = farmData.filter(r => r.data);
     const without = farmData.filter(r => !r.data);
-    const t = { hours: 0, cost: 0, acres: 0 };
+    const t = { hours: 0, cost: 0, acres: 0, fuelCost: 0, fuelLitres: 0 };
     for (const { data } of withPlans) {
       t.hours += data.total_hours || 0;
       t.cost += data.total_cost || 0;
       t.acres += data.total_acres || 0;
+      t.fuelCost += data.total_fuel_cost || 0;
+      t.fuelLitres += data.total_fuel_litres || 0;
     }
     return { farmsWithPlans: withPlans, farmsWithout: without, totals: t };
   }, [farmData]);
@@ -153,7 +155,7 @@ export default function EnterpriseLabour() {
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3, flexWrap: 'wrap' }}>
-        <Typography variant="h5" fontWeight="bold">Labour Rollup</Typography>
+        <Typography variant="h5" fontWeight="bold">Labour & Fuel Rollup</Typography>
         <Chip icon={<VisibilityIcon />} label="Read-Only" size="small" variant="outlined" />
         <Chip label={`${farmsWithPlans.length} of ${farmData.length} farms`} size="small" color="info" variant="outlined" />
         {isAdmin && farmsWithPlans.length > 0 && (
@@ -182,6 +184,9 @@ export default function EnterpriseLabour() {
         <Alert severity="warning">No labour plans found for FY{year}. Create plans on individual farm units first.</Alert>
       ) : (
         <>
+          {/* ─── LABOUR SECTION ─── */}
+          <Divider sx={{ mb: 1 }} />
+          <Typography variant="h5" fontWeight="bold" sx={{ mb: 2 }}>Labour</Typography>
           <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
             <KpiCard label="Total Hours" value={fmt(totals.hours)} sub={`${farmsWithPlans.length} farms`} />
             <KpiCard label="Total Cost" value={formatCurrency(totals.cost)} />
@@ -199,8 +204,7 @@ export default function EnterpriseLabour() {
             </Paper>
           )}
 
-          {/* Per-Farm Table */}
-          <Typography variant="h6" fontWeight="bold" sx={{ mb: 1 }}>Per Farm Unit</Typography>
+          {/* Labour Per-Farm Table */}
           <TableContainer component={Paper} sx={{ mb: 3 }}>
             <Table size="small">
               <TableHead>
@@ -249,6 +253,62 @@ export default function EnterpriseLabour() {
               </TableBody>
             </Table>
           </TableContainer>
+
+          {/* ─── FUEL SECTION ─── */}
+          {totals.fuelCost > 0 && (
+            <>
+              <Divider sx={{ mt: 4, mb: 1 }} />
+              <Typography variant="h5" fontWeight="bold" sx={{ mb: 2 }}>Fuel</Typography>
+              <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
+                <KpiCard label="Total Fuel Cost" value={formatCurrency(totals.fuelCost)} sub={`${farmsWithPlans.filter(r => r.data.fuel_rate_per_acre > 0).length} farms with fuel rates`} />
+                <KpiCard label="Total Litres" value={fmt(totals.fuelLitres)} sub={totals.acres ? `${fmtDec(totals.fuelLitres / totals.acres)} L/acre` : ''} />
+                <KpiCard label="Avg Fuel $/Acre" value={totals.acres ? formatCurrency(totals.fuelCost / totals.acres) : '—'} sub={totals.acres ? `${fmt(totals.acres)} total acres` : ''} />
+              </Stack>
+
+              <TableContainer component={Paper} sx={{ mb: 3 }}>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow sx={{ '& th': TH_SX }}>
+                      <TableCell>Farm Unit</TableCell>
+                      <TableCell align="right">Acres</TableCell>
+                      <TableCell align="right">L/Acre</TableCell>
+                      <TableCell align="right">Fuel $/Acre</TableCell>
+                      <TableCell align="right">Total Fuel Cost</TableCell>
+                      <TableCell align="center">Status</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {farmsWithPlans.map(({ farm, data }) => (
+                      <TableRow key={farm.id} hover>
+                        <TableCell sx={{ fontWeight: 'bold' }}>{farm.name}</TableCell>
+                        <TableCell align="right">{fmt(data.total_acres)}</TableCell>
+                        <TableCell align="right">{data.litres_per_acre > 0 ? fmtDec(data.litres_per_acre) : '—'}</TableCell>
+                        <TableCell align="right">{data.fuel_rate_per_acre > 0 ? `$${fmtDec(data.fuel_rate_per_acre)}` : '—'}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 'bold' }}>{data.total_fuel_cost > 0 ? formatCurrency(data.total_fuel_cost) : '—'}</TableCell>
+                        <TableCell align="center">
+                          <Chip
+                            label={data.status === 'draft' ? 'Draft' : 'Locked'}
+                            size="small"
+                            icon={data.status === 'locked' ? <LockIcon /> : <LockOpenIcon />}
+                            color={data.status === 'locked' ? 'primary' : 'default'}
+                            variant="outlined"
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    <TableRow sx={{ '& td': { fontWeight: 'bold', borderTop: 2, borderColor: 'divider' } }}>
+                      <TableCell>TOTAL</TableCell>
+                      <TableCell align="right">{fmt(totals.acres)}</TableCell>
+                      <TableCell align="right">{totals.acres ? fmtDec(totals.fuelLitres / totals.acres) : '—'}</TableCell>
+                      <TableCell align="right">{totals.acres ? formatCurrency(totals.fuelCost / totals.acres) : '—'}</TableCell>
+                      <TableCell align="right">{formatCurrency(totals.fuelCost)}</TableCell>
+                      <TableCell />
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </>
+          )}
 
           {pushResult && (
             <Alert severity="success" sx={{ mb: 2 }} onClose={() => setPushResult(null)}>

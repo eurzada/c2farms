@@ -44,6 +44,7 @@ import activityRoutes from './routes/activity.js';
 import auditReportRoutes from './routes/auditReport.js';
 import reportingRoutes from './routes/reporting.js';
 import enterpriseForecastRoutes from './routes/enterpriseForecast.js';
+import varianceRoutes from './routes/variance.js';
 import { logActivity } from './services/activityService.js';
 
 const app = express();
@@ -149,6 +150,7 @@ app.use('/api/admin', authenticate, reportingRoutes);
 
 // Enterprise rollup (no farmId — queries all BU farms internally)
 app.use('/api/enterprise', authenticate, enterpriseForecastRoutes);
+app.use('/api/enterprise', authenticate, varianceRoutes);
 
 // Inventory module
 app.use('/api/farms/:farmId/inventory', authenticate, requireModule('inventory'));
