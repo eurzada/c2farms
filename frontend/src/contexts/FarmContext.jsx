@@ -42,10 +42,10 @@ export function FarmProvider({ children }) {
     ];
   }, [authFarms]);
 
-  // Role-derived values
-  const currentRole = isEnterprise ? 'admin' : (currentFarm?.role || 'viewer');
+  // Role-derived values — Enterprise view uses the Enterprise farm's role, not a hardcoded 'admin'
+  const currentRole = isEnterprise ? (enterpriseFarm?.role || 'viewer') : (currentFarm?.role || 'viewer');
   const isAdmin = currentRole === 'admin';
-  const canEdit = !isEnterprise ? (currentRole === 'admin' || currentRole === 'manager') : true;
+  const canEdit = currentRole === 'admin' || currentRole === 'manager';
 
   // Module visibility from user's global modules setting
   const modules = user?.modules || DEFAULT_MODULES;
