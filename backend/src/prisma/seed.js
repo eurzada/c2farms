@@ -82,6 +82,8 @@ async function main() {
     { email: 'collin@c2farms.ca', name: 'Collin', role: 'admin' },
     { email: 'jessica@c2farms.ca', name: 'Jessica', role: 'admin' },
     { email: 'patrick@kollektivstudio.com', name: 'Patrick', role: 'admin' },
+    { email: 'kevin@c2farms.ca', name: 'Kevin Carter', role: 'viewer' },
+    { email: 'andre@c2farms.ca', name: 'Andre Pretorius', role: 'viewer' },
   ];
 
   for (const member of teamMembers) {
@@ -434,6 +436,7 @@ async function main() {
   console.log(`Manager: manager@c2farms.com / password123`);
   console.log(`Viewer:  viewer@c2farms.com / password123`);
   console.log(`Team:    eric@c2farms.ca, michael, carly, collin, jessica, patrick@kollektivstudio.com (all password123, admin)`);
+  console.log(`Viewers: kevin@c2farms.ca, andre@c2farms.ca (password123, viewer)`);
   console.log(`Farm ID: ${farm.id}`);
 }
 
