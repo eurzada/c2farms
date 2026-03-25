@@ -378,7 +378,7 @@ export async function getCropOptions() {
   const MASTER_CROPS = [
     'Canola', 'Hard Red Spring Wheat', 'Spring Durum Wheat', 'Winter Wheat',
     'Malt Barley', 'Feed Barley', 'Oats', 'Hybrid Fall Rye',
-    'Flax', 'Large Green Lentils', 'Red Lentils', 'Desi Chickpea',
+    'Flax', 'Large Green Lentils', 'Small Green Lentils', 'Red Lentils', 'Desi Chickpea',
     'Kabuli Chickpea (Large, 9mm)', 'Kabuli Chickpea (Small, 7mm)',
     'Yellow Peas', 'Green Peas', 'Soybean', 'Corn',
     'Brown Mustard', 'Yellow Mustard', 'Oriental Mustard', 'Hybrid Brown Mustard',
