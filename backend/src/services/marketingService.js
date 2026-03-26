@@ -1042,12 +1042,12 @@ export async function getContractSettlementSummary(contractId) {
 }
 
 /**
- * Settle a delivered contract.
+ * Fulfill a delivered contract — confirms obligations met and payment received/expected.
  */
-export async function settleContract(contractId, data) {
+export async function fulfillContract(contractId, data) {
   const contract = await prisma.marketingContract.findUnique({ where: { id: contractId } });
   if (!contract) throw new Error('Contract not found');
-  if (contract.status !== 'delivered') throw new Error('Contract must be in delivered status to settle');
+  if (contract.status !== 'delivered') throw new Error('Contract must be in delivered status to fulfill');
 
   // Auto-calculate from linked settlements if not explicitly provided
   let settlementAmount = data.settlement_amount;
@@ -1059,7 +1059,7 @@ export async function settleContract(contractId, data) {
   return prisma.marketingContract.update({
     where: { id: contractId },
     data: {
-      status: 'settled',
+      status: 'fulfilled',
       settlement_date: data.settlement_date ? new Date(data.settlement_date) : new Date(),
       settlement_amount: parseFloat(settlementAmount),
     },

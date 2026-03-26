@@ -12,7 +12,7 @@ import {
   updatePrice,
   createContract,
   updateContractDelivery,
-  settleContract,
+  fulfillContract,
   getContractSettlementSummary,
   computeSellAnalysis,
   buToMtFactor,
@@ -261,7 +261,7 @@ router.post('/:farmId/marketing/contracts/bulk-close', authenticate, requireRole
         status: { not: 'cancelled' },
       },
       data: {
-        status: 'settled',
+        status: 'fulfilled',
         notes: notes || 'Closed — prior year cutoff',
       },
     });
@@ -349,15 +349,15 @@ router.get('/:farmId/marketing/contracts/:id/settlement-summary', authenticate, 
   } catch (err) { next(err); }
 });
 
-router.post('/:farmId/marketing/contracts/:id/settle', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+router.post('/:farmId/marketing/contracts/:id/fulfill', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
     const existing = await prisma.marketingContract.findFirst({ where: { id: req.params.id, farm_id: req.params.farmId } });
     if (!existing) return res.status(404).json({ error: 'Contract not found' });
-    const contract = await settleContract(req.params.id, req.body);
+    const contract = await fulfillContract(req.params.id, req.body);
 
     logAudit({
       farmId: req.params.farmId, userId: req.userId,
-      entityType: 'MarketingContract', entityId: req.params.id, action: 'settle',
+      entityType: 'MarketingContract', entityId: req.params.id, action: 'fulfill',
       changes: { settlement_amount: contract.settlement_amount },
     });
 

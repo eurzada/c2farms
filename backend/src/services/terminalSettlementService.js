@@ -1126,14 +1126,14 @@ export async function pushBuyerToLogistics(farmId, settlementId, io) {
         data: { status: 'settled' },
       });
 
-      // Update linked MarketingContract status → 'settled'
+      // Update linked MarketingContract status → 'fulfilled'
       const linkedMc = await tx.marketingContract.findFirst({
         where: { linked_terminal_contract_id: settlement.contract_id },
       });
       if (linkedMc) {
         await tx.marketingContract.update({
           where: { id: linkedMc.id },
-          data: { status: 'settled' },
+          data: { status: 'fulfilled' },
         });
         // Link settlement to marketing contract
         await tx.settlement.update({

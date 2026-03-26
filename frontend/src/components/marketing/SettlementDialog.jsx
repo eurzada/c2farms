@@ -48,7 +48,7 @@ export default function SettlementDialog({ open, onClose, farmId, contract, onSa
   const handleSubmit = async () => {
     setSaving(true);
     try {
-      await api.post(`/api/farms/${farmId}/marketing/contracts/${contract.id}/settle`, {
+      await api.post(`/api/farms/${farmId}/marketing/contracts/${contract.id}/fulfill`, {
         settlement_date: form.settlement_date,
         settlement_amount: parseFloat(form.settlement_amount),
       });
@@ -64,7 +64,7 @@ export default function SettlementDialog({ open, onClose, farmId, contract, onSa
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Settle Contract</DialogTitle>
+      <DialogTitle>Fulfill Contract</DialogTitle>
       <DialogContent>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           {contract.contract_number} — {contract.counterparty?.name} — {contract.commodity?.name}
@@ -125,7 +125,7 @@ export default function SettlementDialog({ open, onClose, farmId, contract, onSa
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="contained" color="success" onClick={handleSubmit} disabled={saving || !form.settlement_amount}>
-          {saving ? 'Settling...' : 'Settle Contract'}
+          {saving ? 'Fulfilling...' : 'Fulfill Contract'}
         </Button>
       </DialogActions>
     </Dialog>

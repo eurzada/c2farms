@@ -37,7 +37,7 @@ const ENTERPRISE_ITEMS = [
   { label: 'Agronomy', path: '/enterprise/agronomy', icon: <GrassIcon />, module: 'agronomy', readOnly: true },
   { label: 'Procurement', path: '/enterprise/agro-plan', icon: <AgricultureIcon />, module: 'agronomy', readOnly: true },
   { label: 'Labour & Fuel', path: '/enterprise/labour', icon: <GroupsIcon />, module: 'agronomy', readOnly: true },
-  { section: 'Data Entry' },
+  { section: 'Operations' },
   { label: 'Grain Marketing', path: '/marketing', icon: <TrendingUpIcon />, module: 'marketing' },
   { label: 'Logistics', path: '/logistics', icon: <LocalShippingIcon />, module: 'logistics' },
   { label: 'Inventory', path: '/inventory', icon: <WarehouseIcon />, module: 'inventory' },

@@ -601,7 +601,7 @@ model MarketingContract {
   delivery_end              DateTime?     @db.Date
   elevator_site             String?
   farm_origin               String?
-  status                    String        @default("executed") // executed, in_delivery, delivered, settled, cancelled
+  status                    String        @default("executed") // executed, in_delivery, delivered, fulfilled, cancelled
   settlement_date           DateTime?     @db.Date
   settlement_amount         Float?
   contract_value            Float?

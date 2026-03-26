@@ -35,11 +35,11 @@ import { extractErrorMessage } from '../../utils/errorHelpers';
 import { fmt, fmtDollar } from '../../utils/formatting';
 import { getSocket } from '../../services/socket';
 
-const STATUS_TABS = ['All', 'Executed', 'In Delivery', 'Delivered', 'Settled', 'Cancelled'];
-const STATUS_MAP = { 'All': null, 'Executed': 'executed', 'In Delivery': 'in_delivery', 'Delivered': 'delivered', 'Settled': 'settled', 'Cancelled': 'cancelled' };
+const STATUS_TABS = ['All', 'Executed', 'In Delivery', 'Delivered', 'Fulfilled', 'Cancelled'];
+const STATUS_MAP = { 'All': null, 'Executed': 'executed', 'In Delivery': 'in_delivery', 'Delivered': 'delivered', 'Fulfilled': 'fulfilled', 'Cancelled': 'cancelled' };
 
 const STATUS_COLORS = {
-  executed: 'primary', in_delivery: 'warning', delivered: 'info', settled: 'success', cancelled: 'default',
+  executed: 'primary', in_delivery: 'warning', delivered: 'info', fulfilled: 'success', cancelled: 'default',
 };
 
 const PRICING_LABELS = {
@@ -83,6 +83,9 @@ export default function MarketingContracts() {
     { key: 'crop_year', label: 'Crop Year' },
     { key: 'pricing_type', label: 'Type' },
     { key: 'contracted_mt', label: 'Qty (MT)' },
+    { key: 'delivered_mt', label: 'Hauled (MT)' },
+    { key: 'remaining_mt', label: 'Remaining (MT)' },
+    { key: 'pct_complete', label: '% Done' },
     { key: 'price_per_bu', label: '$/bu' },
     { key: 'price_per_mt', label: '$/MT' },
     { key: 'basis_level', label: 'Basis' },
@@ -95,7 +98,7 @@ export default function MarketingContracts() {
     { key: 'tolerance_pct', label: 'Tolerance' },
     { key: 'status', label: 'Status' },
     { key: 'pricing_status', label: 'Pricing' },
-    { key: 'settlement_date', label: 'Settled Date' },
+    { key: 'settlement_date', label: 'Fulfilled Date' },
     { key: 'settlement_amount', label: 'Settlement $' },
     { key: 'cop_per_mt', label: 'COP/MT' },
     { key: 'notes', label: 'Notes' },
@@ -262,14 +265,14 @@ export default function MarketingContracts() {
 
   const handleBulkClose = async () => {
     const selectedRows = gridRef.current?.api?.getSelectedRows() || [];
-    const closable = selectedRows.filter(r => r.status !== 'settled' && r.status !== 'cancelled');
+    const closable = selectedRows.filter(r => r.status !== 'fulfilled' && r.status !== 'cancelled');
     if (closable.length === 0) {
-      setSnack({ open: true, message: 'All selected contracts are already settled or cancelled', severity: 'info' });
+      setSnack({ open: true, message: 'All selected contracts are already fulfilled or cancelled', severity: 'info' });
       return;
     }
     const ok = await confirm({
       title: 'Close Contracts (Prior Year Cutoff)',
-      message: `Mark ${closable.length} contract${closable.length !== 1 ? 's' : ''} as "Settled"? This is for prior-year cutoff — contracts will be flagged as settled regardless of delivery status.`,
+      message: `Mark ${closable.length} contract${closable.length !== 1 ? 's' : ''} as "Fulfilled"? This is for prior-year cutoff — contracts will be flagged as fulfilled regardless of delivery status.`,
       confirmText: 'Close All',
       confirmColor: 'success',
     });
@@ -330,6 +333,23 @@ export default function MarketingContracts() {
     { field: 'crop_year', headerName: 'Crop Year', width: 90, hide: isHidden('crop_year') },
     { field: 'pricing_type', headerName: 'Type', width: 90, cellRenderer: p => <PricingChip value={p.value} />, hide: isHidden('pricing_type') },
     { field: 'contracted_mt', headerName: 'Qty (MT)', width: 110, valueFormatter: p => fmt(p.value), hide: isHidden('contracted_mt') },
+    { field: 'delivered_mt', headerName: 'Hauled (MT)', width: 110, valueFormatter: p => fmt(p.value), hide: isHidden('delivered_mt') },
+    { field: 'remaining_mt', headerName: 'Remaining (MT)', width: 120, valueFormatter: p => fmt(p.value), hide: isHidden('remaining_mt'),
+      cellStyle: p => p.value > 0 ? { color: '#ed6c02' } : p.value === 0 ? { color: '#2e7d32' } : null },
+    { field: 'pct_complete', headerName: '% Done', width: 130, hide: isHidden('pct_complete'),
+      cellRenderer: p => {
+        const pct = Math.min(p.value || 0, 100);
+        const color = pct >= 100 ? '#2e7d32' : pct >= 50 ? '#1976d2' : '#ed6c02';
+        return (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%', pr: 1 }}>
+            <Box sx={{ flex: 1, bgcolor: '#e0e0e0', borderRadius: 1, height: 8, overflow: 'hidden' }}>
+              <Box sx={{ width: `${pct}%`, bgcolor: color, height: '100%', borderRadius: 1 }} />
+            </Box>
+            <Typography variant="caption" sx={{ minWidth: 36, textAlign: 'right', fontSize: 11 }}>{pct.toFixed(0)}%</Typography>
+          </Box>
+        );
+      },
+    },
     { field: 'price_per_bu', headerName: '$/bu', width: 90, valueFormatter: p => p.value ? `$${p.value.toFixed(2)}` : '—', hide: isHidden('price_per_bu') },
     { field: 'price_per_mt', headerName: '$/MT', width: 100, valueFormatter: p => p.value ? `$${fmt(p.value)}` : '—', hide: isHidden('price_per_mt') },
     { field: 'basis_level', headerName: 'Basis', width: 80, valueFormatter: p => p.value ? `$${p.value.toFixed(2)}` : '—', hide: isHidden('basis_level') },
@@ -349,7 +369,7 @@ export default function MarketingContracts() {
     { field: 'tolerance_pct', headerName: 'Tolerance', width: 80, valueFormatter: p => p.value ? `${p.value}%` : '—', hide: isHidden('tolerance_pct') },
     { field: 'status', headerName: 'Status', width: 120, cellRenderer: p => <StatusChip value={p.value} />, hide: isHidden('status') },
     { field: 'pricing_status', headerName: 'Pricing', width: 110, cellRenderer: p => <Chip label={p.value?.replace('_', ' ')} size="small" variant="outlined" sx={{ fontSize: 11 }} />, hide: isHidden('pricing_status') },
-    { field: 'settlement_date', headerName: 'Settled Date', width: 110, valueFormatter: p => p.value ? new Date(p.value).toLocaleDateString('en-CA') : '—', hide: isHidden('settlement_date') },
+    { field: 'settlement_date', headerName: 'Fulfilled Date', width: 110, valueFormatter: p => p.value ? new Date(p.value).toLocaleDateString('en-CA') : '—', hide: isHidden('settlement_date') },
     { field: 'settlement_amount', headerName: 'Settlement $', width: 120, valueFormatter: p => p.value ? fmtDollar(p.value) : '—', hide: isHidden('settlement_amount') },
     { field: 'cop_per_mt', headerName: 'COP/MT', width: 90, valueFormatter: p => p.value ? `$${fmt(p.value)}` : '—', hide: isHidden('cop_per_mt') },
     { field: 'notes', headerName: 'Notes', width: 150, flex: 1, hide: isHidden('notes') },
@@ -406,7 +426,7 @@ export default function MarketingContracts() {
               </Tooltip>
             )}
             {c.status === 'delivered' && (
-              <Tooltip title="Settle">
+              <Tooltip title="Fulfill">
                 <IconButton size="small" color="success" onClick={() => setSettlementDialog({ open: true, contract: c })}>
                   <CheckCircleIcon fontSize="small" />
                 </IconButton>
