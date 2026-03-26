@@ -137,23 +137,23 @@ async function main() {
   console.log('\n4. Seeding marketing contracts...');
   const CONTRACTS = [
     // Fulfilled contracts (9)
-    { num: 'MKT-001', crop_year: '2025/26', code: 'CNLA', cp: 'CGI', mt: 500, delivered: 500, type: 'flat', status: 'fulfilled', price_bu: 14.50, elevator: 'Regina', settled_amt: 319200, grade: '#1' },
-    { num: 'MKT-002', crop_year: '2025/26', code: 'CWAD', cp: 'RPI', mt: 300, delivered: 300, type: 'flat', status: 'fulfilled', price_bu: 9.80, elevator: 'Yorkton', settled_amt: 129528, grade: '#1 CWAD' },
-    { num: 'MKT-003', crop_year: '2025/26', code: 'CWRS', cp: 'G3G', mt: 400, delivered: 400, type: 'basis', status: 'fulfilled', price_bu: 9.50, basis: -0.55, futures_ref: 'MGE Mar26', elevator: 'Pasqua', settled_amt: 167200, grade: '#1 CWRS' },
-    { num: 'MKT-004', crop_year: '2025/26', code: 'LNSR', cp: 'LGX', mt: 200, delivered: 200, type: 'flat', status: 'fulfilled', price_bu: 0.45, elevator: 'LGX Terminal', settled_amt: 39600, grade: '#2' },
-    { num: 'MKT-005', crop_year: '2025/26', code: 'YPEA', cp: 'BNG', mt: 350, delivered: 350, type: 'flat', status: 'fulfilled', price_bu: 9.00, elevator: 'Altona', settled_amt: 138600, grade: '#2' },
-    { num: 'MKT-006', crop_year: '2025/26', code: 'L358', cp: 'CGI', mt: 250, delivered: 250, type: 'hta', status: 'fulfilled', price_bu: 15.00, futures_ref: 'ICE RS Mar26', futures_price: 15.80, elevator: 'Regina', settled_amt: 165000, grade: '#1' },
-    { num: 'MKT-007', crop_year: '2025/26', code: 'CHKP', cp: 'LDC', mt: 150, delivered: 150, type: 'flat', status: 'fulfilled', price_bu: 0.44, elevator: 'Yorkton', settled_amt: 29040, grade: '#1' },
-    { num: 'MKT-008', crop_year: '2025/26', code: 'CNRY', cp: 'CER', mt: 100, delivered: 100, type: 'flat', status: 'fulfilled', price_bu: 0.36, elevator: null, settled_amt: 15840, grade: '#1' },
-    { num: 'MKT-009', crop_year: '2025/26', code: 'BRLY', cp: 'MBA', mt: 200, delivered: 200, type: 'flat', status: 'fulfilled', price_bu: 6.80, elevator: 'Winnipeg', settled_amt: 59840, grade: '#1' },
+    { num: 'MKT-001', crop_year: '2025', code: 'CNLA', cp: 'CGI', mt: 500, delivered: 500, type: 'flat', status: 'fulfilled', price_bu: 14.50, elevator: 'Regina', settled_amt: 319200, grade: '#1' },
+    { num: 'MKT-002', crop_year: '2025', code: 'CWAD', cp: 'RPI', mt: 300, delivered: 300, type: 'flat', status: 'fulfilled', price_bu: 9.80, elevator: 'Yorkton', settled_amt: 129528, grade: '#1 CWAD' },
+    { num: 'MKT-003', crop_year: '2025', code: 'CWRS', cp: 'G3G', mt: 400, delivered: 400, type: 'basis', status: 'fulfilled', price_bu: 9.50, basis: -0.55, futures_ref: 'MGE Mar26', elevator: 'Pasqua', settled_amt: 167200, grade: '#1 CWRS' },
+    { num: 'MKT-004', crop_year: '2025', code: 'LNSR', cp: 'LGX', mt: 200, delivered: 200, type: 'flat', status: 'fulfilled', price_bu: 0.45, elevator: 'LGX Terminal', settled_amt: 39600, grade: '#2' },
+    { num: 'MKT-005', crop_year: '2025', code: 'YPEA', cp: 'BNG', mt: 350, delivered: 350, type: 'flat', status: 'fulfilled', price_bu: 9.00, elevator: 'Altona', settled_amt: 138600, grade: '#2' },
+    { num: 'MKT-006', crop_year: '2025', code: 'L358', cp: 'CGI', mt: 250, delivered: 250, type: 'hta', status: 'fulfilled', price_bu: 15.00, futures_ref: 'ICE RS Mar26', futures_price: 15.80, elevator: 'Regina', settled_amt: 165000, grade: '#1' },
+    { num: 'MKT-007', crop_year: '2025', code: 'CHKP', cp: 'LDC', mt: 150, delivered: 150, type: 'flat', status: 'fulfilled', price_bu: 0.44, elevator: 'Yorkton', settled_amt: 29040, grade: '#1' },
+    { num: 'MKT-008', crop_year: '2025', code: 'CNRY', cp: 'CER', mt: 100, delivered: 100, type: 'flat', status: 'fulfilled', price_bu: 0.36, elevator: null, settled_amt: 15840, grade: '#1' },
+    { num: 'MKT-009', crop_year: '2025', code: 'BRLY', cp: 'MBA', mt: 200, delivered: 200, type: 'flat', status: 'fulfilled', price_bu: 6.80, elevator: 'Winnipeg', settled_amt: 59840, grade: '#1' },
     // In-delivery contracts (3)
-    { num: 'MKT-010', crop_year: '2025/26', code: 'CNLA', cp: 'RPI', mt: 600, delivered: 350, type: 'flat', status: 'in_delivery', price_bu: 14.20, elevator: 'Yorkton', grade: '#1' },
-    { num: 'MKT-011', crop_year: '2025/26', code: 'CWAD', cp: 'G3G', mt: 400, delivered: 150, type: 'basis', status: 'in_delivery', price_bu: null, basis: -0.45, futures_ref: 'MGE May26', pricing_status: 'unpriced', elevator: 'Pasqua', grade: '#1 CWAD' },
-    { num: 'MKT-012', crop_year: '2025/26', code: 'LNSG', cp: 'LGX', mt: 250, delivered: 80, type: 'flat', status: 'in_delivery', price_bu: 0.39, elevator: 'LGX Terminal', grade: '#2' },
+    { num: 'MKT-010', crop_year: '2025', code: 'CNLA', cp: 'RPI', mt: 600, delivered: 350, type: 'flat', status: 'in_delivery', price_bu: 14.20, elevator: 'Yorkton', grade: '#1' },
+    { num: 'MKT-011', crop_year: '2025', code: 'CWAD', cp: 'G3G', mt: 400, delivered: 150, type: 'basis', status: 'in_delivery', price_bu: null, basis: -0.45, futures_ref: 'MGE May26', pricing_status: 'unpriced', elevator: 'Pasqua', grade: '#1 CWAD' },
+    { num: 'MKT-012', crop_year: '2025', code: 'LNSG', cp: 'LGX', mt: 250, delivered: 80, type: 'flat', status: 'in_delivery', price_bu: 0.39, elevator: 'LGX Terminal', grade: '#2' },
     // Executed contracts (3) — not yet started delivery
-    { num: 'MKT-013', crop_year: '2025/26', code: 'NXRA', cp: 'CGI', mt: 300, delivered: 0, type: 'hta', status: 'executed', price_bu: null, futures_ref: 'ICE RS Jul26', futures_price: 16.10, pricing_status: 'unpriced', elevator: 'Regina', grade: '#1', delivery_start: '2026-04-01', delivery_end: '2026-06-30' },
-    { num: 'MKT-014', crop_year: '2025/26', code: 'CWRS', cp: 'BNG', mt: 500, delivered: 0, type: 'flat', status: 'executed', price_bu: 10.00, elevator: 'Altona', grade: '#1 CWRS', delivery_start: '2026-03-15', delivery_end: '2026-05-31' },
-    { num: 'MKT-015', crop_year: '2025/26', code: 'CHKP', cp: 'LDC', mt: 200, delivered: 0, type: 'deferred', status: 'executed', price_bu: 0.43, pricing_status: 'partially_priced', elevator: 'Yorkton', grade: '#1', delivery_start: '2026-04-01', delivery_end: '2026-07-31' },
+    { num: 'MKT-013', crop_year: '2025', code: 'NXRA', cp: 'CGI', mt: 300, delivered: 0, type: 'hta', status: 'executed', price_bu: null, futures_ref: 'ICE RS Jul26', futures_price: 16.10, pricing_status: 'unpriced', elevator: 'Regina', grade: '#1', delivery_start: '2026-04-01', delivery_end: '2026-06-30' },
+    { num: 'MKT-014', crop_year: '2025', code: 'CWRS', cp: 'BNG', mt: 500, delivered: 0, type: 'flat', status: 'executed', price_bu: 10.00, elevator: 'Altona', grade: '#1 CWRS', delivery_start: '2026-03-15', delivery_end: '2026-05-31' },
+    { num: 'MKT-015', crop_year: '2025', code: 'CHKP', cp: 'LDC', mt: 200, delivered: 0, type: 'deferred', status: 'executed', price_bu: 0.43, pricing_status: 'partially_priced', elevator: 'Yorkton', grade: '#1', delivery_start: '2026-04-01', delivery_end: '2026-07-31' },
   ];
 
   let contractCount = 0;

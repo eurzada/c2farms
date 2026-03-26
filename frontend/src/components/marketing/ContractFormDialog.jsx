@@ -16,12 +16,9 @@ const PRICING_TYPES = [
   { value: 'deferred', label: 'Deferred Delivery' },
 ];
 
-// Last 10 crop years: current + 9 past (e.g. 2026/27, 2025/26, … 2017/18)
+// Crop year = the summer the crop was grown (e.g. 2025 = crop grown summer 2025)
 const currentYear = new Date().getFullYear();
-const CROP_YEARS = Array.from({ length: 10 }, (_, i) => {
-  const y = currentYear - i;
-  return `${y}/${String(y + 1).slice(-2)}`;
-});
+const CROP_YEARS = Array.from({ length: 10 }, (_, i) => String(currentYear - i));
 
 const EMPTY = {
   commodity_id: '', counterparty_id: '', crop_year: CROP_YEARS[0], grade: '',

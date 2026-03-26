@@ -236,7 +236,7 @@ export async function previewContractImport(farmId, buffer) {
  * Creates missing counterparties, then upserts MarketingContracts.
  */
 export async function commitContractImport(farmId, contracts, options = {}) {
-  const { cropYear = '2025/26', createCounterparties = true } = options;
+  const { cropYear = '2025', createCounterparties = true } = options;
   const results = { created: 0, updated: 0, counterparties_created: 0, errors: [] };
 
   // Create missing counterparties first
