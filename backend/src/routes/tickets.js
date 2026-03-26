@@ -5,6 +5,7 @@ import { authenticate, requireRole } from '../middleware/auth.js';
 import { previewTicketImport, commitTicketImport } from '../services/ticketImportService.js';
 import { logAudit } from '../services/auditService.js';
 import { resolveInventoryFarm } from '../services/resolveInventoryFarm.js';
+import { backfillTicketContractLinks } from '../services/marketingService.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -355,6 +356,25 @@ router.delete('/:farmId/tickets', authenticate, requireRole('admin'), async (req
     });
 
     res.json({ deleted: result.count });
+  } catch (err) { next(err); }
+});
+
+// POST backfill — link unlinked tickets to marketing contracts by contract_number
+router.post('/:farmId/tickets/backfill-contracts', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const farmId = req.params.farmId;
+    const result = await backfillTicketContractLinks(farmId);
+
+    logAudit({
+      farmId,
+      userId: req.userId,
+      entityType: 'DeliveryTicket',
+      entityId: 'backfill_contracts',
+      action: 'backfill',
+      changes: result,
+    });
+
+    res.json(result);
   } catch (err) { next(err); }
 });
 

@@ -1,5 +1,5 @@
 import prisma from '../config/database.js';
-import { convertBuToKg, convertKgToMt } from './inventoryService.js';
+import { convertBuToKg, convertKgToMt, getMarketLocationMatrix } from './inventoryService.js';
 
 // ─── Conversion Utility ─────────────────────────────────────────────
 
@@ -1067,6 +1067,150 @@ export async function fulfillContract(contractId, data) {
   });
 }
 
+// ─── Group E2: Contract Recalculation ─────────────────────────────────
+
+/**
+ * Recalculate a contract's delivered_mt, remaining_mt, and status from actual data.
+ * Aggregates from three sources:
+ *   1. Delivery records (created during settlement approval)
+ *   2. SettlementLine net_weight_mt via approved settlements linked to this contract
+ *   3. DeliveryTicket net_weight_mt linked to this contract
+ * Uses the maximum of these to handle cases where settlements were linked after approval.
+ * Accepts optional Prisma transaction for use inside $transaction blocks.
+ */
+export async function recalculateContract(contractId, tx = null) {
+  const db = tx || prisma;
+
+  const contract = await db.marketingContract.findUnique({
+    where: { id: contractId },
+  });
+  if (!contract) return null;
+
+  // Source 1: Delivery records (intermediary table, created by approveSettlement)
+  const deliveryAgg = await db.delivery.aggregate({
+    where: { marketing_contract_id: contractId },
+    _sum: { mt_delivered: true },
+  });
+  const deliveryMt = deliveryAgg._sum.mt_delivered || 0;
+
+  // Source 2: SettlementLine net MT from approved settlements linked to this contract
+  const settlementLineAgg = await db.settlementLine.aggregate({
+    where: {
+      settlement: {
+        marketing_contract_id: contractId,
+        status: 'approved',
+      },
+      net_weight_mt: { not: null },
+    },
+    _sum: { net_weight_mt: true },
+  });
+  const settledMt = settlementLineAgg._sum.net_weight_mt || 0;
+
+  // Source 3: DeliveryTicket net MT linked to this contract
+  const ticketAgg = await db.deliveryTicket.aggregate({
+    where: { marketing_contract_id: contractId },
+    _sum: { net_weight_mt: true },
+  });
+  const hauledMt = ticketAgg._sum.net_weight_mt || 0;
+
+  // Use the maximum across all sources as the best available truth
+  const totalDelivered = Math.max(deliveryMt, settledMt, hauledMt);
+
+  const rawRemaining = contract.contracted_mt - totalDelivered;
+  const remaining = rawRemaining < 0.5 ? 0 : rawRemaining; // 0.5 MT tolerance
+
+  // Auto-transition status (only forward, never revert fulfilled/cancelled)
+  let newStatus = contract.status;
+  if (contract.status === 'fulfilled' || contract.status === 'cancelled') {
+    // Don't touch terminal statuses
+  } else if (remaining <= 0 && (contract.status === 'executed' || contract.status === 'in_delivery')) {
+    newStatus = 'delivered';
+  } else if (totalDelivered > 0 && contract.status === 'executed') {
+    newStatus = 'in_delivery';
+  }
+
+  await db.marketingContract.update({
+    where: { id: contractId },
+    data: {
+      delivered_mt: totalDelivered,
+      remaining_mt: remaining,
+      status: newStatus,
+    },
+  });
+
+  return {
+    contract_id: contractId,
+    contract_number: contract.contract_number,
+    delivered_mt: totalDelivered,
+    remaining_mt: remaining,
+    previous_status: contract.status,
+    new_status: newStatus,
+  };
+}
+
+/**
+ * Backfill marketing_contract_id on unlinked DeliveryTickets by matching contract_number.
+ * Returns { linked, unlinked_remaining, contracts_affected }.
+ */
+export async function backfillTicketContractLinks(farmId) {
+  // Build contract_number → id map
+  const contracts = await prisma.marketingContract.findMany({
+    where: { farm_id: farmId },
+    select: { id: true, contract_number: true },
+  });
+  const contractMap = {};
+  for (const c of contracts) {
+    if (c.contract_number) contractMap[c.contract_number] = c.id;
+  }
+
+  // Find unlinked tickets with a contract_number
+  const unlinked = await prisma.deliveryTicket.findMany({
+    where: {
+      farm_id: farmId,
+      marketing_contract_id: null,
+      contract_number: { not: null },
+    },
+    select: { id: true, contract_number: true },
+  });
+
+  let linked = 0;
+  const affectedContractIds = new Set();
+
+  // Batch by contract_number for efficiency
+  const byContractNum = {};
+  for (const t of unlinked) {
+    const num = t.contract_number?.trim();
+    if (!num || !contractMap[num]) continue;
+    if (!byContractNum[num]) byContractNum[num] = [];
+    byContractNum[num].push(t.id);
+  }
+
+  for (const [num, ticketIds] of Object.entries(byContractNum)) {
+    const contractId = contractMap[num];
+    const result = await prisma.deliveryTicket.updateMany({
+      where: { id: { in: ticketIds } },
+      data: { marketing_contract_id: contractId },
+    });
+    linked += result.count;
+    affectedContractIds.add(contractId);
+  }
+
+  // Recalculate affected contracts
+  for (const contractId of affectedContractIds) {
+    await recalculateContract(contractId);
+  }
+
+  const totalUnlinked = await prisma.deliveryTicket.count({
+    where: { farm_id: farmId, marketing_contract_id: null },
+  });
+
+  return {
+    linked,
+    unlinked_remaining: totalUnlinked,
+    contracts_affected: affectedContractIds.size,
+  };
+}
+
 // ─── Group F: Analysis ───────────────────────────────────────────────
 
 /**
@@ -1246,5 +1390,171 @@ export async function getCashFlowProjection(farmId, months = 6) {
       stressed_receipts: stressReceipts,
       stressed_net: stressNet,
     },
+  };
+}
+
+// ─── Spot Inventory Value ────────────────────────────────────────────
+
+const DOCKAGE_FACTOR = 0.98;  // 2% dockage reduction
+const STALE_DAYS = 7;
+
+/**
+ * Resolve the best available spot price for a commodity.
+ * Priority: MarketPrice bid → weighted-average contract price → null
+ */
+function resolveSpotPrice(meta, latestPriceMap, contractAvgMap) {
+  const mp = latestPriceMap[meta.id];
+  const factor = buToMtFactor(meta.lbs_per_bu);
+
+  // Priority 1: MarketPrice bid
+  if (mp?.bid_per_bu) {
+    const daysSince = Math.floor((Date.now() - new Date(mp.price_date).getTime()) / 86400000);
+    return {
+      price_per_bu: mp.bid_per_bu,
+      price_per_mt: mp.bid_per_bu * factor,
+      source: daysSince > STALE_DAYS ? 'market_bid_stale' : 'market_bid',
+      source_detail: mp.buyer_name || 'Market Bid',
+      price_date: mp.price_date,
+      stale: daysSince > STALE_DAYS,
+      days_old: daysSince,
+    };
+  }
+
+  // Priority 2: Weighted average from active contracts
+  const wavg = contractAvgMap[meta.id];
+  if (wavg) {
+    return {
+      price_per_bu: wavg.wavg_price_per_bu,
+      price_per_mt: wavg.wavg_price_per_bu * factor,
+      source: 'contract_avg',
+      source_detail: `Avg of ${wavg.contract_count} contract${wavg.contract_count > 1 ? 's' : ''}`,
+      price_date: null,
+      stale: false,
+      days_old: null,
+    };
+  }
+
+  // Priority 3: No price
+  return {
+    price_per_bu: null,
+    price_per_mt: null,
+    source: 'no_price',
+    source_detail: 'No price data',
+    price_date: null,
+    stale: false,
+    days_old: null,
+  };
+}
+
+/**
+ * Spot inventory valuation matrix: location × commodity with dockage-adjusted values.
+ * Enterprise-view only.
+ */
+export async function getSpotInventoryValue(farmId) {
+  // 1. Get market-purpose inventory by location × commodity
+  const matrix = await getMarketLocationMatrix(farmId);
+  if (!matrix.commodities.length) {
+    return {
+      locations: [], commodities: [], rows: [],
+      totals: {}, grand_total_mt: 0, grand_total_value: 0,
+      dockage_pct: 1 - DOCKAGE_FACTOR, as_of: new Date().toISOString(),
+    };
+  }
+
+  // 2. Get latest market prices (keyed by commodity_id)
+  const latestPrices = await getLatestPrices(farmId);
+  const latestPriceMap = {};
+  for (const p of latestPrices) {
+    latestPriceMap[p.commodity_id] = p;
+  }
+
+  // 3. Weighted-average contract prices as fallback
+  const contractAvgs = await prisma.marketingContract.groupBy({
+    by: ['commodity_id'],
+    where: {
+      farm_id: farmId,
+      status: { in: ['executed', 'in_delivery'] },
+      price_per_bu: { not: null },
+      contracted_mt: { gt: 0 },
+    },
+    _sum: { contracted_mt: true },
+    _count: { id: true },
+  });
+
+  // For weighted avg, we need to compute sum(price * mt) which groupBy can't do,
+  // so fetch the individual contracts for commodities that need fallback
+  const contractAvgMap = {};
+  for (const grp of contractAvgs) {
+    const contracts = await prisma.marketingContract.findMany({
+      where: {
+        farm_id: farmId,
+        commodity_id: grp.commodity_id,
+        status: { in: ['executed', 'in_delivery'] },
+        price_per_bu: { not: null },
+        contracted_mt: { gt: 0 },
+      },
+      select: { price_per_bu: true, contracted_mt: true },
+    });
+    const totalMt = contracts.reduce((s, c) => s + c.contracted_mt, 0);
+    const wavg = contracts.reduce((s, c) => s + c.price_per_bu * c.contracted_mt, 0) / totalMt;
+    contractAvgMap[grp.commodity_id] = {
+      wavg_price_per_bu: wavg,
+      contract_count: contracts.length,
+    };
+  }
+
+  // 4. Resolve prices and build enriched commodity list
+  const commodities = matrix.commodities.map(code => {
+    const meta = matrix.commodityMeta[code];
+    const price = resolveSpotPrice(meta, latestPriceMap, contractAvgMap);
+    return { ...meta, ...price };
+  });
+
+  const priceByCode = {};
+  for (const c of commodities) priceByCode[c.code] = c;
+
+  // 5. Build value matrix rows
+  const rows = matrix.rows.map(r => {
+    const values = {};
+    let totalMt = 0;
+    let totalValue = 0;
+
+    for (const code of matrix.commodities) {
+      const mt = r.values[code] || 0;
+      const priceMt = priceByCode[code]?.price_per_mt;
+      const value = priceMt ? mt * priceMt * DOCKAGE_FACTOR : 0;
+      const bu = mt > 0 && priceByCode[code]?.lbs_per_bu
+        ? mt / (priceByCode[code].lbs_per_bu * 0.45359237 / 1000)
+        : 0;
+      values[code] = { mt, bu, value };
+      totalMt += mt;
+      totalValue += value;
+    }
+
+    return { location: r.location, values, total_mt: totalMt, total_value: totalValue };
+  });
+
+  // 6. Column totals
+  const totals = {};
+  let grandTotalMt = 0;
+  let grandTotalValue = 0;
+  for (const code of matrix.commodities) {
+    const mt = rows.reduce((s, r) => s + (r.values[code]?.mt || 0), 0);
+    const value = rows.reduce((s, r) => s + (r.values[code]?.value || 0), 0);
+    totals[code] = { mt, value };
+    grandTotalMt += mt;
+    grandTotalValue += value;
+  }
+
+  return {
+    locations: matrix.locations,
+    commodities,
+    rows,
+    totals,
+    grand_total_mt: grandTotalMt,
+    grand_total_value: grandTotalValue,
+    dockage_pct: 1 - DOCKAGE_FACTOR,
+    as_of: new Date().toISOString(),
+    period_date: matrix.periodDate,
   };
 }

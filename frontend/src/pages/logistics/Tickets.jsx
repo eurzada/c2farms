@@ -26,6 +26,7 @@ import { useThemeMode } from '../../contexts/ThemeContext';
 import api from '../../services/api';
 import { connectSocket } from '../../services/socket';
 import EditIcon from '@mui/icons-material/Edit';
+import LinkIcon from '@mui/icons-material/Link';
 import TicketImportDialog from '../../components/inventory/TicketImportDialog';
 import TicketEditDialog from '../../components/logistics/TicketEditDialog';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
@@ -154,6 +155,23 @@ export default function Tickets() {
       fetchData();
     } catch (err) {
       setSnack({ open: true, message: extractErrorMessage(err, 'Failed to mark tickets as settled'), severity: 'error' });
+    }
+  };
+
+  const handleBackfillContracts = async () => {
+    const ok = await confirm({
+      title: 'Link Tickets to Contracts',
+      message: 'Match unlinked tickets to marketing contracts by contract number. This will also recalculate contract progress (hauled/remaining/status).',
+      confirmText: 'Link Tickets',
+    });
+    if (!ok) return;
+    try {
+      const res = await api.post(`/api/farms/${currentFarm.id}/tickets/backfill-contracts`);
+      const { linked, unlinked_remaining, contracts_affected } = res.data;
+      setSnack({ open: true, message: `Linked ${linked} tickets to ${contracts_affected} contracts. ${unlinked_remaining} tickets still unlinked.`, severity: 'success' });
+      fetchData();
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to backfill contracts'), severity: 'error' });
     }
   };
 
@@ -462,6 +480,13 @@ export default function Tickets() {
               <ListItemText>CSV</ListItemText>
             </MenuItem>
           </Menu>
+          {isAdmin && (
+            <Tooltip title="Match unlinked tickets to contracts by contract number">
+              <Button variant="outlined" startIcon={<LinkIcon />} onClick={handleBackfillContracts}>
+                Link to Contracts
+              </Button>
+            </Tooltip>
+          )}
           {canEdit && (
             <Button variant="contained" startIcon={<FileUploadIcon />} onClick={() => setImportOpen(true)}>
               Import CSV

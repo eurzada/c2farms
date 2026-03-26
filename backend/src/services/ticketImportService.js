@@ -1,4 +1,5 @@
 import prisma from '../config/database.js';
+import { recalculateContract } from './marketingService.js';
 
 /**
  * Parse Traction Ag CSV export into DeliveryTicket records.
@@ -512,6 +513,14 @@ export async function commitTicketImport(farmId, tickets, resolutions) {
       }
     }
   });
+
+  // Recalculate contracts that had tickets linked during this import
+  const affectedContractIds = new Set(
+    tickets.map(t => t.marketing_contract_id).filter(Boolean)
+  );
+  for (const contractId of affectedContractIds) {
+    await recalculateContract(contractId);
+  }
 
   return results;
 }

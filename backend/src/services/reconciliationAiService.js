@@ -1,4 +1,5 @@
 import prisma from '../config/database.js';
+import { recalculateContract } from './marketingService.js';
 
 /**
  * Reconciliation service for matching settlement lines to delivery tickets.
@@ -717,49 +718,11 @@ export async function approveSettlement(settlementId, userId = null) {
       contractDeliveryMap.set(contractId, prev + mtDelivered);
     }
 
-    // 3. Update MarketingContracts — re-aggregate ALL deliveries per contract
+    // 3. Recalculate MarketingContracts using shared recalc function
     const contractsUpdated = [];
     for (const contractId of contractDeliveryMap.keys()) {
-      const agg = await tx.delivery.aggregate({
-        where: { marketing_contract_id: contractId },
-        _sum: { mt_delivered: true },
-      });
-      const totalDelivered = agg._sum.mt_delivered || 0;
-
-      const contract = await tx.marketingContract.findUnique({
-        where: { id: contractId },
-      });
-      if (!contract) continue;
-
-      const rawRemaining = contract.contracted_mt - totalDelivered;
-      const remaining = rawRemaining < 0.5 ? 0 : rawRemaining; // tolerance for floating-point dust
-
-      // Auto-transition status
-      let newStatus = contract.status;
-      if (totalDelivered > 0 && contract.status === 'executed') {
-        newStatus = 'in_delivery';
-      }
-      if (remaining <= 0 && (contract.status === 'executed' || contract.status === 'in_delivery')) {
-        newStatus = 'delivered';
-      }
-
-      await tx.marketingContract.update({
-        where: { id: contractId },
-        data: {
-          delivered_mt: totalDelivered,
-          remaining_mt: remaining,
-          status: newStatus,
-        },
-      });
-
-      contractsUpdated.push({
-        contract_id: contractId,
-        contract_number: contract.contract_number,
-        delivered_mt: totalDelivered,
-        remaining_mt: remaining,
-        previous_status: contract.status,
-        new_status: newStatus,
-      });
+      const result = await recalculateContract(contractId, tx);
+      if (result) contractsUpdated.push(result);
     }
 
     // 4. Create CashFlowEntry receipts

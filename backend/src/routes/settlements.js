@@ -11,6 +11,7 @@ import { getMonthlyReconciliation } from '../services/monthlyReconService.js';
 import { getSettlementsByFarmUnit, generateFarmUnitExcel } from '../services/farmUnitReportService.js';
 import { getEnterpriseJournal, generateEnterpriseJournalCsv, generateEnterpriseJournalExcel, generateEnterpriseJournalPdf } from '../services/enterpriseJournalService.js';
 import { logAudit } from '../services/auditService.js';
+import { recalculateContract } from '../services/marketingService.js';
 import { broadcastMarketingEvent } from '../socket/handler.js';
 import { getFontPaths } from '../utils/fontPaths.js';
 import { resolveInventoryFarm } from '../services/resolveInventoryFarm.js';
@@ -221,6 +222,7 @@ router.post('/:farmId/settlements/relink-contracts', authenticate, requireRole('
     });
 
     let linked = 0;
+    const affectedContractIds = new Set();
     for (const s of orphans) {
       const contractNum = s.extraction_json?.contract_number;
       if (!contractNum) continue;
@@ -234,10 +236,16 @@ router.post('/:farmId/settlements/relink-contracts', authenticate, requireRole('
           data: { marketing_contract_id: mc.id },
         });
         linked++;
+        affectedContractIds.add(mc.id);
       }
     }
 
-    res.json({ linked, message: `Re-linked ${linked} settlement(s) to existing contracts` });
+    // Recalculate all affected contracts so delivered_mt/remaining_mt/status update
+    for (const contractId of affectedContractIds) {
+      await recalculateContract(contractId);
+    }
+
+    res.json({ linked, contracts_recalculated: affectedContractIds.size, message: `Re-linked ${linked} settlement(s) to existing contracts` });
   } catch (err) { next(err); }
 });
 
@@ -1113,6 +1121,9 @@ router.patch('/:farmId/settlements/:id', authenticate, requireRole('admin', 'man
       }
     }
 
+    // Capture old contract id before update for recalc
+    const oldContractId = settlement.marketing_contract_id;
+
     const updated = await prisma.settlement.update({
       where: { id: req.params.id },
       data,
@@ -1122,6 +1133,12 @@ router.patch('/:farmId/settlements/:id', authenticate, requireRole('admin', 'man
         _count: { select: { lines: true } },
       },
     });
+
+    // Recalculate affected contracts when contract linkage changes
+    if (data.marketing_contract_id !== undefined) {
+      if (oldContractId) await recalculateContract(oldContractId);
+      if (data.marketing_contract_id) await recalculateContract(data.marketing_contract_id);
+    }
 
     res.json({ settlement: updated });
   } catch (err) { next(err); }
@@ -1270,29 +1287,9 @@ router.post('/:farmId/settlements/bulk-unapprove', authenticate, requireRole('ad
       }
     }
 
-    // Re-aggregate contract delivered_mt for all affected contracts
+    // Recalculate all affected contracts
     for (const contractId of contractIdsToReaggregate) {
-      const agg = await prisma.delivery.aggregate({
-        where: { marketing_contract_id: contractId },
-        _sum: { mt_delivered: true },
-      });
-      const totalDelivered = agg._sum.mt_delivered || 0;
-      const contract = await prisma.marketingContract.findUnique({ where: { id: contractId } });
-      if (!contract) continue;
-
-      const rawRemaining = contract.contracted_mt - totalDelivered;
-      const remaining = rawRemaining < 0.5 ? 0 : rawRemaining;
-
-      // Revert status if no longer fully delivered
-      let newStatus = contract.status;
-      if (contract.status === 'delivered' && remaining > 0) {
-        newStatus = totalDelivered > 0 ? 'in_delivery' : 'executed';
-      }
-
-      await prisma.marketingContract.update({
-        where: { id: contractId },
-        data: { delivered_mt: totalDelivered, remaining_mt: remaining, status: newStatus },
-      });
+      await recalculateContract(contractId);
     }
 
     logAudit({
