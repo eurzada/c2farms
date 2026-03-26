@@ -4,6 +4,7 @@ import DarkModeIcon from '@mui/icons-material/DarkMode';
 import LightModeIcon from '@mui/icons-material/LightMode';
 import BusinessIcon from '@mui/icons-material/Business';
 import AddIcon from '@mui/icons-material/Add';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
 import { useAuth } from '../../contexts/AuthContext';
 import { useFarm, ENTERPRISE_ID } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
@@ -15,9 +16,9 @@ const ROLE_COLORS = {
   viewer: 'default',
 };
 
-export default function Header() {
+export default function Header({ onToggleChat, chatOpen }) {
   const { user, logout } = useAuth();
-  const { selectedId, farms, setCurrentFarm, fiscalYear, setFiscalYear, currentRole, isEnterprise, refreshFarms, isAdmin } = useFarm();
+  const { selectedId, farms, setCurrentFarm, fiscalYear, setFiscalYear, currentRole, refreshFarms, isAdmin } = useFarm();
   const { mode, toggleMode } = useThemeMode();
   const [addFarmOpen, setAddFarmOpen] = useState(false);
 
@@ -72,6 +73,21 @@ export default function Header() {
               <MenuItem key={y} value={y}>FY {y}</MenuItem>
             ))}
           </Select>
+
+          <Tooltip title={chatOpen ? 'Close AI Assistant' : 'AI Assistant'}>
+            <IconButton
+              onClick={onToggleChat}
+              size="small"
+              color={chatOpen ? 'primary' : 'default'}
+              sx={{
+                bgcolor: chatOpen ? 'primary.light' : 'transparent',
+                color: chatOpen ? 'white' : 'inherit',
+                '&:hover': { bgcolor: chatOpen ? 'primary.main' : undefined },
+              }}
+            >
+              <SmartToyIcon />
+            </IconButton>
+          </Tooltip>
 
           <IconButton onClick={toggleMode} size="small">
             {mode === 'dark' ? <LightModeIcon /> : <DarkModeIcon />}

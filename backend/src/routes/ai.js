@@ -3,8 +3,11 @@ import prisma from '../config/database.js';
 import { authenticate } from '../middleware/auth.js';
 import { buildFarmContext, contextToTextSummary } from '../services/farmContextService.js';
 import { parseYear } from '../utils/fiscalYear.js';
+import { chat, chatStream, deleteConversation } from '../services/agentService.js';
+import createLogger from '../utils/logger.js';
 
 const router = Router();
+const logger = createLogger('ai-routes');
 
 // GET /:farmId/ai/context/:year — full structured farm context
 router.get('/:farmId/ai/context/:year', authenticate, async (req, res, next) => {
@@ -206,6 +209,101 @@ router.get('/:farmId/ai/conversations/:id', authenticate, async (req, res, next)
 
     res.json(conversation);
   } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Agent Chat (Claude tool-use) ───
+
+// POST /:farmId/ai/chat — synchronous agent chat
+router.post('/:farmId/ai/chat', authenticate, async (req, res, next) => {
+  try {
+    const { farmId } = req.params;
+    const { message, conversation_id, page_context, fiscal_year } = req.body;
+
+    if (!message) return res.status(400).json({ error: 'message is required' });
+
+    const result = await chat(farmId, req.userId, conversation_id, message, {
+      pageContext: page_context,
+      fiscalYear: fiscal_year ? parseYear(fiscal_year) : undefined,
+    });
+
+    res.json(result);
+  } catch (err) {
+    // Surface agent errors clearly
+    if (err.message?.includes('API') || err.message?.includes('Anthropic')) {
+      return res.status(502).json({ error: err.message });
+    }
+    next(err);
+  }
+});
+
+// POST /:farmId/ai/chat/stream — SSE streaming agent chat
+router.post('/:farmId/ai/chat/stream', authenticate, async (req, res) => {
+  const { farmId } = req.params;
+  const { message, conversation_id, page_context, fiscal_year } = req.body;
+
+  if (!message) return res.status(400).json({ error: 'message is required' });
+
+  // Set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+  res.flushHeaders();
+
+  // Handle client disconnect
+  let closed = false;
+  req.on('close', () => { closed = true; });
+
+  const send = (type, data) => {
+    if (closed) return;
+    res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+  };
+
+  try {
+    await chatStream(
+      farmId,
+      req.userId,
+      conversation_id,
+      message,
+      {
+        onToolCall: (toolName, input) => {
+          send('tool_call', { tool: toolName, input });
+        },
+        onText: (chunk) => {
+          send('text', { content: chunk });
+        },
+        onDone: (result) => {
+          send('done', result);
+          if (!closed) res.end();
+        },
+        onError: (err) => {
+          send('error', { message: err.message || 'Agent error' });
+          if (!closed) res.end();
+        },
+      },
+      {
+        pageContext: page_context,
+        fiscalYear: fiscal_year ? parseYear(fiscal_year) : undefined,
+      }
+    );
+  } catch (err) {
+    logger.error('Agent stream fatal error', err);
+    send('error', { message: err.message || 'Internal error' });
+    if (!closed) res.end();
+  }
+});
+
+// DELETE /:farmId/ai/conversations/:id — delete a conversation
+router.delete('/:farmId/ai/conversations/:id', authenticate, async (req, res, next) => {
+  try {
+    const result = await deleteConversation(req.params.id, req.userId);
+    res.json(result);
+  } catch (err) {
+    if (err.message === 'Conversation not found') {
+      return res.status(404).json({ error: err.message });
+    }
     next(err);
   }
 });
