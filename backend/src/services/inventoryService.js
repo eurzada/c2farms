@@ -885,3 +885,72 @@ export async function getLocationCommodityMatrix(farmId) {
 
   return { locations, commodities, rows, totals, grandTotal };
 }
+
+/**
+ * Market-purpose-only location × commodity matrix with commodity metadata.
+ * Used by spot inventory valuation — only values grain in market-purpose bins.
+ */
+export async function getMarketLocationMatrix(farmId) {
+  const latestPeriod = await getLatestPeriod(farmId);
+  if (!latestPeriod) return { locations: [], commodities: [], rows: [], totals: {}, grandTotal: 0, commodityMeta: {} };
+
+  const binCounts = await prisma.binCount.findMany({
+    where: {
+      farm_id: farmId,
+      count_period_id: latestPeriod.id,
+      bin: { purpose: 'market' },
+    },
+    include: {
+      commodity: true,
+      bin: { include: { location: true } },
+    },
+  });
+
+  const matrix = {};          // { locationName: { commodityCode: kgTotal } }
+  const commoditySet = new Map();  // code → { id, name, code, lbs_per_bu }
+  const locationSet = new Set();
+
+  for (const bc of binCounts) {
+    if (!bc.commodity || bc.commodity.code === 'FERT') continue;
+    if (!bc.bin?.location) continue;
+
+    const loc = bc.bin.location.name;
+    const code = bc.commodity.code;
+    locationSet.add(loc);
+    commoditySet.set(code, {
+      id: bc.commodity.id,
+      name: bc.commodity.name,
+      code,
+      lbs_per_bu: bc.commodity.lbs_per_bu,
+    });
+
+    if (!matrix[loc]) matrix[loc] = {};
+    matrix[loc][code] = (matrix[loc][code] || 0) + bc.kg;
+  }
+
+  const locations = [...locationSet].sort();
+  const codes = [...commoditySet.keys()].sort();
+
+  const rows = locations.map(loc => {
+    const values = {};
+    let total = 0;
+    for (const code of codes) {
+      const mt = convertKgToMt(matrix[loc]?.[code] || 0);
+      values[code] = mt;
+      total += mt;
+    }
+    return { location: loc, values, total };
+  });
+
+  const totals = {};
+  let grandTotal = 0;
+  for (const code of codes) {
+    totals[code] = rows.reduce((s, r) => s + (r.values[code] || 0), 0);
+    grandTotal += totals[code];
+  }
+
+  // commodityMeta keyed by code for easy join with price data
+  const commodityMeta = Object.fromEntries(commoditySet);
+
+  return { locations, commodities: codes, rows, totals, grandTotal, commodityMeta, periodDate: latestPeriod.period_date };
+}
