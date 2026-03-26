@@ -40,6 +40,8 @@ import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { extractErrorMessage } from '../../utils/errorHelpers';
 import { fmt, fmtDollar } from '../../utils/formatting';
 import { useMarketingSocket } from '../../hooks/useMarketingSocket';
+import ContractCellEditor from '../../components/logistics/ContractCellEditor';
+import ContractMatchSuggestionsDialog from '../../components/logistics/ContractMatchSuggestionsDialog';
 
 const FLAG_COLORS = { ok: 'success', warning: 'warning', error: 'error' };
 
@@ -109,6 +111,7 @@ export default function Settlements() {
   const [journalContractFilter, setJournalContractFilter] = useState('');
   const [journalPeriodFilter, setJournalPeriodFilter] = useState('');
   const [journalExportedFilter, setJournalExportedFilter] = useState('');
+  const [suggestOpen, setSuggestOpen] = useState(false);
   const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
   const fetchData = useCallback(() => {
@@ -124,6 +127,14 @@ export default function Settlements() {
   }, [currentFarm, statusFilter, fiscalYearFilter]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Eagerly fetch contracts list for inline grid editing
+  useEffect(() => {
+    if (!currentFarm) return;
+    api.get(`/api/farms/${currentFarm.id}/marketing/contracts?limit=500`)
+      .then(res => setContractsList(res.data.contracts || []))
+      .catch(() => {});
+  }, [currentFarm]);
 
   // Real-time updates via socket
   useMarketingSocket(currentFarm?.id, useCallback((event) => {
@@ -323,6 +334,37 @@ export default function Settlements() {
       setRelinking(false);
     }
   };
+
+  const handleRelinkFromToolbar = async () => {
+    setRelinking(true);
+    try {
+      const res = await api.post(`/api/farms/${currentFarm.id}/settlements/relink-contracts`);
+      setSnack({ open: true, message: res.data.message, severity: res.data.linked > 0 ? 'success' : 'info' });
+      if (res.data.linked > 0) fetchData();
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to re-link contracts'), severity: 'error' });
+    } finally {
+      setRelinking(false);
+    }
+  };
+
+  const handleContractCellEdit = useCallback(async (params) => {
+    if (params.colDef.headerName !== 'Contract #') return;
+    const { data, newValue } = params;
+    if (!newValue || newValue === params.oldValue) return;
+    try {
+      await api.patch(`/api/farms/${currentFarm.id}/settlements/${data.id}`, {
+        contract_number: newValue,
+      });
+      setSnack({ open: true, message: `Linked to contract ${newValue}`, severity: 'success' });
+      fetchData();
+    } catch (err) {
+      setSnack({ open: true, message: extractErrorMessage(err, 'Failed to link contract'), severity: 'error' });
+      fetchData();
+    }
+  }, [currentFarm, fetchData]);
+
+  const gridComponents = useMemo(() => ({ ContractCellEditor }), []);
 
   const fetchReconData = async (from, to) => {
     setReconLoading(true);
@@ -577,6 +619,8 @@ export default function Settlements() {
     }
   };
 
+  const unlinkedCount = useMemo(() => settlements.filter(s => !s.marketing_contract_id).length, [settlements]);
+
   const columnDefs = useMemo(() => [
     {
       headerCheckboxSelection: true,
@@ -607,8 +651,20 @@ export default function Settlements() {
     { field: 'counterparty.name', headerName: 'Buyer', minWidth: 120, flex: 1.5 },
     { field: 'buyer_format', headerName: 'Format', minWidth: 80, flex: 0.8, valueFormatter: p => p.value?.toUpperCase() || '' },
     {
-      headerName: 'Contract #', minWidth: 110, flex: 1.2,
+      headerName: 'Contract #', minWidth: 130, flex: 1.4,
       valueGetter: p => p.data.marketing_contract?.contract_number || p.data.extraction_json?.contract_number || '',
+      cellStyle: p => {
+        if (p.data.marketing_contract_id) return null;
+        if (p.data.extraction_json?.contract_number) {
+          return { backgroundColor: mode === 'dark' ? '#4e3600' : '#fff3e0', fontWeight: 600 };
+        }
+        return { backgroundColor: mode === 'dark' ? '#3a1b1b' : '#ffebee', fontStyle: 'italic' };
+      },
+      editable: p => canEdit && !p.data.marketing_contract_id,
+      cellEditor: 'ContractCellEditor',
+      cellEditorParams: { contracts: contractsList },
+      cellEditorPopup: true,
+      singleClickEdit: true,
     },
     {
       headerName: 'Commodity', minWidth: 100, flex: 1,
@@ -657,7 +713,7 @@ export default function Settlements() {
         </Stack>
       ),
     },
-  ], [navigate, openDetail, isAdmin]);
+  ], [navigate, openDetail, isAdmin, mode, canEdit, contractsList]);
 
   return (
     <Box>
@@ -666,6 +722,11 @@ export default function Settlements() {
           <Typography variant="h5" sx={{ fontWeight: 600 }}>Settlements</Typography>
           <Typography variant="body2" color="text.secondary">
             {total} settlement{total !== 1 ? 's' : ''}{totalMt > 0 ? ` | ${fmt(totalMt)} MT delivered` : ''}
+            {unlinkedCount > 0 && (
+              <Typography component="span" variant="body2" color="warning.main" sx={{ ml: 0.5, fontWeight: 600 }}>
+                | {unlinkedCount} unlinked
+              </Typography>
+            )}
           </Typography>
         </Box>
         <Stack direction="row" spacing={1}>
@@ -714,6 +775,34 @@ export default function Settlements() {
               </Button>
             </>
           )}
+          {canEdit && unlinkedCount > 0 && (
+            <>
+              <Tooltip title="Re-link orphaned settlements to contracts that now exist in the system">
+                <Button
+                  variant="outlined"
+                  color="warning"
+                  size="small"
+                  startIcon={relinking ? <CircularProgress size={16} /> : <LinkIcon />}
+                  onClick={handleRelinkFromToolbar}
+                  disabled={relinking}
+                >
+                  Re-link
+                  <Chip label={unlinkedCount} size="small" color="warning" sx={{ ml: 0.5, height: 20, minWidth: 24 }} />
+                </Button>
+              </Tooltip>
+              <Tooltip title="AI-assisted fuzzy matching for settlements that can't be exactly matched">
+                <Button
+                  variant="outlined"
+                  color="info"
+                  size="small"
+                  startIcon={<AutoFixHighIcon />}
+                  onClick={() => setSuggestOpen(true)}
+                >
+                  Suggest Matches
+                </Button>
+              </Tooltip>
+            </>
+          )}
           <Tooltip title="Missing tickets, settlements, or contracts — what needs attention">
             <Button variant="outlined" color="warning" startIcon={<SummarizeIcon />} onClick={handleReconGapReport}>
               Missing Items
@@ -758,6 +847,7 @@ export default function Settlements() {
           ref={gridRef}
           rowData={settlements}
           columnDefs={columnDefs}
+          components={gridComponents}
           defaultColDef={{ sortable: true, resizable: true, filter: true, flex: 1 }}
           animateRows
           rowSelection="multiple"
@@ -766,6 +856,7 @@ export default function Settlements() {
           ensureDomOrder
           getRowId={p => p.data?.id}
           onSelectionChanged={onSelectionChanged}
+          onCellValueChanged={handleContractCellEdit}
           onRowDoubleClicked={p => openDetail(p.data.id)}
           onGridReady={(params) => {
             const s = savedState.current;
@@ -2009,6 +2100,12 @@ export default function Settlements() {
         </Alert>
       </Snackbar>
       <ConfirmDialog {...confirmDialogProps} />
+      <ContractMatchSuggestionsDialog
+        open={suggestOpen}
+        onClose={() => setSuggestOpen(false)}
+        farmId={currentFarm?.id}
+        onLinked={fetchData}
+      />
     </Box>
   );
 }

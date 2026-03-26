@@ -682,34 +682,39 @@ export async function approveSettlement(settlementId, userId = null) {
 
     for (const line of lines) {
       const ticket = line.delivery_ticket;
-      if (!ticket?.marketing_contract_id) continue;
+      // Use ticket's contract link, fall back to settlement's contract link
+      const contractId = ticket?.marketing_contract_id || settlementData.marketing_contract_id;
+      if (!contractId) continue;
 
       // Prevent double-counting: skip if Delivery already exists for this ticket + contract
+      const ticketNum = ticket?.ticket_number || line.ticket_number_on_settlement;
       const existing = await tx.delivery.findFirst({
         where: {
-          marketing_contract_id: ticket.marketing_contract_id,
-          ticket_number: ticket.ticket_number,
+          marketing_contract_id: contractId,
+          ticket_number: ticketNum,
           farm_id: farmId,
         },
       });
       if (existing) continue;
 
-      const mtDelivered = line.net_weight_mt || ticket.net_weight_mt;
+      const mtDelivered = line.net_weight_mt || ticket?.net_weight_mt;
+      if (!mtDelivered) continue;
+
       await tx.delivery.create({
         data: {
           farm_id: farmId,
-          marketing_contract_id: ticket.marketing_contract_id,
+          marketing_contract_id: contractId,
           mt_delivered: mtDelivered,
-          delivery_date: ticket.delivery_date,
-          ticket_number: ticket.ticket_number,
+          delivery_date: ticket?.delivery_date || line.delivery_date,
+          ticket_number: ticketNum,
           notes: 'Auto-created from settlement approval',
         },
       });
       deliveriesCreated++;
 
       // Track per-contract MT for cash flow split
-      const prev = contractDeliveryMap.get(ticket.marketing_contract_id) || 0;
-      contractDeliveryMap.set(ticket.marketing_contract_id, prev + mtDelivered);
+      const prev = contractDeliveryMap.get(contractId) || 0;
+      contractDeliveryMap.set(contractId, prev + mtDelivered);
     }
 
     // 3. Update MarketingContracts — re-aggregate ALL deliveries per contract

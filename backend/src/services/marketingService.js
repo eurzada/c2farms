@@ -672,14 +672,17 @@ export async function getContractFulfillment(farmId) {
     }
   }
 
-  // Get settled Net MT per contract from SettlementLine (matched/manual lines only)
+  // Get settled Net MT per contract from SettlementLine
+  // Two paths: (A) indirect via DeliveryTicket.marketing_contract_id,
+  //            (B) direct via Settlement.marketing_contract_id
   const settledByContract = {};
   if (contractIds.length > 0) {
-    // SettlementLines linked via delivery_ticket → marketing_contract_id
+    // Path A: SettlementLines linked via delivery_ticket → marketing_contract_id
     const settledAggs = await prisma.settlementLine.groupBy({
       by: ['delivery_ticket_id'],
       where: {
         match_status: { in: ['matched', 'manual'] },
+        settlement: { status: 'approved' },
         delivery_ticket: {
           farm_id: farmId,
           marketing_contract_id: { in: contractIds },
@@ -688,7 +691,6 @@ export async function getContractFulfillment(farmId) {
       _sum: { net_weight_mt: true },
     });
 
-    // Map back to contract via ticket's marketing_contract_id
     if (settledAggs.length > 0) {
       const ticketIds = settledAggs.map(a => a.delivery_ticket_id).filter(Boolean);
       const ticketContracts = await prisma.deliveryTicket.findMany({
@@ -702,6 +704,38 @@ export async function getContractFulfillment(farmId) {
         const cid = ticketToContract[agg.delivery_ticket_id];
         if (!cid) continue;
         settledByContract[cid] = (settledByContract[cid] || 0) + (agg._sum.net_weight_mt || 0);
+      }
+    }
+
+    // Path B: SettlementLines via Settlement.marketing_contract_id (direct link)
+    // Catches settlements where delivery tickets weren't pre-linked to the contract
+    const directAggs = await prisma.settlementLine.groupBy({
+      by: ['settlement_id'],
+      where: {
+        settlement: {
+          farm_id: farmId,
+          marketing_contract_id: { in: contractIds },
+          status: 'approved',
+        },
+      },
+      _sum: { net_weight_mt: true },
+    });
+
+    if (directAggs.length > 0) {
+      const settlementIds = directAggs.map(a => a.settlement_id);
+      const settlementContracts = await prisma.settlement.findMany({
+        where: { id: { in: settlementIds } },
+        select: { id: true, marketing_contract_id: true },
+      });
+      const settlementToContract = {};
+      for (const s of settlementContracts) settlementToContract[s.id] = s.marketing_contract_id;
+
+      for (const agg of directAggs) {
+        const cid = settlementToContract[agg.settlement_id];
+        if (!cid) continue;
+        const directMt = agg._sum.net_weight_mt || 0;
+        // Use the larger of the two paths to avoid double-counting
+        settledByContract[cid] = Math.max(settledByContract[cid] || 0, directMt);
       }
     }
   }

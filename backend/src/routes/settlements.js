@@ -241,6 +241,146 @@ router.post('/:farmId/settlements/relink-contracts', authenticate, requireRole('
   } catch (err) { next(err); }
 });
 
+// POST suggest fuzzy contract matches for orphaned settlements
+router.post('/:farmId/settlements/suggest-contract-matches', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const farmId = req.params.farmId;
+
+    // Get orphaned settlements with extracted contract numbers
+    const orphans = await prisma.settlement.findMany({
+      where: { farm_id: farmId, marketing_contract_id: null },
+      select: {
+        id: true,
+        settlement_number: true,
+        settlement_date: true,
+        total_amount: true,
+        counterparty_id: true,
+        extraction_json: true,
+        counterparty: { select: { name: true } },
+      },
+    });
+
+    const withContractNum = orphans.filter(s => s.extraction_json?.contract_number);
+    if (withContractNum.length === 0) {
+      return res.json({ suggestions: [], message: 'No orphaned settlements with contract numbers found' });
+    }
+
+    // Get all contracts for this farm
+    const contracts = await prisma.marketingContract.findMany({
+      where: { farm_id: farmId },
+      select: {
+        id: true,
+        contract_number: true,
+        counterparty_id: true,
+        contracted_mt: true,
+        status: true,
+        counterparty: { select: { name: true } },
+        commodity: { select: { name: true } },
+      },
+    });
+
+    function normalize(s) {
+      return String(s).replace(/[-\s_.]/g, '').toUpperCase().replace(/^0+/, '');
+    }
+
+    function levenshtein(a, b) {
+      const m = a.length, n = b.length;
+      if (m === 0) return n;
+      if (n === 0) return m;
+      const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+      for (let i = 0; i <= m; i++) dp[i][0] = i;
+      for (let j = 0; j <= n; j++) dp[0][j] = j;
+      for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+          dp[i][j] = a[i - 1] === b[j - 1]
+            ? dp[i - 1][j - 1]
+            : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+        }
+      }
+      return dp[m][n];
+    }
+
+    // Group orphans by extracted contract number
+    const groups = {};
+    for (const s of withContractNum) {
+      const key = String(s.extraction_json.contract_number).trim();
+      if (!groups[key]) groups[key] = { extracted_contract_number: key, settlements: [] };
+      groups[key].settlements.push(s);
+    }
+
+    const suggestions = [];
+    for (const group of Object.values(groups)) {
+      const extracted = group.extracted_contract_number;
+      const normExtracted = normalize(extracted);
+      const settlementCounterpartyId = group.settlements[0]?.counterparty_id;
+
+      // Check if exact match exists (already linked by relink) — skip
+      const exactMatch = contracts.find(c => c.contract_number === extracted);
+      if (exactMatch) continue; // relink would handle this
+
+      const matches = [];
+      for (const c of contracts) {
+        const normContract = normalize(c.contract_number);
+        let score = 0;
+        let reason = '';
+
+        if (normExtracted === normContract) {
+          score = 0.95;
+          reason = 'Exact match after normalization';
+        } else if (normContract.includes(normExtracted) || normExtracted.includes(normContract)) {
+          score = 0.75;
+          reason = 'Substring match';
+        } else {
+          const dist = levenshtein(normExtracted, normContract);
+          if (dist <= 2) {
+            score = 0.6 - (dist * 0.1);
+            reason = `Near match (edit distance ${dist})`;
+          }
+        }
+
+        if (score > 0) {
+          // Boost if same counterparty
+          if (settlementCounterpartyId && c.counterparty_id === settlementCounterpartyId) {
+            score = Math.min(1, score + 0.15);
+            reason += ' + same buyer';
+          }
+          matches.push({
+            contract_id: c.id,
+            contract_number: c.contract_number,
+            counterparty: c.counterparty?.name,
+            commodity: c.commodity?.name,
+            contracted_mt: c.contracted_mt,
+            confidence: score >= 0.85 ? 'high' : score >= 0.6 ? 'medium' : 'low',
+            score,
+            reason,
+          });
+        }
+      }
+
+      matches.sort((a, b) => b.score - a.score);
+
+      if (matches.length > 0) {
+        suggestions.push({
+          extracted_contract_number: extracted,
+          buyer: group.settlements[0]?.counterparty?.name || '',
+          settlement_ids: group.settlements.map(s => s.id),
+          settlement_count: group.settlements.length,
+          total_amount: group.settlements.reduce((sum, s) => sum + (s.total_amount || 0), 0),
+          suggestions: matches.slice(0, 3),
+        });
+      }
+    }
+
+    suggestions.sort((a, b) => (b.suggestions[0]?.score || 0) - (a.suggestions[0]?.score || 0));
+
+    res.json({
+      suggestions,
+      total_orphaned: withContractNum.length,
+      total_with_suggestions: suggestions.reduce((n, g) => n + g.settlement_count, 0),
+    });
+  } catch (err) { next(err); }
+});
+
 // GET monthly three-way reconciliation report
 router.get('/:farmId/settlements/reports/monthly-recon', authenticate, async (req, res, next) => {
   try {
@@ -1019,13 +1159,8 @@ router.post('/:farmId/settlements/bulk-approve', authenticate, requireRole('admi
           },
         });
 
-        await prisma.settlement.update({
-          where: { id },
-          data: {
-            status: 'approved',
-            notes: notes || 'Approved — prior year cutoff',
-          },
-        });
+        // Run full approval pipeline (Delivery records, MarketingContract updates, CashFlowEntry)
+        await approveSettlement(id, req.userId);
         results.approved++;
       } catch (err) {
         results.errors.push(`${id}: ${err.message}`);
