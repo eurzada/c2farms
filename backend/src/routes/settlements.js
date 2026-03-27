@@ -231,10 +231,33 @@ router.post('/:farmId/settlements/relink-contracts', authenticate, requireRole('
         select: { id: true },
       });
       if (mc) {
+        // Link settlement to contract
         await prisma.settlement.update({
           where: { id: s.id },
           data: { marketing_contract_id: mc.id },
         });
+
+        // Cascade to matched tickets — apply contract + buyer from the contract
+        const lines = await prisma.settlementLine.findMany({
+          where: { settlement_id: s.id, delivery_ticket_id: { not: null } },
+          select: { delivery_ticket_id: true },
+        });
+        const ticketIds = lines.map(l => l.delivery_ticket_id);
+        if (ticketIds.length > 0) {
+          const contract = await prisma.marketingContract.findUnique({
+            where: { id: mc.id },
+            select: { id: true, counterparty_id: true, commodity_id: true },
+          });
+          await prisma.deliveryTicket.updateMany({
+            where: { id: { in: ticketIds } },
+            data: {
+              marketing_contract_id: mc.id,
+              ...(contract.counterparty_id && { counterparty_id: contract.counterparty_id }),
+              ...(contract.commodity_id && { commodity_id: contract.commodity_id }),
+            },
+          });
+        }
+
         linked++;
         affectedContractIds.add(mc.id);
       }
@@ -1134,8 +1157,31 @@ router.patch('/:farmId/settlements/:id', authenticate, requireRole('admin', 'man
       },
     });
 
-    // Recalculate affected contracts when contract linkage changes
+    // When contract linkage changes, cascade to matched tickets and recalculate
     if (data.marketing_contract_id !== undefined) {
+      // Cascade contract + buyer to matched tickets
+      if (data.marketing_contract_id) {
+        const lines = await prisma.settlementLine.findMany({
+          where: { settlement_id: req.params.id, delivery_ticket_id: { not: null } },
+          select: { delivery_ticket_id: true },
+        });
+        const ticketIds = lines.map(l => l.delivery_ticket_id);
+        if (ticketIds.length > 0) {
+          const contract = await prisma.marketingContract.findUnique({
+            where: { id: data.marketing_contract_id },
+            select: { id: true, counterparty_id: true, commodity_id: true },
+          });
+          await prisma.deliveryTicket.updateMany({
+            where: { id: { in: ticketIds } },
+            data: {
+              marketing_contract_id: data.marketing_contract_id,
+              ...(contract?.counterparty_id && { counterparty_id: contract.counterparty_id }),
+              ...(contract?.commodity_id && { commodity_id: contract.commodity_id }),
+            },
+          });
+        }
+      }
+
       if (oldContractId) await recalculateContract(oldContractId);
       if (data.marketing_contract_id) await recalculateContract(data.marketing_contract_id);
     }
