@@ -376,19 +376,9 @@ export default function MarketingContracts() {
     { field: 'cop_per_mt', headerName: 'COP/MT', width: 90, valueFormatter: p => p.value ? `$${fmt(p.value)}` : '—', hide: isHidden('cop_per_mt') },
     { field: 'notes', headerName: 'Notes', width: 150, flex: 1, hide: isHidden('notes') },
     {
-      headerName: 'Doc', width: 70, sortable: false, filter: false,
+      headerName: 'Doc', width: 100, sortable: false, filter: false,
       cellRenderer: p => {
         if (!p.data) return null;
-        if (p.data.contract_document_url) {
-          return (
-            <Tooltip title="View contract document">
-              <IconButton size="small" href={p.data.contract_document_url} target="_blank">
-                <DescriptionIcon fontSize="small" color="primary" />
-              </IconButton>
-            </Tooltip>
-          );
-        }
-        if (!canEdit) return null;
         const handleUpload = async (e) => {
           const file = e.target.files[0];
           if (!file) return;
@@ -401,6 +391,36 @@ export default function MarketingContracts() {
             setSnack({ open: true, message: extractErrorMessage(err, 'Failed to upload document'), severity: 'error' });
           }
         };
+        const handleDelete = async () => {
+          try {
+            await api.delete(`/api/farms/${currentFarm.id}/marketing/contracts/${p.data.id}/document`);
+            fetchData();
+          } catch (err) {
+            setSnack({ open: true, message: extractErrorMessage(err, 'Failed to remove document'), severity: 'error' });
+          }
+        };
+        if (p.data.contract_document_url) {
+          return (
+            <Stack direction="row" spacing={0}>
+              <Tooltip title="View document">
+                <IconButton size="small" href={p.data.contract_document_url} target="_blank">
+                  <DescriptionIcon fontSize="small" color="primary" />
+                </IconButton>
+              </Tooltip>
+              {canEdit && (
+                <>
+                  <input id={`doc-reupload-${p.data.id}`} type="file" accept=".pdf,.doc,.docx,.jpg,.png" hidden onChange={handleUpload} />
+                  <Tooltip title="Replace document">
+                    <IconButton size="small" onClick={() => document.getElementById(`doc-reupload-${p.data.id}`)?.click()}>
+                      <UploadFileIcon fontSize="small" color="action" />
+                    </IconButton>
+                  </Tooltip>
+                </>
+              )}
+            </Stack>
+          );
+        }
+        if (!canEdit) return null;
         return (
           <>
             <input id={`doc-upload-${p.data.id}`} type="file" accept=".pdf,.doc,.docx,.jpg,.png" hidden onChange={handleUpload} />
