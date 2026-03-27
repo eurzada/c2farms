@@ -38,6 +38,7 @@ import mobileTicketRoutes from './routes/mobileTickets.js';
 import logisticsDashboardRoutes from './routes/logisticsDashboard.js';
 import labourRoutes, { labourGeneralRouter } from './routes/labour.js';
 import terminalRoutes from './routes/terminal.js';
+import dispatchRoutes from './routes/dispatch.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { authenticate, requireFarmAccess, requireModule } from './middleware/auth.js';
 import activityRoutes from './routes/activity.js';
@@ -193,6 +194,7 @@ app.use('/api/farms/:farmId/settlements', authenticate, requireModule('logistics
 app.use('/api/farms/:farmId/logistics', authenticate, requireModule('logistics'));
 app.use('/api/farms', ticketRoutes);
 app.use('/api/farms', settlementRoutes);
+app.use('/api/farms', dispatchRoutes);
 app.use('/api/farms', mobileTicketRoutes);
 app.use('/api/farms', logisticsDashboardRoutes);
 
