@@ -10,6 +10,10 @@ services:
     buildCommand: npm run build
     startCommand: npm run start
     healthCheckPath: /api/health
+    disk:
+      name: c2farms-uploads
+      mountPath: /opt/render/project/src/backend/uploads
+      sizeGB: 1
     envVars:
       - key: DATABASE_URL
         fromDatabase:
