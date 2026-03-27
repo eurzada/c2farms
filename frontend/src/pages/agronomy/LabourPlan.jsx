@@ -130,7 +130,6 @@ export default function LabourPlan() {
         avg_wage: Number(plan.avg_wage),
         fuel_rate_per_acre: Number(plan.fuel_rate_per_acre) || 0,
         fuel_cost_per_litre: Number(plan.fuel_cost_per_litre) || 1,
-        total_acres: plan.total_acres,
         notes: plan.notes,
       });
       await api.put(`/api/farms/${currentFarm.id}/labour/plan/${plan.id}/seasons`, {
@@ -339,15 +338,6 @@ export default function LabourPlan() {
             onChange={e => updatePlanField('avg_wage', e.target.value)}
             disabled={!isEditable}
             InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment>, endAdornment: <InputAdornment position="end">/hr</InputAdornment> }}
-          />
-          <TextField
-            label="Total Acres"
-            type="number"
-            size="small"
-            sx={{ width: 130 }}
-            value={plan.total_acres}
-            onChange={e => updatePlanField('total_acres', parseInt(e.target.value) || 0)}
-            disabled={!isEditable}
           />
           <TextField
             label="Fuel $/Acre"

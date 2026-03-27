@@ -89,7 +89,6 @@ export default function ProductLibrary({ year: externalYear }) {
             <InputLabel>Year</InputLabel>
             <Select value={year} label="Year" onChange={e => setYear(e.target.value)}>
               <MenuItem value={2026}>2026</MenuItem>
-              <MenuItem value={2025}>2025</MenuItem>
             </Select>
           </FormControl>
         )}

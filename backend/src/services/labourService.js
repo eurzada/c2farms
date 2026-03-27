@@ -129,14 +129,13 @@ export async function createPlan(farmId, fiscalYear, avgWage) {
 }
 
 export async function updatePlan(planId, data) {
-  const { avg_wage, fuel_rate_per_acre, fuel_cost_per_litre, notes, status, total_acres } = data;
+  const { avg_wage, fuel_rate_per_acre, fuel_cost_per_litre, notes, status } = data;
   const updateData = {};
   if (avg_wage !== undefined) updateData.avg_wage = avg_wage;
   if (fuel_rate_per_acre !== undefined) updateData.fuel_rate_per_acre = fuel_rate_per_acre;
   if (fuel_cost_per_litre !== undefined) updateData.fuel_cost_per_litre = fuel_cost_per_litre;
   if (notes !== undefined) updateData.notes = notes;
   if (status !== undefined) updateData.status = status;
-  if (total_acres !== undefined) updateData.total_acres = total_acres;
 
   return prisma.labourPlan.update({
     where: { id: planId },

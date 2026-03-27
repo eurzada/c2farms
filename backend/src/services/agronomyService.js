@@ -392,25 +392,68 @@ export async function getCropOptions() {
   return { used: usedNames, all: [...usedNames, ...remaining] };
 }
 
+// ─── Sync Assumption Acres ───────────────────────────────────────────
+
+async function syncAssumptionAcres(planId) {
+  const plan = await prisma.agroPlan.findUnique({
+    where: { id: planId },
+    select: { farm_id: true, fiscal_year: true },
+  });
+  if (!plan) return;
+
+  const allocs = await prisma.cropAllocation.findMany({
+    where: { plan_id: planId },
+    select: { acres: true },
+  });
+  const totalAcres = allocs.reduce((sum, a) => sum + (a.acres || 0), 0);
+
+  await prisma.assumption.upsert({
+    where: { farm_id_fiscal_year: { farm_id: plan.farm_id, fiscal_year: plan.fiscal_year } },
+    update: { total_acres: totalAcres },
+    create: { farm_id: plan.farm_id, fiscal_year: plan.fiscal_year, total_acres: totalAcres, start_month: 'Nov' },
+  });
+
+  log.info(`Synced Assumption acres for farm=${plan.farm_id} FY${plan.fiscal_year}: ${totalAcres}`);
+}
+
 // ─── Allocation CRUD ────────────────────────────────────────────────
 
 export async function upsertAllocation(planId, data) {
   const { id, ...fields } = data;
+  let alloc;
   if (id) {
-    return prisma.cropAllocation.update({
+    alloc = await prisma.cropAllocation.update({
       where: { id },
       data: fields,
       include: { inputs: { orderBy: { sort_order: 'asc' } } },
     });
+  } else {
+    alloc = await prisma.cropAllocation.create({
+      data: { plan_id: planId, ...fields },
+      include: { inputs: { orderBy: { sort_order: 'asc' } } },
+    });
   }
-  return prisma.cropAllocation.create({
-    data: { plan_id: planId, ...fields },
-    include: { inputs: { orderBy: { sort_order: 'asc' } } },
-  });
+
+  // Sync Assumption.total_acres whenever allocation acres change
+  if (fields.acres !== undefined) {
+    const effectivePlanId = planId || alloc.plan_id;
+    await syncAssumptionAcres(effectivePlanId);
+  }
+
+  return alloc;
 }
 
 export async function deleteAllocation(allocationId) {
-  return prisma.cropAllocation.delete({ where: { id: allocationId } });
+  // Get plan_id before deleting so we can sync acres
+  const alloc = await prisma.cropAllocation.findUnique({
+    where: { id: allocationId },
+    select: { plan_id: true },
+  });
+  await prisma.cropAllocation.delete({ where: { id: allocationId } });
+
+  if (alloc) {
+    await syncAssumptionAcres(alloc.plan_id);
+  }
 }
 
 // ─── Input CRUD ─────────────────────────────────────────────────────

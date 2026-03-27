@@ -169,8 +169,6 @@ export default function PlanSetup() {
           <InputLabel>Crop Year</InputLabel>
           <Select value={year} label="Crop Year" onChange={e => setYear(e.target.value)}>
             <MenuItem value={2026}>2026</MenuItem>
-            <MenuItem value={2025}>2025</MenuItem>
-            <MenuItem value={2027}>2027</MenuItem>
           </Select>
         </FormControl>
         {plan && <Chip label={status.toUpperCase()} color={STATUS_COLORS[status] || 'default'} />}
