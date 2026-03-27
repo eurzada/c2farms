@@ -32,6 +32,7 @@ import TicketEditDialog from '../../components/logistics/TicketEditDialog';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { extractErrorMessage } from '../../utils/errorHelpers';
+import useGridState from '../../hooks/useGridState.js';
 
 export default function Tickets() {
   const { currentFarm, canEdit, isAdmin } = useFarm();
@@ -65,6 +66,7 @@ export default function Tickets() {
   const [editTicket, setEditTicket] = useState(null);
   const [exportAnchor, setExportAnchor] = useState(null);
   const { confirm, dialogProps } = useConfirmDialog();
+  const { onGridReady, onStateChanged } = useGridState('c2_logistics_tickets_grid');
 
   // Listen for real-time mobile ticket uploads
   useEffect(() => {
@@ -591,6 +593,11 @@ export default function Tickets() {
           ensureDomOrder
           getRowId={p => p.data?.id}
           onSelectionChanged={onSelectionChanged}
+          onGridReady={onGridReady}
+          onColumnResized={onStateChanged}
+          onColumnMoved={onStateChanged}
+          onSortChanged={onStateChanged}
+          onColumnVisible={onStateChanged}
         />
       </Box>
 

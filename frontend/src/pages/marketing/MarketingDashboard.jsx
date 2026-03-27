@@ -13,6 +13,7 @@ import api from '../../services/api';
 ChartJS.register(CategoryScale, LinearScale, BarElement, ChartTooltip, Legend);
 
 import { fmt, fmtDollarK as fmtDollar } from '../../utils/formatting';
+import useGridState from '../../hooks/useGridState.js';
 
 const PRIORITY_COLORS = { high: 'error', medium: 'warning', low: 'default' };
 
@@ -32,6 +33,32 @@ export default function MarketingDashboard() {
   const [unsettledData, setUnsettledData] = useState(null);
 
   const agTheme = mode === 'dark' ? 'ag-theme-alpine-dark' : 'ag-theme-alpine';
+
+  const { onGridReady: restoreFulfillment, onStateChanged: onFulfillmentChanged } = useGridState('c2_marketing_dash_fulfillment_grid');
+  const { onGridReady: restoreMatrix, onStateChanged: onMatrixChanged } = useGridState('c2_marketing_dash_matrix_grid');
+  const { onGridReady: restoreUnsettled, onStateChanged: onUnsettledChanged } = useGridState('c2_marketing_dash_unsettled_grid');
+  const { onGridReady: restorePosition, onStateChanged: onPositionChanged } = useGridState('c2_marketing_dash_position_grid');
+
+  const handleFulfillmentReady = useCallback((params) => {
+    params.api.sizeColumnsToFit();
+    restoreFulfillment(params);
+  }, [restoreFulfillment]);
+
+  const handleMatrixReady = useCallback((params) => {
+    matrixApiRef.current = params.api;
+    params.api.sizeColumnsToFit();
+    restoreMatrix(params);
+  }, [restoreMatrix]);
+
+  const handleUnsettledReady = useCallback((params) => {
+    params.api.sizeColumnsToFit();
+    restoreUnsettled(params);
+  }, [restoreUnsettled]);
+
+  const handlePositionReady = useCallback((params) => {
+    params.api.sizeColumnsToFit();
+    restorePosition(params);
+  }, [restorePosition]);
 
   useEffect(() => {
     if (!currentFarm) return;
@@ -335,7 +362,11 @@ export default function MarketingDashboard() {
               defaultColDef={{ ...defaultColDef, autoHeaderHeight: true, wrapHeaderText: true }}
               animateRows
               getRowId={p => p.data?.id}
-              onGridReady={({ api }) => api.sizeColumnsToFit()}
+              onGridReady={handleFulfillmentReady}
+              onColumnResized={onFulfillmentChanged}
+              onColumnMoved={onFulfillmentChanged}
+              onSortChanged={onFulfillmentChanged}
+              onColumnVisible={onFulfillmentChanged}
             />
           </Box>
         </>
@@ -354,11 +385,12 @@ export default function MarketingDashboard() {
             pinnedBottomRowData={matrixPinnedBottom}
             animateRows
             getRowId={p => p.data?.buyer_name ? `buyer-${p.data.buyer_name}` : `footer-${p.data?._rowType}`}
-            onGridReady={({ api }) => {
-              matrixApiRef.current = api;
-              api.sizeColumnsToFit();
-            }}
+            onGridReady={handleMatrixReady}
             onFirstDataRendered={({ api }) => api.sizeColumnsToFit()}
+            onColumnResized={onMatrixChanged}
+            onColumnMoved={onMatrixChanged}
+            onSortChanged={onMatrixChanged}
+            onColumnVisible={onMatrixChanged}
           />
         </Box>
       ) : (
@@ -380,8 +412,12 @@ export default function MarketingDashboard() {
               pinnedBottomRowData={unsettledPinnedBottom}
               animateRows
               getRowId={p => p.data?.id}
-              onGridReady={({ api }) => api.sizeColumnsToFit()}
+              onGridReady={handleUnsettledReady}
               onFirstDataRendered={({ api }) => api.sizeColumnsToFit()}
+              onColumnResized={onUnsettledChanged}
+              onColumnMoved={onUnsettledChanged}
+              onSortChanged={onUnsettledChanged}
+              onColumnVisible={onUnsettledChanged}
             />
           </Box>
         </>
@@ -397,8 +433,12 @@ export default function MarketingDashboard() {
           defaultColDef={defaultColDef}
           animateRows
           getRowId={p => p.data?.commodity_id}
-          onGridReady={({ api }) => api.sizeColumnsToFit()}
+          onGridReady={handlePositionReady}
           onFirstDataRendered={({ api }) => api.sizeColumnsToFit()}
+          onColumnResized={onPositionChanged}
+          onColumnMoved={onPositionChanged}
+          onSortChanged={onPositionChanged}
+          onColumnVisible={onPositionChanged}
         />
       </Box>
     </Box>

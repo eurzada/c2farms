@@ -16,11 +16,18 @@ import CounterpartyFormDialog from '../../components/marketing/CounterpartyFormD
 const TYPE_COLORS = { buyer: 'primary', broker: 'secondary', elevator: 'info', terminal: 'warning' };
 
 import { fmt } from '../../utils/formatting';
+import useGridState from '../../hooks/useGridState.js';
 
 export default function MarketingBuyers() {
   const { currentFarm, canEdit, isAdmin } = useFarm();
   const { mode } = useThemeMode();
   const gridRef = useRef();
+  const { onGridReady: restoreGridState, onStateChanged } = useGridState('c2_marketing_buyers_grid');
+
+  const handleGridReady = useCallback((params) => {
+    params.api.sizeColumnsToFit();
+    restoreGridState(params);
+  }, [restoreGridState]);
 
   const [counterparties, setCounterparties] = useState([]);
   const [dialog, setDialog] = useState({ open: false, initial: null });
@@ -104,8 +111,12 @@ export default function MarketingBuyers() {
           defaultColDef={defaultColDef}
           animateRows
           getRowId={p => p.data?.id}
-          onGridReady={({ api }) => api.sizeColumnsToFit()}
+          onGridReady={handleGridReady}
           onFirstDataRendered={({ api }) => api.sizeColumnsToFit()}
+          onColumnResized={onStateChanged}
+          onColumnMoved={onStateChanged}
+          onSortChanged={onStateChanged}
+          onColumnVisible={onStateChanged}
         />
       </Box>
 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { AgGridReact } from 'ag-grid-react';
+import useGridState from '../../hooks/useGridState.js';
 import {
   Box, Stack, FormControl, InputLabel, Select, MenuItem, Typography,
   Button, Alert, Chip, Dialog, DialogTitle, DialogContent, DialogActions,
@@ -22,6 +23,7 @@ export default function Grading() {
   const { currentFarm, isEnterprise } = useFarm();
   const { mode } = useThemeMode();
   const gridRef = useRef();
+  const { onGridReady, onStateChanged } = useGridState('c2_inventory_grading_grid');
   const colors = useMemo(() => getGridColors(mode), [mode]);
 
   const [grades, setGrades] = useState([]);
@@ -315,6 +317,11 @@ export default function Grading() {
           getRowId={p => p.data?.id}
           onCellValueChanged={handleCellEdit}
           onFirstDataRendered={({ api }) => api.autoSizeAllColumns()}
+          onGridReady={onGridReady}
+          onColumnResized={onStateChanged}
+          onColumnMoved={onStateChanged}
+          onSortChanged={onStateChanged}
+          onColumnVisible={onStateChanged}
         />
       </Box>
 

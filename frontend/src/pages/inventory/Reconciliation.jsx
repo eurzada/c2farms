@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { AgGridReact } from 'ag-grid-react';
+import useGridState from '../../hooks/useGridState.js';
 import {
   Box, Typography, Stack, FormControl, InputLabel, Select, MenuItem,
   Card, CardContent, Alert, CircularProgress, Grid, Chip, ToggleButton, ToggleButtonGroup,
@@ -27,6 +28,7 @@ export default function Reconciliation() {
   const { currentFarm } = useFarm();
   const { mode } = useThemeMode();
   const gridRef = useRef();
+  const { onGridReady, onStateChanged } = useGridState('c2_inventory_recon_grid');
   const colors = useMemo(() => getGridColors(mode), [mode]);
 
   const [periods, setPeriods] = useState([]);
@@ -300,6 +302,11 @@ export default function Reconciliation() {
                   animateRows
                   tooltipShowDelay={300}
                   getRowId={p => p.data?.commodity}
+                  onGridReady={onGridReady}
+                  onColumnResized={onStateChanged}
+                  onColumnMoved={onStateChanged}
+                  onSortChanged={onStateChanged}
+                  onColumnVisible={onStateChanged}
                 />
               </Box>
 

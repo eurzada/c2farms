@@ -34,6 +34,7 @@ import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { extractErrorMessage } from '../../utils/errorHelpers';
 import { fmt, fmtDollar } from '../../utils/formatting';
 import { getSocket } from '../../services/socket';
+import useGridState from '../../hooks/useGridState.js';
 
 const STATUS_TABS = ['All', 'Executed', 'In Delivery', 'Delivered', 'Fulfilled', 'Cancelled'];
 const STATUS_MAP = { 'All': null, 'Executed': 'executed', 'In Delivery': 'in_delivery', 'Delivered': 'delivered', 'Fulfilled': 'fulfilled', 'Cancelled': 'cancelled' };
@@ -73,6 +74,7 @@ export default function MarketingContracts() {
   const [columnMenuAnchor, setColumnMenuAnchor] = useState(null);
   const [exporting, setExporting] = useState(false);
   const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
+  const { onGridReady, onStateChanged } = useGridState('c2_marketing_contracts_grid');
 
   // Column visibility — keys that map to column field names
   const TOGGLEABLE_COLUMNS = [
@@ -462,20 +464,6 @@ export default function MarketingContracts() {
 
   const defaultColDef = useMemo(() => ({ sortable: true, resizable: true, filter: true }), []);
 
-  // Persist column order/width/sort across refreshes
-  const COLUMN_STATE_KEY = 'c2farms_contracts_col_state';
-  const onGridReady = useCallback((params) => {
-    const saved = localStorage.getItem(COLUMN_STATE_KEY);
-    if (saved) {
-      try { params.api.applyColumnState({ state: JSON.parse(saved), applyOrder: true }); } catch { /* ignore */ }
-    }
-  }, []);
-  const saveColumnState = useCallback(() => {
-    if (!gridRef.current?.api) return;
-    const state = gridRef.current.api.getColumnState();
-    localStorage.setItem(COLUMN_STATE_KEY, JSON.stringify(state));
-  }, []);
-
   return (
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
@@ -579,9 +567,10 @@ export default function MarketingContracts() {
           getRowId={p => p.data?.id}
           onSelectionChanged={onSelectionChanged}
           onGridReady={onGridReady}
-          onColumnMoved={saveColumnState}
-          onColumnResized={saveColumnState}
-          onSortChanged={saveColumnState}
+          onColumnMoved={onStateChanged}
+          onColumnResized={onStateChanged}
+          onSortChanged={onStateChanged}
+          onColumnVisible={onStateChanged}
         />
       </Box>
 

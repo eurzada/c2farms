@@ -8,6 +8,7 @@ import { useThemeMode } from '../../contexts/ThemeContext';
 import { getGridColors } from '../../utils/gridColors';
 import api from '../../services/api';
 import InventoryExportButtons from '../../components/inventory/InventoryExportButtons';
+import useGridState from '../../hooks/useGridState.js';
 
 const PURPOSE_OPTIONS = ['market', 'seed', 'feed', 'reserved', 'consumption'];
 
@@ -20,6 +21,7 @@ export default function BinInventory() {
   const { currentFarm, isEnterprise } = useFarm();
   const { mode } = useThemeMode();
   const gridRef = useRef();
+  const { onGridReady, onStateChanged } = useGridState('c2_inventory_bins_grid');
   const colors = useMemo(() => getGridColors(mode), [mode]);
 
   const [bins, setBins] = useState([]);
@@ -152,6 +154,11 @@ export default function BinInventory() {
           singleClickEdit
           getRowId={p => p.data?.id}
           onCellValueChanged={handleCellEdit}
+          onGridReady={onGridReady}
+          onColumnResized={onStateChanged}
+          onColumnMoved={onStateChanged}
+          onSortChanged={onStateChanged}
+          onColumnVisible={onStateChanged}
           getRowStyle={params => {
             if (params.data?.purpose && params.data.purpose !== 'market') {
               return { backgroundColor: mode === 'dark' ? 'rgba(255,152,0,0.08)' : 'rgba(255,152,0,0.06)' };

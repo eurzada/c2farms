@@ -12,6 +12,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { AgGridReact } from 'ag-grid-react';
+import useGridState from '../../hooks/useGridState.js';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { useThemeMode } from '../../contexts/ThemeContext';
@@ -84,6 +85,7 @@ function KpiCard({ label, value, color }) {
 export default function ProcurementContracts({ year }) {
   const { mode } = useThemeMode();
   const gridRef = useRef();
+  const { onGridReady, onStateChanged } = useGridState('c2_agronomy_procurement_grid');
   const [contracts, setContracts] = useState([]);
   const [kpis, setKpis] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -393,6 +395,11 @@ export default function ProcurementContracts({ year }) {
             getRowId={(p) => p.data.id}
             overlayLoadingTemplate="<span>Loading contracts...</span>"
             overlayNoRowsTemplate="<span>No procurement contracts found</span>"
+            onGridReady={onGridReady}
+            onColumnResized={onStateChanged}
+            onColumnMoved={onStateChanged}
+            onSortChanged={onStateChanged}
+            onColumnVisible={onStateChanged}
             loading={loading}
             getRowStyle={(p) => {
               if (selectedContract?.id === p.data?.id) {

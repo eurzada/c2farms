@@ -15,6 +15,7 @@ import { useThemeMode } from '../../contexts/ThemeContext';
 import api from '../../services/api';
 import { extractErrorMessage } from '../../utils/errorHelpers';
 import { formatCurrency } from '../../utils/formatting';
+import useGridState from '../../hooks/useGridState.js';
 
 const STATUS_COLORS = {
   executed: 'info',
@@ -38,20 +39,24 @@ export default function TerminalContracts() {
   const [commodities, setCommodities] = useState([]);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [form, setForm] = useState({
-    contract_number: '', direction: 'purchase', counterparty_id: '', commodity_id: '',
-    contracted_mt: '', price_per_mt: '', ship_mode: 'truck', delivery_point: '',
-    start_date: '', end_date: '', notes: '',
+    contract_number: '', direction: 'purchase', contract_purpose: 'grain_trade',
+    counterparty_id: '', commodity_id: '',
+    contracted_mt: '', price_per_mt: '', transloading_rate: '', ship_mode: 'truck',
+    delivery_point: '', start_date: '', end_date: '', notes: '',
   });
 
   const [detailContract, setDetailContract] = useState(null);
 
+  const { onGridReady, onStateChanged } = useGridState('c2_terminal_contracts_grid');
   const farmId = currentFarm?.id;
 
   const load = useCallback(async () => {
     if (!farmId) return;
     try {
       setLoading(true);
-      const params = filter !== 'all' ? { direction: filter } : {};
+      const params = filter === 'grain' ? { contract_purpose: 'grain_trade' }
+        : filter === 'transloading' ? { contract_purpose: 'transloading_service' }
+        : {};
       const [contractRes, summaryRes, cpRes, comRes] = await Promise.all([
         api.get(`/api/farms/${farmId}/terminal/contracts`, { params: { ...params, limit: 500 } }),
         api.get(`/api/farms/${farmId}/terminal/contracts/summary`),
@@ -74,12 +79,12 @@ export default function TerminalContracts() {
   const columnDefs = useMemo(() => [
     { field: 'contract_number', headerName: 'Contract #', width: 140 },
     {
-      field: 'direction', headerName: 'Type', width: 100,
+      field: 'contract_purpose', headerName: 'Purpose', width: 130,
       cellRenderer: p => (
         <Chip
-          label={p.value === 'purchase' ? 'Purchase' : 'Sale'}
+          label={p.value === 'transloading_service' ? 'Transloading' : p.data.direction === 'purchase' ? 'Purchase' : 'Sale'}
           size="small"
-          color={p.value === 'purchase' ? 'primary' : 'secondary'}
+          color={p.value === 'transloading_service' ? 'warning' : p.data.direction === 'purchase' ? 'primary' : 'secondary'}
           variant="outlined"
         />
       ),
@@ -89,7 +94,15 @@ export default function TerminalContracts() {
     { field: 'contracted_mt', headerName: 'Contracted MT', width: 130, type: 'numericColumn', valueFormatter: p => p.value?.toLocaleString('en-CA', { maximumFractionDigits: 1 }) },
     { field: 'delivered_mt', headerName: 'Delivered MT', width: 120, type: 'numericColumn', valueFormatter: p => p.value?.toLocaleString('en-CA', { maximumFractionDigits: 1 }) },
     { field: 'remaining_mt', headerName: 'Remaining MT', width: 130, type: 'numericColumn', valueFormatter: p => p.value?.toLocaleString('en-CA', { maximumFractionDigits: 1 }) },
-    { field: 'price_per_mt', headerName: '$/MT', width: 100, type: 'numericColumn', valueFormatter: p => p.value ? formatCurrency(p.value) : '' },
+    {
+      headerName: '$/MT', width: 100, type: 'numericColumn',
+      valueGetter: p => p.data.contract_purpose === 'transloading_service' ? p.data.transloading_rate : p.data.price_per_mt,
+      valueFormatter: p => p.value ? formatCurrency(p.value) : '',
+    },
+    {
+      field: 'marketing_contract.contract_number', headerName: 'Linked MC', width: 120,
+      cellRenderer: p => p.value ? <Chip label={p.value} size="small" variant="outlined" sx={{ fontSize: 11 }} /> : null,
+    },
     { field: 'ship_mode', headerName: 'Mode', width: 80 },
     { field: 'delivery_point', headerName: 'Delivery Point', width: 140 },
     {
@@ -117,15 +130,18 @@ export default function TerminalContracts() {
 
   const handleSubmit = async () => {
     try {
+      const isTransloading = form.contract_purpose === 'transloading_service';
       await api.post(`/api/farms/${farmId}/terminal/contracts`, {
         ...form,
+        direction: isTransloading ? 'sale' : form.direction,
         contracted_mt: parseFloat(form.contracted_mt),
-        price_per_mt: form.price_per_mt ? parseFloat(form.price_per_mt) : null,
+        price_per_mt: isTransloading ? null : (form.price_per_mt ? parseFloat(form.price_per_mt) : null),
+        transloading_rate: isTransloading && form.transloading_rate ? parseFloat(form.transloading_rate) : null,
         start_date: form.start_date || null,
         end_date: form.end_date || null,
       });
       setDialogOpen(false);
-      setForm({ contract_number: '', direction: 'purchase', counterparty_id: '', commodity_id: '', contracted_mt: '', price_per_mt: '', ship_mode: 'truck', delivery_point: '', start_date: '', end_date: '', notes: '' });
+      setForm({ contract_number: '', direction: 'purchase', contract_purpose: 'grain_trade', counterparty_id: '', commodity_id: '', contracted_mt: '', price_per_mt: '', transloading_rate: '', ship_mode: 'truck', delivery_point: '', start_date: '', end_date: '', notes: '' });
       load();
     } catch (err) {
       setError(extractErrorMessage(err, 'Failed to create contract'));
@@ -141,8 +157,8 @@ export default function TerminalContracts() {
         <Box sx={{ display: 'flex', gap: 1 }}>
           <ToggleButtonGroup size="small" value={filter} exclusive onChange={(_, v) => v && setFilter(v)}>
             <ToggleButton value="all">All</ToggleButton>
-            <ToggleButton value="purchase">Purchase</ToggleButton>
-            <ToggleButton value="sale">Sale</ToggleButton>
+            <ToggleButton value="grain">Grain</ToggleButton>
+            <ToggleButton value="transloading">Transloading</ToggleButton>
           </ToggleButtonGroup>
           <Button variant="outlined" startIcon={<CloudUploadIcon />} onClick={() => setImportDialogOpen(true)}>Import Contract</Button>
           <Button variant="contained" startIcon={<AddIcon />} onClick={() => setDialogOpen(true)}>New Contract</Button>
@@ -153,18 +169,25 @@ export default function TerminalContracts() {
 
       {summary && (
         <Grid container spacing={2} sx={{ mb: 2 }}>
-          <Grid item xs={12} sm={6}>
+          <Grid item xs={12} sm={4}>
             <Paper sx={{ p: 2 }}>
               <Typography variant="subtitle2" color="primary">Purchase Contracts</Typography>
               <Typography variant="h6" fontWeight={700}>{summary.purchase.count} contracts</Typography>
-              <Typography variant="body2">Contracted: {fmtMt(summary.purchase.total_contracted_mt)} | Delivered: {fmtMt(summary.purchase.total_delivered_mt)} | Remaining: {fmtMt(summary.purchase.total_remaining_mt)}</Typography>
+              <Typography variant="body2">Contracted: {fmtMt(summary.purchase.total_contracted_mt)} | Remaining: {fmtMt(summary.purchase.total_remaining_mt)}</Typography>
             </Paper>
           </Grid>
-          <Grid item xs={12} sm={6}>
+          <Grid item xs={12} sm={4}>
             <Paper sx={{ p: 2 }}>
               <Typography variant="subtitle2" color="secondary">Sale Contracts</Typography>
               <Typography variant="h6" fontWeight={700}>{summary.sale.count} contracts</Typography>
-              <Typography variant="body2">Contracted: {fmtMt(summary.sale.total_contracted_mt)} | Delivered: {fmtMt(summary.sale.total_delivered_mt)} | Remaining: {fmtMt(summary.sale.total_remaining_mt)}</Typography>
+              <Typography variant="body2">Contracted: {fmtMt(summary.sale.total_contracted_mt)} | Remaining: {fmtMt(summary.sale.total_remaining_mt)}</Typography>
+            </Paper>
+          </Grid>
+          <Grid item xs={12} sm={4}>
+            <Paper sx={{ p: 2 }}>
+              <Typography variant="subtitle2" color="warning.main">Transloading Agreements</Typography>
+              <Typography variant="h6" fontWeight={700}>{summary.transloading?.count || 0} agreements</Typography>
+              <Typography variant="body2">Volume: {fmtMt(summary.transloading?.total_contracted_mt)} | Revenue: {formatCurrency(summary.transloading?.total_revenue || 0)}</Typography>
             </Paper>
           </Grid>
         </Grid>
@@ -180,17 +203,28 @@ export default function TerminalContracts() {
           getRowId={p => p.data.id}
           loading={loading}
           onRowDoubleClicked={p => setDetailContract(p.data)}
+          onGridReady={onGridReady}
+          onColumnResized={onStateChanged}
+          onColumnMoved={onStateChanged}
+          onSortChanged={onStateChanged}
+          onColumnVisible={onStateChanged}
         />
       </Box>
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>New Contract</DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
-          <TextField label="Contract #" value={form.contract_number} onChange={e => setForm(f => ({ ...f, contract_number: e.target.value }))} fullWidth required />
-          <TextField select label="Direction" value={form.direction} onChange={e => setForm(f => ({ ...f, direction: e.target.value }))} fullWidth>
-            <MenuItem value="purchase">Purchase (from grower)</MenuItem>
-            <MenuItem value="sale">Sale (to buyer)</MenuItem>
+          <TextField select label="Contract Type" value={form.contract_purpose} onChange={e => setForm(f => ({ ...f, contract_purpose: e.target.value }))} fullWidth>
+            <MenuItem value="grain_trade">Grain Trade (Purchase / Sale)</MenuItem>
+            <MenuItem value="transloading_service">Transloading Agreement (Service Fee)</MenuItem>
           </TextField>
+          <TextField label="Contract #" value={form.contract_number} onChange={e => setForm(f => ({ ...f, contract_number: e.target.value }))} fullWidth required />
+          {form.contract_purpose !== 'transloading_service' && (
+            <TextField select label="Direction" value={form.direction} onChange={e => setForm(f => ({ ...f, direction: e.target.value }))} fullWidth>
+              <MenuItem value="purchase">Purchase (from grower)</MenuItem>
+              <MenuItem value="sale">Sale (to buyer)</MenuItem>
+            </TextField>
+          )}
           <TextField select label="Counterparty" value={form.counterparty_id} onChange={e => setForm(f => ({ ...f, counterparty_id: e.target.value }))} fullWidth required>
             {counterparties.map(c => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
           </TextField>
@@ -199,7 +233,11 @@ export default function TerminalContracts() {
           </TextField>
           <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5 }}>
             <TextField label="Contracted MT" type="number" value={form.contracted_mt} onChange={e => setForm(f => ({ ...f, contracted_mt: e.target.value }))} required />
-            <TextField label="Price $/MT" type="number" value={form.price_per_mt} onChange={e => setForm(f => ({ ...f, price_per_mt: e.target.value }))} />
+            {form.contract_purpose === 'transloading_service' ? (
+              <TextField label="Transloading Rate $/MT" type="number" value={form.transloading_rate} onChange={e => setForm(f => ({ ...f, transloading_rate: e.target.value }))} required />
+            ) : (
+              <TextField label="Price $/MT" type="number" value={form.price_per_mt} onChange={e => setForm(f => ({ ...f, price_per_mt: e.target.value }))} />
+            )}
           </Box>
           <TextField select label="Ship Mode" value={form.ship_mode} onChange={e => setForm(f => ({ ...f, ship_mode: e.target.value }))} fullWidth>
             <MenuItem value="truck">Truck</MenuItem>

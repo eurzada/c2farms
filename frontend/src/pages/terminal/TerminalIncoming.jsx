@@ -12,6 +12,7 @@ import { useFarm } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import api from '../../services/api';
 import { extractErrorMessage } from '../../utils/errorHelpers';
+import useGridState from '../../hooks/useGridState.js';
 
 const PRODUCTS = ['CWRS', 'CWAD', 'Canary', 'Flax', 'Barley', 'Lentils', 'Chickpeas', 'Peas'];
 
@@ -38,6 +39,7 @@ export default function TerminalIncoming() {
     dockage_pct: '', moisture_pct: '', test_weight: '', protein_pct: '', hvk_pct: '',
   });
 
+  const { onGridReady, onStateChanged } = useGridState('c2_terminal_incoming_grid');
   const farmId = currentFarm?.id;
 
   const load = useCallback(async () => {
@@ -146,6 +148,11 @@ export default function TerminalIncoming() {
           animateRows
           getRowId={p => p.data.id}
           loading={loading}
+          onGridReady={onGridReady}
+          onColumnResized={onStateChanged}
+          onColumnMoved={onStateChanged}
+          onSortChanged={onStateChanged}
+          onColumnVisible={onStateChanged}
         />
       </Box>
 

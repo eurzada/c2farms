@@ -8,6 +8,7 @@ import { useFarm } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import api from '../../services/api';
 import { extractErrorMessage } from '../../utils/errorHelpers';
+import useGridState from '../../hooks/useGridState.js';
 
 const PRODUCTS = ['CWRS', 'CWAD', 'Canary', 'Flax', 'Barley', 'Lentils'];
 const SAMPLE_TYPES = ['Onsite', 'Shipped', 'LIT Graded'];
@@ -28,6 +29,7 @@ export default function TerminalOutgoing() {
     sample_type: '', sample_inspector: 'Cotecna',
   });
 
+  const { onGridReady, onStateChanged } = useGridState('c2_terminal_outgoing_grid');
   const farmId = currentFarm?.id;
 
   const load = useCallback(async () => {
@@ -126,6 +128,11 @@ export default function TerminalOutgoing() {
           animateRows
           getRowId={p => p.data.id}
           loading={loading}
+          onGridReady={onGridReady}
+          onColumnResized={onStateChanged}
+          onColumnMoved={onStateChanged}
+          onSortChanged={onStateChanged}
+          onColumnVisible={onStateChanged}
         />
       </Box>
 

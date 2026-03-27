@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { AgGridReact } from 'ag-grid-react';
+import useGridState from '../../hooks/useGridState.js';
 import {
   Box, Typography, Stack, FormControl, InputLabel, Select, MenuItem,
   Button, LinearProgress, Alert, Snackbar, IconButton, Chip, Tooltip,
@@ -39,6 +40,7 @@ export default function FarmManagerView() {
   const { currentFarm, canEdit, isAdmin, isEnterprise } = useFarm();
   const { mode } = useThemeMode();
   const gridRef = useRef();
+  const { onGridReady, onStateChanged } = useGridState('c2_inventory_fm_view_grid');
   const colors = useMemo(() => getGridColors(mode), [mode]);
 
   const [locations, setLocations] = useState([]);
@@ -487,6 +489,11 @@ export default function FarmManagerView() {
           getRowId={p => p.data?.id}
           context={{ onUndo, dirtyBinIds }}
           onCellValueChanged={onCellValueChanged}
+          onGridReady={onGridReady}
+          onColumnResized={onStateChanged}
+          onColumnMoved={onStateChanged}
+          onSortChanged={onStateChanged}
+          onColumnVisible={onStateChanged}
           getRowStyle={params => {
             if (params.data?.purpose && params.data.purpose !== 'market') {
               return { backgroundColor: mode === 'dark' ? 'rgba(255,152,0,0.08)' : 'rgba(255,152,0,0.06)' };

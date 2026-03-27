@@ -11,6 +11,7 @@ import { useFarm } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import api from '../../services/api';
 import { extractErrorMessage } from '../../utils/errorHelpers';
+import useGridState from '../../hooks/useGridState.js';
 
 export default function TerminalBlending() {
   const { currentFarm } = useFarm();
@@ -29,6 +30,7 @@ export default function TerminalBlending() {
     total_output_kg: '', rail_car_numbers_str: '', car_count: '', target_protein: '',
   });
 
+  const { onGridReady, onStateChanged } = useGridState('c2_terminal_blending_grid');
   const farmId = currentFarm?.id;
 
   const load = useCallback(async () => {
@@ -116,7 +118,7 @@ export default function TerminalBlending() {
       </Box>
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
       <Box className={mode === 'dark' ? 'ag-theme-alpine-dark' : 'ag-theme-alpine'} sx={{ height: 'calc(100vh - 260px)', width: '100%' }}>
-        <AgGridReact ref={gridRef} rowData={rows} columnDefs={columnDefs} defaultColDef={defaultColDef} animateRows getRowId={p => p.data.id} loading={loading} />
+        <AgGridReact ref={gridRef} rowData={rows} columnDefs={columnDefs} defaultColDef={defaultColDef} animateRows getRowId={p => p.data.id} loading={loading} onGridReady={onGridReady} onColumnResized={onStateChanged} onColumnMoved={onStateChanged} onSortChanged={onStateChanged} onColumnVisible={onStateChanged} />
       </Box>
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>

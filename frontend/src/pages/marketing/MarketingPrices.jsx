@@ -10,11 +10,13 @@ import 'ag-grid-community/styles/ag-theme-alpine.css';
 import { useFarm } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import api from '../../services/api';
+import useGridState from '../../hooks/useGridState.js';
 
 export default function MarketingPrices() {
   const { currentFarm, canEdit } = useFarm();
   const { mode } = useThemeMode();
   const gridRef = useRef();
+  const { onGridReady, onStateChanged } = useGridState('c2_marketing_prices_grid');
 
   const [prices, setPrices] = useState([]);
   const [settings, setSettings] = useState(null);
@@ -117,6 +119,11 @@ export default function MarketingPrices() {
           onCellValueChanged={handleCellEdit}
           singleClickEdit
           stopEditingWhenCellsLoseFocus
+          onGridReady={onGridReady}
+          onColumnResized={onStateChanged}
+          onColumnMoved={onStateChanged}
+          onSortChanged={onStateChanged}
+          onColumnVisible={onStateChanged}
         />
       </Box>
 

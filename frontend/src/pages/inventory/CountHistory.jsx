@@ -22,6 +22,7 @@ import { AgGridReact } from 'ag-grid-react';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import { useFarm } from '../../contexts/FarmContext';
 import api from '../../services/api';
+import useGridState from '../../hooks/useGridState.js';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 
@@ -196,9 +197,11 @@ function MatrixView({ farmId }) {
     suppressMovable: true,
   }), []);
 
+  const { onGridReady: restoreGridState, onStateChanged } = useGridState('c2_inventory_count_history_grid');
   const onGridReady = useCallback((params) => {
     params.api.sizeColumnsToFit();
-  }, []);
+    restoreGridState(params);
+  }, [restoreGridState]);
 
   if (loading) {
     return <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress /></Box>;
@@ -268,6 +271,10 @@ function MatrixView({ farmId }) {
           pinnedBottomRowData={pinnedBottomRowData}
           tooltipShowDelay={300}
           onGridReady={onGridReady}
+          onColumnResized={onStateChanged}
+          onColumnMoved={onStateChanged}
+          onSortChanged={onStateChanged}
+          onColumnVisible={onStateChanged}
           suppressCellFocus
           domLayout="normal"
         />

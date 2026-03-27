@@ -21,6 +21,7 @@ import TransferReconciliationDialog from '../../components/terminal/TransferReco
 import TerminalSettlementDetailDialog from '../../components/terminal/TerminalSettlementDetailDialog';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
+import useGridState from '../../hooks/useGridState.js';
 
 const STATUS_COLORS = {
   draft: 'default',
@@ -30,8 +31,18 @@ const STATUS_COLORS = {
 
 const TYPE_COLORS = {
   transfer: 'primary',
+  bu_credit: 'info',
   transloading: 'warning',
   buyer_settlement: 'success',
+  grain_sale: 'success',
+};
+
+const TYPE_LABELS = {
+  transfer: 'Transfer',
+  bu_credit: 'BU Credit',
+  transloading: 'Transloading',
+  buyer_settlement: 'Buyer',
+  grain_sale: 'Grain Sale',
 };
 
 export default function TerminalSettlements() {
@@ -50,6 +61,7 @@ export default function TerminalSettlements() {
   const [transferReconOpen, setTransferReconOpen] = useState(false);
   const [detailId, setDetailId] = useState(null);
 
+  const { onGridReady, onStateChanged } = useGridState('c2_terminal_settlements_grid');
   const farmId = currentFarm?.id;
 
   const load = useCallback(async () => {
@@ -72,15 +84,18 @@ export default function TerminalSettlements() {
 
   // Summary calculations
   const summary = useMemo(() => {
-    const byType = { transfer: { count: 0, amount: 0 }, transloading: { count: 0, amount: 0 }, buyer_settlement: { count: 0, amount: 0, margin: 0 } };
+    const byType = {
+      grain_sale: { count: 0, amount: 0 },
+      transloading: { count: 0, amount: 0 },
+      bu_credit: { count: 0, amount: 0 },
+      transfer: { count: 0, amount: 0 },
+      buyer_settlement: { count: 0, amount: 0 },
+    };
     for (const r of rows) {
       const t = r.type || 'transfer';
       if (byType[t]) {
         byType[t].count += 1;
         byType[t].amount += parseFloat(r.net_amount) || 0;
-        if (t === 'buyer_settlement' && r.realization_json) {
-          byType[t].margin += r.realization_json.margin || 0;
-        }
       }
     }
     return byType;
@@ -135,7 +150,7 @@ export default function TerminalSettlements() {
       field: 'type', headerName: 'Type', width: 120,
       cellRenderer: p => (
         <Chip
-          label={p.value === 'transfer' ? 'Transfer' : p.value === 'buyer_settlement' ? 'Buyer' : 'Transloading'}
+          label={TYPE_LABELS[p.value] || p.value}
           size="small"
           color={TYPE_COLORS[p.value] || 'default'}
           variant="outlined"
@@ -258,9 +273,9 @@ export default function TerminalSettlements() {
         <Box sx={{ display: 'flex', gap: 1 }}>
           <ToggleButtonGroup size="small" value={filter} exclusive onChange={(_, v) => v && setFilter(v)}>
             <ToggleButton value="all">All</ToggleButton>
-            <ToggleButton value="transfer">Transfer</ToggleButton>
+            <ToggleButton value="grain_sale">Grain Sales</ToggleButton>
             <ToggleButton value="transloading">Transloading</ToggleButton>
-            <ToggleButton value="buyer_settlement">Buyer</ToggleButton>
+            <ToggleButton value="bu_credit">BU Credits</ToggleButton>
           </ToggleButtonGroup>
           <Button variant="outlined" color="info" startIcon={<CompareArrowsIcon />} onClick={() => setTransferReconOpen(true)}>
             Reconcile Transfer
@@ -280,26 +295,23 @@ export default function TerminalSettlements() {
       <Grid container spacing={2} sx={{ mb: 2 }}>
         <Grid item xs={12} sm={4}>
           <Paper sx={{ p: 2 }}>
-            <Typography variant="subtitle2" color="primary">Transfer Settlements</Typography>
-            <Typography variant="h6" fontWeight={700}>{summary.transfer.count} settlements</Typography>
-            <Typography variant="body2">Total: {fmtDollar(summary.transfer.amount)}</Typography>
+            <Typography variant="subtitle2" color="success.main">Grain Sale Settlements</Typography>
+            <Typography variant="h6" fontWeight={700}>{(summary.grain_sale.count + summary.buyer_settlement.count)} settlements</Typography>
+            <Typography variant="body2">Total: {fmtDollar(summary.grain_sale.amount + summary.buyer_settlement.amount)}</Typography>
           </Paper>
         </Grid>
         <Grid item xs={12} sm={4}>
           <Paper sx={{ p: 2 }}>
-            <Typography variant="subtitle2" color="warning.main">Transloading Settlements</Typography>
-            <Typography variant="h6" fontWeight={700}>{summary.transloading.count} settlements</Typography>
-            <Typography variant="body2">Total: {fmtDollar(summary.transloading.amount)}</Typography>
+            <Typography variant="subtitle2" color="warning.main">Transloading Revenue</Typography>
+            <Typography variant="h6" fontWeight={700}>{summary.transloading.count} invoices</Typography>
+            <Typography variant="body2">Revenue: {fmtDollar(summary.transloading.amount)}</Typography>
           </Paper>
         </Grid>
         <Grid item xs={12} sm={4}>
           <Paper sx={{ p: 2 }}>
-            <Typography variant="subtitle2" color="success.main">Buyer Settlements</Typography>
-            <Typography variant="h6" fontWeight={700}>{summary.buyer_settlement.count} settlements</Typography>
-            <Typography variant="body2">Total: {fmtDollar(summary.buyer_settlement.amount)}</Typography>
-            {summary.buyer_settlement.margin > 0 && (
-              <Typography variant="body2" color="success.main">Margin: {fmtDollar(summary.buyer_settlement.margin)}</Typography>
-            )}
+            <Typography variant="subtitle2" color="info.main">BU Credits</Typography>
+            <Typography variant="h6" fontWeight={700}>{(summary.bu_credit.count + summary.transfer.count)} allocations</Typography>
+            <Typography variant="body2">Allocated: {fmtDollar(summary.bu_credit.amount + summary.transfer.amount)}</Typography>
           </Paper>
         </Grid>
       </Grid>
@@ -314,6 +326,11 @@ export default function TerminalSettlements() {
           getRowId={p => p.data.id}
           loading={loading}
           onRowDoubleClicked={p => setDetailId(p.data.id)}
+          onGridReady={onGridReady}
+          onColumnResized={onStateChanged}
+          onColumnMoved={onStateChanged}
+          onSortChanged={onStateChanged}
+          onColumnVisible={onStateChanged}
         />
       </Box>
 

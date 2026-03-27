@@ -16,6 +16,7 @@ import { useFarm } from '../../contexts/FarmContext';
 import { useThemeMode } from '../../contexts/ThemeContext';
 import api from '../../services/api';
 import { extractErrorMessage } from '../../utils/errorHelpers';
+import useGridState from '../../hooks/useGridState.js';
 
 const fmtKg = kg => kg != null ? `${kg.toLocaleString('en-CA')} kg` : '—';
 
@@ -156,6 +157,7 @@ function AllocateTicketsDialog({ open, onClose, farmId, bin, onAllocated }) {
 function BinLedger({ farmId, bin, contracts }) {
   const { mode } = useThemeMode();
   const gridRef = useRef();
+  const { onGridReady, onStateChanged } = useGridState('c2_terminal_bins_grid');
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -325,6 +327,11 @@ function BinLedger({ farmId, bin, contracts }) {
           suppressRowClickSelection
           onSelectionChanged={onSelectionChanged}
           isRowSelectable={p => p.data?.direction === 'inbound'}
+          onGridReady={onGridReady}
+          onColumnResized={onStateChanged}
+          onColumnMoved={onStateChanged}
+          onSortChanged={onStateChanged}
+          onColumnVisible={onStateChanged}
         />
       </Box>
       <AllocateTicketsDialog
