@@ -3,15 +3,13 @@ import { authenticate, requireRole } from '../middleware/auth.js';
 import { logAudit } from '../services/auditService.js';
 import { resolveInventoryFarm } from '../services/resolveInventoryFarm.js';
 import {
-  listShipmentOrders, getShipmentOrder, createShipmentOrder, updateShipmentOrder,
-  dispatchOrder, cancelOrder, getMyAssignments, acknowledgeAssignment,
-  markLoading, markEnRoute, deliverAssignment, getDispatchDashboard,
-} from '../services/dispatchService.js';
+  listPriorities, createPriority, updatePriority, reorderPriorities,
+  claimLoad, cancelClaim, deliverClaim, getMyLoads, getActivityFeed,
+} from '../services/shippingService.js';
 
 const router = Router();
 
-// Dispatch is enterprise-wide
-router.use('/:farmId/dispatch', async (req, res, next) => {
+router.use('/:farmId/shipping', async (req, res, next) => {
   try {
     const { farmId } = await resolveInventoryFarm(req.params.farmId);
     req.params.farmId = farmId;
@@ -19,131 +17,86 @@ router.use('/:farmId/dispatch', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ─── Dashboard ──────────────────────────────────────────────────────
+// ─── Priority Board ─────────────────────────────────────────────────
 
-router.get('/:farmId/dispatch/dashboard', authenticate, async (req, res, next) => {
+router.get('/:farmId/shipping/priorities', authenticate, async (req, res, next) => {
   try {
-    const data = await getDispatchDashboard(req.params.farmId);
-    res.json(data);
+    const priorities = await listPriorities(req.params.farmId, req.query);
+    res.json({ priorities });
   } catch (err) { next(err); }
 });
 
-// ─── Shipment Orders ────────────────────────────────────────────────
-
-router.get('/:farmId/dispatch/orders', authenticate, async (req, res, next) => {
+router.post('/:farmId/shipping/priorities', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
-    const orders = await listShipmentOrders(req.params.farmId, req.query);
-    res.json({ orders });
-  } catch (err) { next(err); }
-});
-
-router.get('/:farmId/dispatch/orders/:id', authenticate, async (req, res, next) => {
-  try {
-    const order = await getShipmentOrder(req.params.id);
-    if (!order) return res.status(404).json({ error: 'Order not found' });
-    res.json({ order });
-  } catch (err) { next(err); }
-});
-
-router.post('/:farmId/dispatch/orders', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
-  try {
-    const order = await createShipmentOrder(req.params.farmId, req.body, req.userId);
-    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'ShipmentOrder', entityId: order.id, action: 'create', changes: req.body });
-    res.status(201).json({ order });
-  } catch (err) { next(err); }
-});
-
-router.patch('/:farmId/dispatch/orders/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
-  try {
-    const order = await updateShipmentOrder(req.params.id, req.body);
-    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'ShipmentOrder', entityId: req.params.id, action: 'update', changes: req.body });
-    res.json({ order });
-  } catch (err) { next(err); }
-});
-
-router.post('/:farmId/dispatch/orders/:id/dispatch', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
-  try {
-    const { trucker_ids = [] } = req.body;
-    const order = await dispatchOrder(req.params.id, trucker_ids);
-
-    // Broadcast via Socket.io
+    const priority = await createPriority(req.params.farmId, req.body, req.userId);
     const io = req.app.get('io');
-    if (io) io.to(`farm:${req.params.farmId}`).emit('dispatch:order_dispatched', { order_id: order.id });
-
-    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'ShipmentOrder', entityId: req.params.id, action: 'dispatch', changes: { trucker_ids } });
-    res.json({ order });
+    if (io) io.to(`farm:${req.params.farmId}`).emit('shipping:priority_added', { id: priority.id });
+    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'ShippingPriority', entityId: priority.id, action: 'create' });
+    res.status(201).json({ priority });
   } catch (err) { next(err); }
 });
 
-router.post('/:farmId/dispatch/orders/:id/cancel', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+router.patch('/:farmId/shipping/priorities/:id', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
-    const order = await cancelOrder(req.params.id, req.body.reason);
-    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'ShipmentOrder', entityId: req.params.id, action: 'cancel', changes: { reason: req.body.reason } });
-    res.json({ order });
-  } catch (err) { next(err); }
-});
-
-// ─── Assignments (trucker-facing) ───────────────────────────────────
-
-router.get('/:farmId/dispatch/my-assignments', authenticate, async (req, res, next) => {
-  try {
-    const assignments = await getMyAssignments(req.params.farmId, req.userId);
-    res.json({ assignments });
-  } catch (err) { next(err); }
-});
-
-router.post('/:farmId/dispatch/assignments/:id/acknowledge', authenticate, async (req, res, next) => {
-  try {
-    const assignment = await acknowledgeAssignment(req.params.id, req.userId);
+    const priority = await updatePriority(req.params.id, req.body);
     const io = req.app.get('io');
-    if (io) io.to(`farm:${req.params.farmId}`).emit('dispatch:assignment_updated', { assignment_id: req.params.id, status: 'acknowledged' });
-    res.json({ assignment });
+    if (io) io.to(`farm:${req.params.farmId}`).emit('shipping:priority_updated', { id: priority.id });
+    res.json({ priority });
   } catch (err) { next(err); }
 });
 
-router.post('/:farmId/dispatch/assignments/:id/loading', authenticate, async (req, res, next) => {
+router.post('/:farmId/shipping/reorder', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
   try {
-    const assignment = await markLoading(req.params.id, req.userId);
+    const priorities = await reorderPriorities(req.params.farmId, req.body.ordered_ids);
     const io = req.app.get('io');
-    if (io) io.to(`farm:${req.params.farmId}`).emit('dispatch:assignment_updated', { assignment_id: req.params.id, status: 'loading' });
-    res.json({ assignment });
+    if (io) io.to(`farm:${req.params.farmId}`).emit('shipping:reordered');
+    res.json({ priorities });
   } catch (err) { next(err); }
 });
 
-router.post('/:farmId/dispatch/assignments/:id/en-route', authenticate, async (req, res, next) => {
+// ─── Load Claims (trucker self-service) ─────────────────────────────
+
+router.post('/:farmId/shipping/priorities/:id/claim', authenticate, async (req, res, next) => {
   try {
-    const assignment = await markEnRoute(req.params.id, req.userId);
+    const claim = await claimLoad(req.params.id, req.userId);
     const io = req.app.get('io');
-    if (io) io.to(`farm:${req.params.farmId}`).emit('dispatch:assignment_updated', { assignment_id: req.params.id, status: 'en_route' });
-    res.json({ assignment });
+    if (io) io.to(`farm:${req.params.farmId}`).emit('shipping:load_claimed', { claim_id: claim.id, trucker: claim.trucker?.name, priority_id: req.params.id });
+    res.status(201).json({ claim });
   } catch (err) { next(err); }
 });
 
-router.post('/:farmId/dispatch/assignments/:id/deliver', authenticate, async (req, res, next) => {
+router.post('/:farmId/shipping/claims/:id/cancel', authenticate, async (req, res, next) => {
   try {
-    const result = await deliverAssignment(req.params.id, req.userId, req.body);
+    const result = await cancelClaim(req.params.id, req.userId);
     const io = req.app.get('io');
-    if (io) io.to(`farm:${req.params.farmId}`).emit('dispatch:assignment_delivered', { assignment_id: req.params.id, ticket_id: result.ticket.id });
-    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'ShipmentAssignment', entityId: req.params.id, action: 'deliver', changes: { ticket_id: result.ticket.id } });
+    if (io) io.to(`farm:${req.params.farmId}`).emit('shipping:load_cancelled', { claim_id: req.params.id });
     res.json(result);
   } catch (err) { next(err); }
 });
 
-// ─── Trucker Roster (extend existing) ───────────────────────────────
-
-router.patch('/:farmId/dispatch/truckers/:userId', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+router.post('/:farmId/shipping/claims/:id/deliver', authenticate, async (req, res, next) => {
   try {
-    const { truck_capacity_mt, trucker_status } = req.body;
-    const data = {};
-    if (truck_capacity_mt !== undefined) data.truck_capacity_mt = truck_capacity_mt;
-    if (trucker_status !== undefined) data.trucker_status = trucker_status;
+    const result = await deliverClaim(req.params.id, req.userId, req.body);
+    const io = req.app.get('io');
+    if (io) io.to(`farm:${req.params.farmId}`).emit('shipping:load_delivered', { claim_id: req.params.id, ticket_id: result.ticket.id });
+    logAudit({ farmId: req.params.farmId, userId: req.userId, entityType: 'LoadClaim', entityId: req.params.id, action: 'deliver' });
+    res.json(result);
+  } catch (err) { next(err); }
+});
 
-    const user = await (await import('../config/database.js')).default.user.update({
-      where: { id: req.params.userId },
-      data,
-      select: { id: true, name: true, truck_capacity_mt: true, trucker_status: true },
-    });
-    res.json({ trucker: user });
+router.get('/:farmId/shipping/my-loads', authenticate, async (req, res, next) => {
+  try {
+    const loads = await getMyLoads(req.params.farmId, req.userId);
+    res.json({ loads });
+  } catch (err) { next(err); }
+});
+
+// ─── Activity Feed ──────────────────────────────────────────────────
+
+router.get('/:farmId/shipping/feed', authenticate, async (req, res, next) => {
+  try {
+    const feed = await getActivityFeed(req.params.farmId, parseInt(req.query.limit) || 20);
+    res.json({ feed });
   } catch (err) { next(err); }
 });
 

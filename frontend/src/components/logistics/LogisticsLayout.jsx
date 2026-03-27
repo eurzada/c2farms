@@ -10,7 +10,7 @@ import { useFarm } from '../../contexts/FarmContext';
 
 const TABS = [
   { label: 'Dashboard', path: '/logistics/dashboard', icon: <DashboardIcon /> },
-  { label: 'Dispatch', path: '/logistics/dispatch', icon: <SendIcon /> },
+  { label: 'Shipping', path: '/logistics/dispatch', icon: <SendIcon /> },
   { label: 'Tickets', path: '/logistics/tickets', icon: <LocalShippingIcon /> },
   { label: 'Settlements', path: '/logistics/settlements', icon: <ReceiptLongIcon /> },
   { label: 'Settlement Recon', path: '/logistics/settlement-recon', icon: <AutoFixHighIcon />, roles: ['admin', 'manager'] },

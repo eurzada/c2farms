@@ -22,8 +22,8 @@ model User {
   audit_logs      AuditLog[]
   activity_logs   ActivityLog[]
   reset_tokens    PasswordResetToken[]
-  shipment_orders_created ShipmentOrder[]
-  trucker_assignments     ShipmentAssignment[] @relation("TruckerAssignments")
+  shipping_priorities_created ShippingPriority[]
+  trucker_load_claims     LoadClaim[] @relation("TruckerAssignments")
 
   @@map("users")
 }
@@ -64,7 +64,7 @@ model Farm {
   daily_positions            DailyPosition[]
   terminal_routed_contracts  MarketingContract[]   @relation("TerminalRoutedContracts")
   bu_credit_allocations      TerminalSettlement[]  @relation("BuCreditAllocations")
-  shipment_orders            ShipmentOrder[]
+  shipping_priorities        ShippingPriority[]
 
   @@map("farms")
 }
@@ -363,7 +363,7 @@ model InventoryLocation {
   bins        InventoryBin[]
   submissions CountSubmission[]
   delivery_tickets DeliveryTicket[]
-  shipment_orders  ShipmentOrder[]
+  shipping_priorities  ShippingPriority[]
 
   @@unique([farm_id, code])
   @@map("inventory_locations")
@@ -387,7 +387,7 @@ model InventoryBin {
   bin_counts  BinCount[]
   delivery_tickets DeliveryTicket[]
   withdrawals InventoryWithdrawal[]
-  shipment_orders  ShipmentOrder[]
+  shipping_priorities  ShippingPriority[]
 
   @@unique([farm_id, location_id, bin_number])
   @@map("inventory_bins")
@@ -636,7 +636,7 @@ model MarketingContract {
   transloading_agreements   TerminalContract[] @relation("TransloadingAgreement")
   terminal_tickets          TerminalTicket[]   @relation("TerminalGrainLink")
   terminal_blend_events     TerminalBlendEvent[] @relation("BlendForContract")
-  shipment_orders           ShipmentOrder[]
+  shipping_priorities       ShippingPriority[]
 
   @@unique([farm_id, contract_number])
   @@index([farm_id, commodity_id])
@@ -767,7 +767,7 @@ model DeliveryTicket {
   submitted_by          String?            // user ID of trucker who submitted
   mobile_submitted_at   DateTime?          // device timestamp from mobile app
   client_id               String?            // UUID for offline idempotency
-  shipment_assignment_id  String?            // FK to dispatch assignment (auto-links contract)
+  load_claim_id           String?            // FK to load claim (auto-links contract)
   created_at              DateTime           @default(now())
   updated_at              DateTime           @updatedAt
   marketing_contract    MarketingContract? @relation(fields: [marketing_contract_id], references: [id])
@@ -775,7 +775,7 @@ model DeliveryTicket {
   commodity             Commodity?         @relation(fields: [commodity_id], references: [id])
   bin                   InventoryBin?      @relation(fields: [bin_id], references: [id])
   location                  InventoryLocation? @relation(fields: [location_id], references: [id])
-  shipment_assignment       ShipmentAssignment? @relation(fields: [shipment_assignment_id], references: [id])
+  load_claim                LoadClaim?          @relation(fields: [load_claim_id], references: [id])
   settlement_lines          SettlementLine[]
 
   @@unique([farm_id, client_id])
@@ -1487,21 +1487,19 @@ model ElevatorTicket {
   @@map("elevator_tickets")
 }
 
-// ─── Shipment Dispatch ─────────────────────────────────────────────
+// ─── Shipping Priority Board ──────────────────────────────────────
 
-model ShipmentOrder {
+model ShippingPriority {
   id                    String              @id @default(uuid())
   farm_id               String
   marketing_contract_id String?
   source_location_id    String?
   source_bin_id         String?
-  target_loads          Int                 @default(1)
-  completed_loads       Int                 @default(0)
-  estimated_mt_per_load Float?
-  delivery_window_start DateTime?           @db.Date
-  delivery_window_end   DateTime?           @db.Date
-  status                String              @default("draft") // draft, dispatched, in_progress, complete, cancelled
-  notes                 String?
+  priority_rank         Int                 @default(100)
+  target_loads          Int?                // how many loads Collin wants (null = unlimited)
+  is_paused             Boolean             @default(false)
+  notes                 String?             // gate codes, instructions, warnings
+  status                String              @default("active") // active, done, cancelled
   created_by            String?
   created_at            DateTime            @default(now())
   updated_at            DateTime            @updatedAt
@@ -1511,29 +1509,28 @@ model ShipmentOrder {
   source_location       InventoryLocation?  @relation(fields: [source_location_id], references: [id])
   source_bin            InventoryBin?       @relation(fields: [source_bin_id], references: [id])
   creator               User?               @relation(fields: [created_by], references: [id])
-  assignments           ShipmentAssignment[]
+  load_claims           LoadClaim[]
 
   @@index([farm_id, status])
-  @@index([farm_id, marketing_contract_id])
-  @@map("shipment_orders")
+  @@index([farm_id, priority_rank])
+  @@map("shipping_priorities")
 }
 
-model ShipmentAssignment {
-  id                  String            @id @default(uuid())
-  shipment_order_id   String
-  trucker_user_id     String
-  status              String            @default("pending") // pending, acknowledged, loading, en_route, delivered
-  acknowledged_at     DateTime?
-  loaded_at           DateTime?
-  delivered_at        DateTime?
-  created_at          DateTime          @default(now())
-  updated_at          DateTime          @updatedAt
+model LoadClaim {
+  id                    String              @id @default(uuid())
+  shipping_priority_id  String
+  trucker_user_id       String
+  status                String              @default("claimed") // claimed, delivered, cancelled
+  started_at            DateTime            @default(now())
+  delivered_at          DateTime?
+  created_at            DateTime            @default(now())
+  updated_at            DateTime            @updatedAt
 
-  shipment_order      ShipmentOrder     @relation(fields: [shipment_order_id], references: [id], onDelete: Cascade)
-  trucker             User              @relation("TruckerAssignments", fields: [trucker_user_id], references: [id])
-  delivery_tickets    DeliveryTicket[]
+  shipping_priority     ShippingPriority    @relation(fields: [shipping_priority_id], references: [id], onDelete: Cascade)
+  trucker               User                @relation("TruckerAssignments", fields: [trucker_user_id], references: [id])
+  delivery_tickets      DeliveryTicket[]
 
-  @@index([shipment_order_id])
+  @@index([shipping_priority_id])
   @@index([trucker_user_id, status])
-  @@map("shipment_assignments")
+  @@map("load_claims")
 }
