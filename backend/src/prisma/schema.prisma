@@ -58,6 +58,8 @@ model Farm {
   terminal_contracts         TerminalContract[]
   terminal_settlements       TerminalSettlement[]
   daily_positions            DailyPosition[]
+  terminal_routed_contracts  MarketingContract[]   @relation("TerminalRoutedContracts")
+  bu_credit_allocations      TerminalSettlement[]  @relation("BuCreditAllocations")
 
   @@map("farms")
 }
@@ -577,8 +579,10 @@ model MarketingContract {
   id                        String        @id @default(uuid())
   farm_id                   String
   contract_number           String
-  contract_type             String        @default("third_party") // third_party | transfer (LGX inter-company blending agreement)
-  linked_terminal_contract_id String?     // LGX sale to JGL etc.; only for contract_type=transfer
+  contract_type             String        @default("third_party") // third_party | transfer (legacy LGX inter-company)
+  linked_terminal_contract_id String?     // legacy: LGX sale link; new: transloading agreement link
+  delivery_method           String        @default("direct") // direct | terminal (grain routed through LGX)
+  terminal_farm_id          String?       // FK to Farm (farm_type='terminal') when delivery_method='terminal'
   crop_year                 String        // e.g. "2025/26"
   commodity_id              String
   counterparty_id           String
@@ -617,15 +621,20 @@ model MarketingContract {
   counterparty              Counterparty    @relation(fields: [counterparty_id], references: [id])
   commodity                 Commodity       @relation(fields: [commodity_id], references: [id])
   linked_terminal_contract  TerminalContract? @relation(fields: [linked_terminal_contract_id], references: [id])
+  terminal_farm             Farm?             @relation("TerminalRoutedContracts", fields: [terminal_farm_id], references: [id])
   deliveries                Delivery[]
   cash_flow_entries         CashFlowEntry[]
   delivery_tickets          DeliveryTicket[]
   settlements               Settlement[]
+  transloading_agreements   TerminalContract[] @relation("TransloadingAgreement")
+  terminal_tickets          TerminalTicket[]   @relation("TerminalGrainLink")
+  terminal_blend_events     TerminalBlendEvent[] @relation("BlendForContract")
 
   @@unique([farm_id, contract_number])
   @@index([farm_id, commodity_id])
   @@index([farm_id, status])
   @@index([farm_id, contract_type])
+  @@index([farm_id, delivery_method])
   @@index([linked_terminal_contract_id])
   @@map("marketing_contracts")
 }
@@ -1239,6 +1248,8 @@ model TerminalTicket {
   is_c2_farms     Boolean   @default(false)
   balance_after_kg Float?
   contract_id     String?           // assigned sale contract
+  inventory_stage String    @default("raw_material") // raw_material | wip | finished_goods | shipped
+  marketing_contract_id String?     // which C2-JGL MarketingContract this grain fulfills
 
   status          String    @default("complete") // complete | voided
   scale_source    String    @default("manual")   // manual | scale_api
@@ -1250,6 +1261,7 @@ model TerminalTicket {
   bin      TerminalBin?      @relation(fields: [bin_id], references: [id])
   grower   Counterparty?     @relation(fields: [grower_id], references: [id])
   contract TerminalContract? @relation(fields: [contract_id], references: [id])
+  marketing_contract MarketingContract? @relation("TerminalGrainLink", fields: [marketing_contract_id], references: [id])
   samples TerminalSample[]
   terminal_settlement_lines TerminalSettlementLine[]
 
@@ -1257,6 +1269,7 @@ model TerminalTicket {
   @@index([farm_id, direction])
   @@index([farm_id, ticket_date])
   @@index([farm_id, grower_name])
+  @@index([farm_id, marketing_contract_id])
   @@map("terminal_tickets")
 }
 
@@ -1278,6 +1291,7 @@ model TerminalBlendEvent {
   rail_car_numbers String[]
   car_count       Int
   target_protein  Float?
+  marketing_contract_id String?   // which C2-JGL contract this blend serves
   notes           String?
   created_at      DateTime  @default(now())
   updated_at      DateTime  @updatedAt
@@ -1285,6 +1299,7 @@ model TerminalBlendEvent {
   farm       Farm        @relation(fields: [farm_id], references: [id])
   source_bin TerminalBin @relation("BlendSource", fields: [source_bin_id], references: [id])
   blend_bin  TerminalBin @relation("BlendTarget", fields: [blend_bin_id], references: [id])
+  marketing_contract MarketingContract? @relation("BlendForContract", fields: [marketing_contract_id], references: [id])
 
   @@index([farm_id, blend_date])
   @@map("terminal_blend_events")
@@ -1310,12 +1325,15 @@ model TerminalContract {
   farm_id         String
   contract_number String
   direction       String    // purchase | sale
+  contract_purpose String   @default("grain_trade") // grain_trade | transloading_service
   counterparty_id String
   commodity_id    String
   contracted_mt   Float
   delivered_mt    Float     @default(0)
   remaining_mt    Float
   price_per_mt    Float?
+  transloading_rate Float?  // $/MT for transloading_service contracts
+  marketing_contract_id String? // link to C2 MarketingContract this transloading serves
   ship_mode       String?   // truck | rail
   delivery_point  String?
   start_date      DateTime?
@@ -1330,12 +1348,14 @@ model TerminalContract {
   farm               Farm                @relation(fields: [farm_id], references: [id])
   counterparty       Counterparty        @relation(fields: [counterparty_id], references: [id])
   commodity          Commodity           @relation(fields: [commodity_id], references: [id])
+  marketing_contract MarketingContract?  @relation("TransloadingAgreement", fields: [marketing_contract_id], references: [id])
   settlements        TerminalSettlement[]
   transfer_agreements MarketingContract[]
   assigned_tickets   TerminalTicket[]
 
   @@unique([farm_id, contract_number])
   @@index([farm_id, direction])
+  @@index([farm_id, contract_purpose])
   @@map("terminal_contracts")
 }
 
@@ -1343,10 +1363,12 @@ model TerminalSettlement {
   id                    String    @id @default(uuid())
   farm_id               String
   settlement_number     String
-  type                  String    @default("transfer") // transfer | transloading | buyer_settlement
+  type                  String    @default("bu_credit") // bu_credit | transloading | grain_sale (legacy: transfer | buyer_settlement)
   counterparty_id       String
   contract_id           String?
   marketing_contract_id String?
+  source_bu_farm_id     String?   // for bu_credit: which BU farm is being credited
+  allocation_basis      String?   // proportional | grade_adjusted
   settlement_date       DateTime
   gross_amount          Float     @default(0)
   deductions            Json?
@@ -1354,7 +1376,7 @@ model TerminalSettlement {
   status                String    @default("draft") // draft | finalized | pushed
   pushed_settlement_id  String?
   paired_transfer_id    String?   // links buyer settlement → paired transfer settlement(s)
-  realization_json      Json?     // { transfer_net, buyer_net, margin, margin_per_mt, margin_pct }
+  realization_json      Json?     // legacy: { transfer_net, buyer_net, margin }; kept for non-C2 grain
   settlement_gross      Float?    // gross before deductions (from PDF extraction)
   deductions_summary    Json?     // [{ name, amount, gst, pst, category }] from PDF
   extraction_json       Json?     // raw Claude Vision extraction result
@@ -1364,12 +1386,15 @@ model TerminalSettlement {
   created_at            DateTime  @default(now())
   updated_at            DateTime  @updatedAt
 
-  farm         Farm              @relation(fields: [farm_id], references: [id])
-  counterparty Counterparty      @relation(fields: [counterparty_id], references: [id])
-  contract     TerminalContract? @relation(fields: [contract_id], references: [id])
-  lines        TerminalSettlementLine[]
+  farm            Farm              @relation(fields: [farm_id], references: [id])
+  counterparty    Counterparty      @relation(fields: [counterparty_id], references: [id])
+  contract        TerminalContract? @relation(fields: [contract_id], references: [id])
+  source_bu_farm  Farm?             @relation("BuCreditAllocations", fields: [source_bu_farm_id], references: [id])
+  lines           TerminalSettlementLine[]
 
   @@unique([farm_id, settlement_number])
+  @@index([farm_id, type])
+  @@index([farm_id, source_bu_farm_id])
   @@map("terminal_settlements")
 }
 

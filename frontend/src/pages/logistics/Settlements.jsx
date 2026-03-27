@@ -872,6 +872,18 @@ export default function Settlements() {
             const sortModel = colState?.filter(c => c.sort);
             saveGridState({ sortModel, columnState: colState });
           }}
+          onColumnResized={() => {
+            const colState = gridRef.current?.api?.getColumnState();
+            saveGridState({ columnState: colState });
+          }}
+          onColumnMoved={() => {
+            const colState = gridRef.current?.api?.getColumnState();
+            saveGridState({ columnState: colState });
+          }}
+          onColumnVisible={() => {
+            const colState = gridRef.current?.api?.getColumnState();
+            saveGridState({ columnState: colState });
+          }}
         />
       </Box>
 

@@ -3,11 +3,12 @@ import createLogger from '../utils/logger.js';
 
 const logger = createLogger('terminal:contracts');
 
-export async function getContracts(farmId, { direction, status, page = 1, limit = 50 } = {}) {
+export async function getContracts(farmId, { direction, status, contract_purpose, page = 1, limit = 50 } = {}) {
   try {
     const where = { farm_id: farmId };
     if (direction) where.direction = direction;
     if (status) where.status = status;
+    if (contract_purpose) where.contract_purpose = contract_purpose;
 
     const skip = (page - 1) * limit;
     const [contracts, total] = await Promise.all([
@@ -16,6 +17,7 @@ export async function getContracts(farmId, { direction, status, page = 1, limit 
         include: {
           counterparty: { select: { id: true, name: true, short_code: true } },
           commodity: { select: { id: true, name: true, code: true } },
+          marketing_contract: { select: { id: true, contract_number: true } },
           _count: { select: { settlements: true } },
         },
         orderBy: [{ status: 'asc' }, { created_at: 'desc' }],
@@ -70,12 +72,15 @@ export async function createContract(farmId, data) {
         farm_id: farmId,
         contract_number: data.contract_number,
         direction: data.direction,
+        contract_purpose: data.contract_purpose || 'grain_trade',
         counterparty_id: data.counterparty_id,
         commodity_id: data.commodity_id,
         contracted_mt: data.contracted_mt,
         delivered_mt: data.delivered_mt || 0,
         remaining_mt: remaining,
         price_per_mt: data.price_per_mt || null,
+        transloading_rate: data.transloading_rate || null,
+        marketing_contract_id: data.marketing_contract_id || null,
         ship_mode: data.ship_mode || null,
         delivery_point: data.delivery_point || null,
         start_date: data.start_date ? new Date(data.start_date) : null,
@@ -86,6 +91,7 @@ export async function createContract(farmId, data) {
       include: {
         counterparty: { select: { id: true, name: true } },
         commodity: { select: { id: true, name: true, code: true } },
+        marketing_contract: { select: { id: true, contract_number: true } },
       },
     });
     return contract;
@@ -104,8 +110,9 @@ export async function updateContract(farmId, contractId, data, io) {
 
     const updateData = {};
     const allowed = [
-      'contract_number', 'direction', 'counterparty_id', 'commodity_id',
-      'contracted_mt', 'delivered_mt', 'price_per_mt', 'ship_mode',
+      'contract_number', 'direction', 'contract_purpose', 'counterparty_id', 'commodity_id',
+      'contracted_mt', 'delivered_mt', 'price_per_mt', 'transloading_rate',
+      'marketing_contract_id', 'ship_mode',
       'delivery_point', 'start_date', 'end_date', 'status', 'notes',
       'grade_prices_json', 'blend_requirement_json',
     ];
@@ -232,6 +239,8 @@ export async function getContractSummary(farmId) {
 
   const purchase = contracts.filter(c => c.direction === 'purchase');
   const sale = contracts.filter(c => c.direction === 'sale');
+  const transloading = contracts.filter(c => c.contract_purpose === 'transloading_service');
+  const grainTrade = contracts.filter(c => c.contract_purpose !== 'transloading_service');
 
   return {
     purchase: {
@@ -245,6 +254,15 @@ export async function getContractSummary(farmId) {
       total_contracted_mt: sale.reduce((s, c) => s + c.contracted_mt, 0),
       total_delivered_mt: sale.reduce((s, c) => s + c.delivered_mt, 0),
       total_remaining_mt: sale.reduce((s, c) => s + c.remaining_mt, 0),
+    },
+    transloading: {
+      count: transloading.length,
+      total_contracted_mt: transloading.reduce((s, c) => s + c.contracted_mt, 0),
+      total_revenue: transloading.reduce((s, c) => s + (c.contracted_mt * (c.transloading_rate || 0)), 0),
+    },
+    grain_trade: {
+      count: grainTrade.length,
+      total_contracted_mt: grainTrade.reduce((s, c) => s + c.contracted_mt, 0),
     },
     contracts,
   };

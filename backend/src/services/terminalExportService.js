@@ -325,3 +325,313 @@ export async function generateContractFulfillment(farmId, { buyer } = {}) {
 
   return wb;
 }
+
+// ─── Three-Party Reports ────────────────────────────────────────────────────
+
+const HEADER_STYLE = {
+  font: { bold: true, color: { argb: 'FFFFFFFF' } },
+  fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1565C0' } },
+};
+
+function applyHeaderStyle(ws) {
+  const row = ws.getRow(ws.lastRow?.number === 1 ? 1 : 2);
+  row.font = HEADER_STYLE.font;
+  row.fill = HEADER_STYLE.fill;
+}
+
+/**
+ * BU Credit Allocation Report — shows how buyer settlements were allocated to BU farms.
+ */
+export async function generateBuCreditReport(farmId) {
+  const farm = await prisma.farm.findUnique({ where: { id: farmId } });
+
+  const credits = await prisma.terminalSettlement.findMany({
+    where: { farm_id: farmId, type: 'bu_credit' },
+    include: {
+      counterparty: { select: { name: true } },
+      source_bu_farm: { select: { name: true } },
+      contract: { select: { contract_number: true } },
+      lines: { orderBy: { line_number: 'asc' } },
+    },
+    orderBy: { settlement_date: 'desc' },
+  });
+
+  // Also get linked MarketingContracts for contract numbers
+  const mcIds = [...new Set(credits.map(c => c.marketing_contract_id).filter(Boolean))];
+  const mcs = mcIds.length > 0 ? await prisma.marketingContract.findMany({
+    where: { id: { in: mcIds } },
+    select: { id: true, contract_number: true, commodity: { select: { name: true } } },
+  }) : [];
+  const mcMap = new Map(mcs.map(m => [m.id, m]));
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'C2 Farms Terminal';
+  wb.created = new Date();
+  const ws = wb.addWorksheet('BU Credit Allocations');
+
+  ws.addRow([`${farm?.name || 'LGX'} — BU Credit Allocation Report`, '', '', '', `Generated: ${new Date().toLocaleDateString('en-CA')}`]);
+  ws.getRow(1).font = { bold: true, size: 12 };
+
+  ws.addRow([]);
+  ws.addRow(['Settlement #', 'Date', 'Contract #', 'Commodity', 'Buyer', 'BU Farm', 'Basis', 'Contributed MT', '$/MT', 'Allocated Amount']);
+  applyHeaderStyle(ws);
+
+  let totalAllocated = 0;
+
+  for (const credit of credits) {
+    const mc = mcMap.get(credit.marketing_contract_id);
+    const line = credit.lines[0];
+    totalAllocated += credit.net_amount || 0;
+
+    ws.addRow([
+      credit.settlement_number,
+      credit.settlement_date ? new Date(credit.settlement_date).toLocaleDateString('en-CA') : '',
+      mc?.contract_number || credit.contract?.contract_number || '',
+      mc?.commodity?.name || '',
+      credit.counterparty?.name || '',
+      credit.source_bu_farm?.name || line?.source_farm_name || '',
+      credit.allocation_basis || '',
+      line?.net_weight_mt || 0,
+      line?.price_per_mt || 0,
+      credit.net_amount || 0,
+    ]);
+  }
+
+  // Total row
+  const totalRow = ws.addRow(['TOTAL', '', '', '', '', '', '', '', '', totalAllocated]);
+  totalRow.font = { bold: true };
+
+  // Format currency columns
+  ws.getColumn(9).numFmt = '$#,##0.00';
+  ws.getColumn(10).numFmt = '$#,##0.00';
+  ws.getColumn(8).numFmt = '#,##0.000';
+
+  // Auto-width
+  ws.columns.forEach(col => { col.width = Math.max(col.width || 12, 14); });
+
+  logger.info('Generated BU credit report', { farmId, credits: credits.length });
+  return wb;
+}
+
+/**
+ * LGX P&L Report — transloading revenue by buyer and month.
+ */
+export async function generateTransloadingPnlReport(farmId) {
+  const farm = await prisma.farm.findUnique({ where: { id: farmId } });
+
+  const settlements = await prisma.terminalSettlement.findMany({
+    where: { farm_id: farmId, type: 'transloading' },
+    include: {
+      counterparty: { select: { name: true } },
+      contract: { select: { contract_number: true, transloading_rate: true } },
+      lines: true,
+    },
+    orderBy: { settlement_date: 'desc' },
+  });
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'C2 Farms Terminal';
+  wb.created = new Date();
+
+  // Sheet 1: Detail
+  const wsDetail = wb.addWorksheet('Transloading Revenue');
+  wsDetail.addRow([`${farm?.name || 'LGX'} — Transloading Revenue Report`, '', '', '', `Generated: ${new Date().toLocaleDateString('en-CA')}`]);
+  wsDetail.getRow(1).font = { bold: true, size: 12 };
+  wsDetail.addRow([]);
+  wsDetail.addRow(['Settlement #', 'Date', 'Contract #', 'Buyer', 'Rate $/MT', 'Total MT', 'Gross Amount', 'Net Amount', 'Status']);
+  const hRow = wsDetail.getRow(3);
+  hRow.font = HEADER_STYLE.font;
+  hRow.fill = HEADER_STYLE.fill;
+
+  let totalRevenue = 0;
+  let totalMt = 0;
+
+  for (const s of settlements) {
+    const mt = s.lines.reduce((sum, l) => sum + (l.net_weight_mt || 0), 0);
+    totalRevenue += s.net_amount || 0;
+    totalMt += mt;
+
+    wsDetail.addRow([
+      s.settlement_number,
+      s.settlement_date ? new Date(s.settlement_date).toLocaleDateString('en-CA') : '',
+      s.contract?.contract_number || '',
+      s.counterparty?.name || '',
+      s.contract?.transloading_rate || '',
+      mt,
+      s.gross_amount || 0,
+      s.net_amount || 0,
+      s.status,
+    ]);
+  }
+
+  const totRow = wsDetail.addRow(['TOTAL', '', '', '', '', totalMt, totalRevenue, totalRevenue, '']);
+  totRow.font = { bold: true };
+  wsDetail.getColumn(5).numFmt = '$#,##0.00';
+  wsDetail.getColumn(7).numFmt = '$#,##0.00';
+  wsDetail.getColumn(8).numFmt = '$#,##0.00';
+  wsDetail.getColumn(6).numFmt = '#,##0.000';
+  wsDetail.columns.forEach(col => { col.width = Math.max(col.width || 12, 15); });
+
+  // Sheet 2: Summary by buyer
+  const wsBuyer = wb.addWorksheet('By Buyer');
+  wsBuyer.addRow(['Buyer', 'Invoices', 'Total MT', 'Total Revenue']);
+  const bHRow = wsBuyer.getRow(1);
+  bHRow.font = HEADER_STYLE.font;
+  bHRow.fill = HEADER_STYLE.fill;
+
+  const byBuyer = new Map();
+  for (const s of settlements) {
+    const name = s.counterparty?.name || 'Unknown';
+    if (!byBuyer.has(name)) byBuyer.set(name, { count: 0, mt: 0, revenue: 0 });
+    const g = byBuyer.get(name);
+    g.count += 1;
+    g.mt += s.lines.reduce((sum, l) => sum + (l.net_weight_mt || 0), 0);
+    g.revenue += s.net_amount || 0;
+  }
+  for (const [name, data] of byBuyer) {
+    wsBuyer.addRow([name, data.count, data.mt, data.revenue]);
+  }
+  wsBuyer.getColumn(3).numFmt = '#,##0.000';
+  wsBuyer.getColumn(4).numFmt = '$#,##0.00';
+  wsBuyer.columns.forEach(col => { col.width = Math.max(col.width || 12, 18); });
+
+  // Sheet 3: Summary by month
+  const wsMonth = wb.addWorksheet('By Month');
+  wsMonth.addRow(['Month', 'Invoices', 'Total MT', 'Total Revenue']);
+  const mHRow = wsMonth.getRow(1);
+  mHRow.font = HEADER_STYLE.font;
+  mHRow.fill = HEADER_STYLE.fill;
+
+  const byMonth = new Map();
+  for (const s of settlements) {
+    const month = s.settlement_date ? new Date(s.settlement_date).toISOString().slice(0, 7) : 'unknown';
+    if (!byMonth.has(month)) byMonth.set(month, { count: 0, mt: 0, revenue: 0 });
+    const g = byMonth.get(month);
+    g.count += 1;
+    g.mt += s.lines.reduce((sum, l) => sum + (l.net_weight_mt || 0), 0);
+    g.revenue += s.net_amount || 0;
+  }
+  for (const [month, data] of [...byMonth.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    wsMonth.addRow([month, data.count, data.mt, data.revenue]);
+  }
+  wsMonth.getColumn(3).numFmt = '#,##0.000';
+  wsMonth.getColumn(4).numFmt = '$#,##0.00';
+  wsMonth.columns.forEach(col => { col.width = Math.max(col.width || 12, 18); });
+
+  logger.info('Generated transloading P&L report', { farmId, settlements: settlements.length, totalRevenue });
+  return wb;
+}
+
+/**
+ * Inventory Flow Report — tracks grain through inventory stages at LGX.
+ * Shows: raw_material → wip → finished_goods → shipped
+ */
+export async function generateInventoryFlowReport(farmId) {
+  const farm = await prisma.farm.findUnique({ where: { id: farmId } });
+
+  // Get all tickets with inventory stages
+  const tickets = await prisma.terminalTicket.findMany({
+    where: { farm_id: farmId, status: 'complete' },
+    select: {
+      ticket_number: true, direction: true, ticket_date: true,
+      grower_name: true, product: true, weight_kg: true,
+      inventory_stage: true, is_c2_farms: true,
+      rail_car_number: true, sold_to: true,
+      marketing_contract: { select: { contract_number: true } },
+    },
+    orderBy: { ticket_date: 'asc' },
+  });
+
+  // Get blend events
+  const blends = await prisma.terminalBlendEvent.findMany({
+    where: { farm_id: farmId },
+    select: {
+      blend_date: true, description: true,
+      total_output_kg: true, source_bin_kg: true, blend_bin_kg: true,
+      rail_car_numbers: true, car_count: true, target_protein: true,
+      marketing_contract: { select: { contract_number: true } },
+    },
+    orderBy: { blend_date: 'asc' },
+  });
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'C2 Farms Terminal';
+  wb.created = new Date();
+
+  // Sheet 1: Ticket flow
+  const ws = wb.addWorksheet('Inventory Flow');
+  ws.addRow([`${farm?.name || 'LGX'} — Inventory Flow Report`, '', '', '', `Generated: ${new Date().toLocaleDateString('en-CA')}`]);
+  ws.getRow(1).font = { bold: true, size: 12 };
+  ws.addRow([]);
+  ws.addRow(['Ticket #', 'Date', 'Direction', 'Stage', 'Grower/Buyer', 'Product', 'Weight MT', 'C2 Farms', 'Rail Car', 'Contract #']);
+  const hRow2 = ws.getRow(3);
+  hRow2.font = HEADER_STYLE.font;
+  hRow2.fill = HEADER_STYLE.fill;
+
+  const stageStats = { raw_material: 0, wip: 0, finished_goods: 0, shipped: 0, unknown: 0 };
+
+  for (const t of tickets) {
+    const mt = (t.weight_kg || 0) / 1000;
+    const stage = t.inventory_stage || (t.direction === 'inbound' ? 'raw_material' : 'finished_goods');
+    stageStats[stage] = (stageStats[stage] || 0) + mt;
+
+    ws.addRow([
+      t.ticket_number,
+      t.ticket_date ? new Date(t.ticket_date).toLocaleDateString('en-CA') : '',
+      t.direction,
+      stage,
+      t.direction === 'inbound' ? (t.grower_name || '') : (t.sold_to || ''),
+      t.product || '',
+      mt,
+      t.is_c2_farms ? 'Yes' : 'No',
+      t.rail_car_number || '',
+      t.marketing_contract?.contract_number || '',
+    ]);
+  }
+
+  ws.getColumn(7).numFmt = '#,##0.000';
+  ws.columns.forEach(col => { col.width = Math.max(col.width || 12, 14); });
+
+  // Sheet 2: Stage summary
+  const wsSummary = wb.addWorksheet('Stage Summary');
+  wsSummary.addRow(['Inventory Stage', 'Total MT', 'Description']);
+  const sHRow = wsSummary.getRow(1);
+  sHRow.font = HEADER_STYLE.font;
+  sHRow.fill = HEADER_STYLE.fill;
+
+  wsSummary.addRow(['Raw Material', stageStats.raw_material, 'Grain received at LGX, sitting in bins']);
+  wsSummary.addRow(['Work in Process', stageStats.wip, 'Grain being blended']);
+  wsSummary.addRow(['Finished Goods', stageStats.finished_goods, 'Blended grain loaded into rail cars']);
+  wsSummary.addRow(['Shipped', stageStats.shipped, 'Delivered to buyer']);
+  wsSummary.addRow(['TOTAL', Object.values(stageStats).reduce((a, b) => a + b, 0), '']);
+  wsSummary.getRow(6).font = { bold: true };
+  wsSummary.getColumn(2).numFmt = '#,##0.000';
+  wsSummary.columns.forEach(col => { col.width = Math.max(col.width || 12, 20); });
+
+  // Sheet 3: Blend events
+  const wsBlend = wb.addWorksheet('Blend Events');
+  wsBlend.addRow(['Date', 'Description', 'Output MT', 'Source MT', 'Blend MT', 'Rail Cars', 'Target Protein', 'Contract #']);
+  const blHRow = wsBlend.getRow(1);
+  blHRow.font = HEADER_STYLE.font;
+  blHRow.fill = HEADER_STYLE.fill;
+
+  for (const b of blends) {
+    wsBlend.addRow([
+      b.blend_date ? new Date(b.blend_date).toLocaleDateString('en-CA') : '',
+      b.description || '',
+      (b.total_output_kg || 0) / 1000,
+      (b.source_bin_kg || 0) / 1000,
+      (b.blend_bin_kg || 0) / 1000,
+      b.rail_car_numbers?.join(', ') || '',
+      b.target_protein || '',
+      b.marketing_contract?.contract_number || '',
+    ]);
+  }
+  wsBlend.getColumn(3).numFmt = '#,##0.000';
+  wsBlend.getColumn(4).numFmt = '#,##0.000';
+  wsBlend.getColumn(5).numFmt = '#,##0.000';
+  wsBlend.columns.forEach(col => { col.width = Math.max(col.width || 12, 16); });
+
+  logger.info('Generated inventory flow report', { farmId, tickets: tickets.length, blends: blends.length });
+  return wb;
+}

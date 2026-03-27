@@ -35,6 +35,7 @@ const MarketingLayout = lazy(() => import('./components/marketing/MarketingLayou
 const MarketingDashboard = lazy(() => import('./pages/marketing/MarketingDashboard'));
 const MarketingContracts = lazy(() => import('./pages/marketing/MarketingContracts'));
 const MarketingBuyers = lazy(() => import('./pages/marketing/MarketingBuyers'));
+const Valuation = lazy(() => import('./pages/marketing/Valuation'));
 const FinancialsLayout = lazy(() => import('./components/financials/FinancialsLayout'));
 const OperationsLayout = lazy(() => import('./components/operations/OperationsLayout'));
 const AgronomyLayout = lazy(() => import('./components/agronomy/AgronomyLayout'));
@@ -198,6 +199,8 @@ export default function App() {
                       <Route path="/logistics/truckers" element={<EnterpriseRoute><LogisticsLayout><TruckerAdmin /></LogisticsLayout></EnterpriseRoute>} />
                       <Route path="/marketing" element={<EnterpriseRoute><Navigate to="/marketing/dashboard" /></EnterpriseRoute>} />
                       <Route path="/marketing/dashboard" element={<EnterpriseRoute><MarketingLayout><MarketingDashboard /></MarketingLayout></EnterpriseRoute>} />
+                      <Route path="/marketing/valuation" element={<EnterpriseRoute><MarketingLayout><Valuation /></MarketingLayout></EnterpriseRoute>} />
+                      <Route path="/marketing/spot-value" element={<Navigate to="/marketing/valuation" replace />} />
                       <Route path="/marketing/contracts" element={<EnterpriseRoute><MarketingLayout><MarketingContracts /></MarketingLayout></EnterpriseRoute>} />
                       <Route path="/marketing/buyers" element={<EnterpriseRoute><MarketingLayout><MarketingBuyers /></MarketingLayout></EnterpriseRoute>} />
 

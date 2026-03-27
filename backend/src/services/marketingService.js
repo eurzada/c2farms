@@ -1558,3 +1558,223 @@ export async function getSpotInventoryValue(farmId) {
     period_date: matrix.periodDate,
   };
 }
+
+// ─── Three-Tier Inventory Valuation ──────────────────────────────────
+
+/**
+ * Determine the current crop year cutoff.
+ * Crop year "2026" = grain harvested in 2026 (not yet in bin).
+ * We use the calendar year as the cutoff.
+ */
+function currentCropYear() {
+  return String(new Date().getFullYear());
+}
+
+/**
+ * Three-tier inventory valuation. Enterprise-view only.
+ *
+ * Tier 1: Basis/HTA contracts → mark-to-market at current futures ± basis
+ * Tier 2: Fixed-price contracts → locked contract price
+ * Tier 3: Uncontracted grain → spot price × 0.98 (dockage)
+ *
+ * Exclusions: LGX location (double-count risk), future crop year contracts,
+ * transfer contracts (internal C2↔LGX).
+ */
+export async function getInventoryValuation(farmId) {
+  const excludeCropYear = currentCropYear();
+
+  // Parallel fetch: inventory, prices, contracts
+  const [matrix, latestPrices, contracts] = await Promise.all([
+    getMarketLocationMatrix(farmId),
+    getLatestPrices(farmId),
+    prisma.marketingContract.findMany({
+      where: {
+        farm_id: farmId,
+        status: { in: ['executed', 'in_delivery'] },
+        remaining_mt: { gt: 0 },
+        contract_type: 'third_party',
+        crop_year: { lt: excludeCropYear },
+      },
+      include: { commodity: true, counterparty: true },
+      orderBy: [{ commodity_id: 'asc' }, { contract_number: 'asc' }],
+    }),
+  ]);
+
+  // Build price lookup by commodity_id
+  const priceMap = {};
+  for (const p of latestPrices) priceMap[p.commodity_id] = p;
+
+  // Aggregate inventory by commodity, EXCLUDING LGX location
+  const inventoryByCommodity = {};
+  for (const code of matrix.commodities) {
+    const meta = matrix.commodityMeta[code];
+    let totalMt = 0;
+    for (const row of matrix.rows) {
+      if (row.location === 'LGX') continue;
+      totalMt += row.values[code] || 0;
+    }
+    inventoryByCommodity[code] = { ...meta, total_mt: totalMt };
+  }
+
+  // ─── Tier 1: Basis / HTA ───
+  const tier1Rows = [];
+  const tier1ByCommodity = {};  // code → sum of remaining_mt
+
+  for (const c of contracts) {
+    if (!['basis', 'hta'].includes(c.pricing_type)) continue;
+    const code = c.commodity?.code;
+    if (!code) continue;
+
+    const factor = buToMtFactor(c.commodity.lbs_per_bu);
+    const mp = priceMap[c.commodity_id];
+    const futuresClose = mp?.futures_close || null;
+    const basisLevel = c.basis_level || 0;  // basis is in $/MT
+    const needsPrice = !futuresClose;
+
+    // Basis is in $/MT: convert futures to $/MT, add basis, convert back to $/bu
+    const futuresPerMt = futuresClose ? futuresClose * factor : null;
+    const calcPriceMt = futuresPerMt != null ? futuresPerMt + basisLevel : null;
+    const calcPriceBu = calcPriceMt != null ? calcPriceMt / factor : null;
+    const totalValue = calcPriceMt ? c.remaining_mt * calcPriceMt : 0;
+
+    tier1Rows.push({
+      commodity_name: c.commodity.name,
+      commodity_code: code,
+      contract_number: c.contract_number,
+      buyer: c.counterparty?.name || '—',
+      remaining_mt: c.remaining_mt,
+      basis_level: basisLevel,
+      futures_reference: c.futures_reference || mp?.futures_reference || null,
+      futures_close: futuresClose,
+      calc_price_per_bu: calcPriceBu,
+      calc_price_per_mt: calcPriceMt,
+      total_value: totalValue,
+      needs_price: needsPrice,
+      pricing_type: c.pricing_type,
+    });
+
+    tier1ByCommodity[code] = (tier1ByCommodity[code] || 0) + c.remaining_mt;
+  }
+
+  // ─── Tier 2: Fixed Price ───
+  const tier2Rows = [];
+  const tier2ByCommodity = {};
+
+  for (const c of contracts) {
+    if (!['flat', 'deferred', 'min_price'].includes(c.pricing_type)) continue;
+    if (c.price_per_bu == null && c.price_per_mt == null) continue;
+    const code = c.commodity?.code;
+    if (!code) continue;
+
+    const factor = buToMtFactor(c.commodity.lbs_per_bu);
+    const priceBu = c.price_per_bu;
+    const priceMt = c.price_per_mt || (priceBu ? priceBu * factor : 0);
+    const totalValue = c.remaining_mt * priceMt;
+
+    tier2Rows.push({
+      commodity_name: c.commodity.name,
+      commodity_code: code,
+      contract_number: c.contract_number,
+      buyer: c.counterparty?.name || '—',
+      remaining_mt: c.remaining_mt,
+      price_per_bu: priceBu,
+      price_per_mt: priceMt,
+      total_value: totalValue,
+      pricing_type: c.pricing_type,
+    });
+
+    tier2ByCommodity[code] = (tier2ByCommodity[code] || 0) + c.remaining_mt;
+  }
+
+  // ─── Tier 3: Uncontracted (Spot) ───
+  // Build weighted-avg contract price map for spot fallback
+  const contractAvgMap = {};
+  for (const c of contracts) {
+    if (c.price_per_bu == null || c.contracted_mt <= 0) continue;
+    const code = c.commodity?.code;
+    if (!code) continue;
+    if (!contractAvgMap[c.commodity_id]) {
+      contractAvgMap[c.commodity_id] = { sumPriceMt: 0, sumMt: 0, count: 0 };
+    }
+    contractAvgMap[c.commodity_id].sumPriceMt += c.price_per_bu * c.contracted_mt;
+    contractAvgMap[c.commodity_id].sumMt += c.contracted_mt;
+    contractAvgMap[c.commodity_id].count += 1;
+  }
+  const wavgMap = {};
+  for (const [id, agg] of Object.entries(contractAvgMap)) {
+    wavgMap[id] = { wavg_price_per_bu: agg.sumPriceMt / agg.sumMt, contract_count: agg.count };
+  }
+
+  const tier3Rows = [];
+  for (const code of matrix.commodities) {
+    const meta = inventoryByCommodity[code];
+    if (!meta) continue;
+
+    const contracted = (tier1ByCommodity[code] || 0) + (tier2ByCommodity[code] || 0);
+    const uncontracted = Math.max(0, meta.total_mt - contracted);
+    if (uncontracted === 0 && meta.total_mt === 0) continue;
+
+    const spot = resolveSpotPrice(meta, priceMap, wavgMap);
+    const totalValue = spot.price_per_mt ? uncontracted * spot.price_per_mt * DOCKAGE_FACTOR : 0;
+
+    tier3Rows.push({
+      commodity_name: meta.name,
+      commodity_code: code,
+      commodity_id: meta.id,
+      lbs_per_bu: meta.lbs_per_bu,
+      inventory_mt: meta.total_mt,
+      contracted_mt: contracted,
+      uncontracted_mt: uncontracted,
+      spot_price_per_bu: spot.price_per_bu,
+      spot_price_per_mt: spot.price_per_mt,
+      spot_source: spot.source,
+      spot_source_detail: spot.source_detail,
+      total_value: totalValue,
+      stale: spot.stale,
+      days_old: spot.days_old,
+    });
+  }
+
+  // ─── Summary ───
+  const tier1Value = tier1Rows.reduce((s, r) => s + r.total_value, 0);
+  const tier2Value = tier2Rows.reduce((s, r) => s + r.total_value, 0);
+  const tier3Value = tier3Rows.reduce((s, r) => s + r.total_value, 0);
+  const tier1Mt = tier1Rows.reduce((s, r) => s + r.remaining_mt, 0);
+  const tier2Mt = tier2Rows.reduce((s, r) => s + r.remaining_mt, 0);
+  const tier3Mt = tier3Rows.reduce((s, r) => s + r.uncontracted_mt, 0);
+  const totalInventoryMt = Object.values(inventoryByCommodity).reduce((s, c) => s + c.total_mt, 0);
+
+  return {
+    tier1: {
+      label: 'Basis / HTA Contracts',
+      rows: tier1Rows,
+      total_mt: tier1Mt,
+      total_value: tier1Value,
+    },
+    tier2: {
+      label: 'Fixed-Price Contracts',
+      rows: tier2Rows,
+      total_mt: tier2Mt,
+      total_value: tier2Value,
+    },
+    tier3: {
+      label: 'Uncontracted Grain (Spot)',
+      rows: tier3Rows,
+      total_mt: tier3Mt,
+      total_value: tier3Value,
+      dockage_pct: 1 - DOCKAGE_FACTOR,
+    },
+    summary: {
+      tier1_value: tier1Value,
+      tier2_value: tier2Value,
+      tier3_value: tier3Value,
+      grand_total_value: tier1Value + tier2Value + tier3Value,
+      tier1_mt: tier1Mt,
+      tier2_mt: tier2Mt,
+      tier3_mt: tier3Mt,
+      total_inventory_mt: totalInventoryMt,
+    },
+    as_of: new Date().toISOString(),
+    period_date: matrix.periodDate,
+  };
+}

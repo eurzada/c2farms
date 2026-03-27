@@ -14,6 +14,7 @@ import { reconcileTransferTickets, createSettlementFromMatches } from '../servic
 import * as contractService from '../services/terminalContractService.js';
 import * as settlementService from '../services/terminalSettlementService.js';
 import * as exportService from '../services/terminalExportService.js';
+import * as buCreditService from '../services/buCreditAllocationService.js';
 import PdfPrinter from 'pdfmake';
 import { getFontPaths } from '../utils/fontPaths.js';
 
@@ -446,9 +447,9 @@ router.post('/:farmId/terminal/contracts/import-pdf/check-duplicate', authentica
 
 router.get('/:farmId/terminal/contracts', authenticate, async (req, res, next) => {
   try {
-    const { direction, status, page = '1', limit = '50' } = req.query;
+    const { direction, status, contract_purpose, page = '1', limit = '50' } = req.query;
     const data = await contractService.getContracts(req.params.farmId, {
-      direction, status, page: parseInt(page), limit: parseInt(limit),
+      direction, status, contract_purpose, page: parseInt(page), limit: parseInt(limit),
     });
     res.json(data);
   } catch (err) { next(err); }
@@ -546,6 +547,114 @@ router.post('/:farmId/terminal/contracts/:contractId/reconcile-transfer/approve'
       { settlement_number, notes, io }
     );
     res.json(result);
+  } catch (err) { next(err); }
+});
+
+// ── BU Credit Allocations ────────────────────────────────────────────────────
+
+// Preview BU credit allocations for a contract (dry run)
+router.post('/:farmId/terminal/contracts/:contractId/bu-credits/preview', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { settlementNetAmount } = req.body;
+    if (!settlementNetAmount || settlementNetAmount <= 0) {
+      return res.status(400).json({ error: 'settlementNetAmount is required and must be positive' });
+    }
+    const allocations = await buCreditService.computeAllocations(
+      req.params.farmId,
+      req.params.contractId,
+      settlementNetAmount
+    );
+    res.json({ allocations, total: settlementNetAmount });
+  } catch (err) { next(err); }
+});
+
+// Create BU credit allocations (full cascade)
+router.post('/:farmId/terminal/contracts/:contractId/bu-credits', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { settlementNetAmount, counterpartyId } = req.body;
+    if (!settlementNetAmount || !counterpartyId) {
+      return res.status(400).json({ error: 'settlementNetAmount and counterpartyId are required' });
+    }
+    const io = req.app.get('io');
+    const result = await buCreditService.processBuCreditCascade(
+      req.params.farmId,
+      req.params.contractId,
+      settlementNetAmount,
+      counterpartyId,
+      io
+    );
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// Get existing BU credits for a contract
+router.get('/:farmId/terminal/contracts/:contractId/bu-credits', authenticate, async (req, res, next) => {
+  try {
+    const credits = await buCreditService.getBuCredits(req.params.farmId, req.params.contractId);
+    res.json(credits);
+  } catch (err) { next(err); }
+});
+
+// ── Grain Sale Settlements (Three-Party Workflow) ───────────────────────────
+
+// Upload buyer settlement PDF for a terminal-routed grain sale contract
+// Creates an enterprise Settlement (not TerminalSettlement)
+router.post('/:farmId/terminal/grain-sale/upload-pdf', authenticate, requireRole('admin', 'manager'), upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'PDF file required' });
+    const { marketingContractId } = req.body;
+    const result = await settlementService.uploadGrainSaleSettlementPdf(
+      req.params.farmId,
+      req.file.buffer,
+      req.file.originalname,
+      marketingContractId || null
+    );
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// Tonnage-level reconciliation for a terminal-routed settlement
+router.post('/:farmId/terminal/grain-sale/:settlementId/reconcile-tonnage', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const summary = await settlementService.reconcileTerminalTonnage(
+      req.params.farmId,
+      req.params.settlementId
+    );
+    res.json(summary);
+  } catch (err) { next(err); }
+});
+
+// Approve tonnage reconciliation → triggers BU credit cascade
+router.post('/:farmId/terminal/grain-sale/:settlementId/approve-tonnage', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const io = req.app.get('io');
+    const result = await settlementService.approveTerminalTonnageRecon(
+      req.params.farmId,
+      req.params.settlementId,
+      io
+    );
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// ── Transloading Service (LGX Revenue) ──────────────────────────────────────
+
+// Auto-generate transloading settlement from outbound tickets
+router.post('/:farmId/terminal/contracts/:contractId/generate-transloading', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const settlement = await settlementService.generateTransloadingSettlement(
+      req.params.farmId,
+      req.params.contractId
+    );
+    res.json(settlement);
+  } catch (err) { next(err); }
+});
+
+// Get transloading revenue summary
+router.get('/:farmId/terminal/transloading-revenue', authenticate, async (req, res, next) => {
+  try {
+    const summary = await settlementService.getTransloadingRevenueSummary(req.params.farmId);
+    res.json(summary);
   } catch (err) { next(err); }
 });
 
@@ -757,6 +866,37 @@ router.get('/:farmId/terminal/reports/contract-fulfillment', authenticate, async
     const wb = await exportService.generateContractFulfillment(req.params.farmId, { buyer });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename=contract-fulfillment.xlsx');
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) { next(err); }
+});
+
+// Three-Party Reports
+router.get('/:farmId/terminal/reports/bu-credits', authenticate, async (req, res, next) => {
+  try {
+    const wb = await exportService.generateBuCreditReport(req.params.farmId);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename=bu-credit-allocations.xlsx');
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) { next(err); }
+});
+
+router.get('/:farmId/terminal/reports/transloading-pnl', authenticate, async (req, res, next) => {
+  try {
+    const wb = await exportService.generateTransloadingPnlReport(req.params.farmId);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename=transloading-pnl.xlsx');
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) { next(err); }
+});
+
+router.get('/:farmId/terminal/reports/inventory-flow', authenticate, async (req, res, next) => {
+  try {
+    const wb = await exportService.generateInventoryFlowReport(req.params.farmId);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename=inventory-flow.xlsx');
     await wb.xlsx.write(res);
     res.end();
   } catch (err) { next(err); }

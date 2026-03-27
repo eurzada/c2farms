@@ -3,6 +3,7 @@ import createLogger from '../utils/logger.js';
 import { resolveInventoryFarm } from './resolveInventoryFarm.js';
 import { getOrCreateLgxCounterparty } from './marketingService.js';
 import { extractSettlementFromPdf } from './settlementService.js';
+import { processBuCreditCascade } from './buCreditAllocationService.js';
 import PdfPrinter from 'pdfmake';
 import { getFontPaths } from '../utils/fontPaths.js';
 
@@ -739,7 +740,24 @@ export async function uploadBuyerSettlementPdf(farmId, pdfBuffer, filename) {
     });
   }
 
-  // 3. Auto-link to TerminalContract by contract_number (direction='sale')
+  // 3. Check if this should use the three-party grain sale flow instead
+  if (extraction.contract_number) {
+    const { farmId: enterpriseFarmId } = await resolveInventoryFarm(farmId);
+    const terminalRoutedMc = await prisma.marketingContract.findFirst({
+      where: {
+        farm_id: enterpriseFarmId,
+        contract_number: extraction.contract_number,
+        delivery_method: 'terminal',
+      },
+    });
+    if (terminalRoutedMc) {
+      logger.info('Detected terminal-routed MarketingContract %s — redirecting to grain sale flow', extraction.contract_number);
+      // Reuse already-extracted data to avoid double extraction
+      return _createGrainSaleFromExtraction(farmId, extraction, buyerFormat, usage, terminalRoutedMc.id);
+    }
+  }
+
+  // 3b. Auto-link to TerminalContract by contract_number (direction='sale') — non-C2 grain flow
   let contractId = null;
   if (extraction.contract_number) {
     const contract = await prisma.terminalContract.findFirst({
@@ -932,7 +950,7 @@ export async function reconcileBuyerSettlement(farmId, settlementId) {
  */
 export async function computeRealization(farmId, settlementId) {
   const settlement = await prisma.terminalSettlement.findFirst({
-    where: { id: settlementId, farm_id: farmId, type: 'buyer_settlement' },
+    where: { id: settlementId, farm_id: farmId, type: { in: ['buyer_settlement', 'grain_sale'] } },
     include: {
       contract: { select: { id: true, contract_number: true } },
       lines: true,
@@ -942,6 +960,18 @@ export async function computeRealization(farmId, settlementId) {
 
   if (!settlement.contract_id) {
     throw Object.assign(new Error('No contract linked to this buyer settlement'), { status: 400 });
+  }
+
+  // Guard: if linked MarketingContract is terminal-routed C2 grain, use new workflow
+  if (settlement.contract_id) {
+    const linkedMc = await prisma.marketingContract.findFirst({
+      where: { linked_terminal_contract_id: settlement.contract_id },
+    });
+    if (linkedMc?.delivery_method === 'terminal') {
+      throw Object.assign(new Error(
+        'This contract uses the three-party workflow. Use grain-sale/reconcile-tonnage and grain-sale/approve-tonnage instead of computeRealization.'
+      ), { status: 400 });
+    }
   }
 
   // Find all transfer settlements on the same contract
@@ -1026,7 +1056,7 @@ export async function finalizeBuyerSettlement(farmId, settlementId) {
  */
 export async function pushBuyerToLogistics(farmId, settlementId, io) {
   const settlement = await prisma.terminalSettlement.findFirst({
-    where: { id: settlementId, farm_id: farmId, type: 'buyer_settlement' },
+    where: { id: settlementId, farm_id: farmId, type: { in: ['buyer_settlement', 'grain_sale'] } },
     include: {
       contract: {
         select: {
@@ -1051,6 +1081,18 @@ export async function pushBuyerToLogistics(farmId, settlementId, io) {
   }
   if (settlement.pushed_settlement_id) {
     throw Object.assign(new Error('Settlement has already been pushed'), { status: 400 });
+  }
+
+  // Guard: if linked MarketingContract is terminal-routed C2 grain, use new workflow
+  if (settlement.contract_id) {
+    const linkedMc = await prisma.marketingContract.findFirst({
+      where: { linked_terminal_contract_id: settlement.contract_id },
+    });
+    if (linkedMc?.delivery_method === 'terminal') {
+      throw Object.assign(new Error(
+        'This contract uses the three-party workflow. Use uploadGrainSaleSettlementPdf and approveTerminalTonnageRecon instead.'
+      ), { status: 400 });
+    }
   }
 
   const realization = settlement.realization_json;
@@ -1439,4 +1481,621 @@ export async function getSettlementWithPairedData(farmId, settlementId) {
   }
 
   return settlement;
+}
+
+// ─── Three-Party Workflow: Grain Sale Settlement (C2 → Buyer via Terminal) ──
+
+/**
+ * Upload a buyer settlement PDF for a terminal-routed grain sale contract.
+ * Unlike uploadBuyerSettlementPdf (which creates a TerminalSettlement),
+ * this creates an enterprise Settlement directly linked to the MarketingContract.
+ *
+ * Flow: PDF → extract → create enterprise Settlement → ready for tonnage recon
+ *
+ * @param {string} terminalFarmId - LGX terminal farm ID
+ * @param {Buffer} pdfBuffer - PDF file buffer
+ * @param {string} filename - Original filename
+ * @param {string} [marketingContractId] - Optional: pre-link to MarketingContract
+ * @returns {{ settlement, extraction, usage }}
+ */
+export async function uploadGrainSaleSettlementPdf(terminalFarmId, pdfBuffer, filename, marketingContractId) {
+  logger.info('Uploading grain sale settlement PDF (three-party)', { terminalFarmId, filename });
+
+  // 1. Extract via Claude Vision
+  const { extraction, buyerFormat, usage } = await extractSettlementFromPdf(pdfBuffer);
+
+  return _createGrainSaleFromExtraction(terminalFarmId, extraction, buyerFormat, usage, marketingContractId);
+}
+
+/**
+ * Internal helper: create a grain sale enterprise Settlement from pre-extracted PDF data.
+ * Called by uploadGrainSaleSettlementPdf directly, or via uploadBuyerSettlementPdf redirect.
+ */
+async function _createGrainSaleFromExtraction(terminalFarmId, extraction, buyerFormat, usage, marketingContractId) {
+  // 2. Resolve enterprise farm
+  const { farmId: enterpriseFarmId } = await resolveInventoryFarm(terminalFarmId);
+
+  // 3. Find counterparty in enterprise context
+  const buyerName = extraction.buyer || '';
+  let counterparty = await prisma.counterparty.findFirst({
+    where: {
+      farm_id: enterpriseFarmId,
+      name: { contains: buyerName.split(' ')[0], mode: 'insensitive' },
+      is_active: true,
+    },
+  });
+  if (!counterparty) {
+    counterparty = await prisma.counterparty.create({
+      data: {
+        farm_id: enterpriseFarmId,
+        name: buyerName || 'Unknown Buyer',
+        short_code: (buyerName || 'UNK').substring(0, 4).toUpperCase(),
+        type: 'buyer',
+      },
+    });
+  }
+
+  // 4. Auto-link to MarketingContract by contract_number
+  let mcId = marketingContractId || null;
+  if (!mcId && extraction.contract_number) {
+    const mc = await prisma.marketingContract.findFirst({
+      where: {
+        farm_id: enterpriseFarmId,
+        contract_number: extraction.contract_number,
+        delivery_method: 'terminal',
+      },
+    });
+    if (mc) mcId = mc.id;
+  }
+
+  // 5. Build amounts
+  const deductionsSummary = extraction.deductions_summary || [];
+  const totalDeductions = deductionsSummary.reduce((s, d) => s + (d.amount || 0), 0);
+  const grossAmount = extraction.total_gross_amount || extraction.settlement_gross || 0;
+  const netAmount = extraction.total_net_amount || (grossAmount + totalDeductions) || 0;
+
+  // 6. Build settlement number
+  const settlementNumber = extraction.settlement_number
+    ? `GS-${extraction.settlement_number}`
+    : `GS-${Date.now()}`;
+
+  // 7. Build lines from extraction
+  const lines = (extraction.lines || []).map((line, idx) => ({
+    line_number: line.line_number ?? (idx + 1),
+    ticket_number_on_settlement: line.ticket_number ? String(line.ticket_number) : null,
+    contract_number: extraction.contract_number || null,
+    delivery_date: line.delivery_date ? new Date(line.delivery_date) : null,
+    commodity: extraction.commodity || null,
+    grade: line.grade || null,
+    gross_weight_mt: line.gross_weight_mt ?? null,
+    net_weight_mt: line.net_weight_mt ?? null,
+    price_per_mt: line.price_per_mt ?? null,
+    price_per_bu: line.price_per_bu ?? null,
+    line_gross: line.line_gross ?? null,
+    line_net: line.line_net ?? (line.net_weight_mt && line.price_per_mt ? line.net_weight_mt * line.price_per_mt : null),
+    match_status: 'unmatched',
+    match_confidence: null,
+  }));
+
+  // 8. Create enterprise Settlement (not TerminalSettlement)
+  const settlement = await prisma.settlement.create({
+    data: {
+      farm_id: enterpriseFarmId,
+      settlement_number: settlementNumber,
+      source: 'terminal_grain_sale',
+      counterparty_id: counterparty.id,
+      marketing_contract_id: mcId,
+      settlement_date: extraction.settlement_date ? new Date(extraction.settlement_date) : new Date(),
+      total_amount: netAmount,
+      settlement_gross: grossAmount,
+      deductions_summary: deductionsSummary,
+      status: 'pending',
+      buyer_format: buyerFormat,
+      extraction_status: 'completed',
+      extraction_json: extraction,
+      usage_json: usage,
+      notes: `Grain sale settlement via LGX terminal${extraction.contract_number ? ` - Contract #${extraction.contract_number}` : ''}`,
+      lines: { create: lines },
+    },
+    include: {
+      counterparty: { select: { id: true, name: true, short_code: true } },
+      marketing_contract: { select: { id: true, contract_number: true, delivery_method: true } },
+      lines: { orderBy: { line_number: 'asc' } },
+    },
+  });
+
+  logger.info('Created grain sale enterprise settlement', {
+    id: settlement.id,
+    buyer: buyerName,
+    contract: extraction.contract_number,
+    lines: lines.length,
+    gross: grossAmount,
+    net: netAmount,
+  });
+
+  return { settlement, extraction, usage };
+}
+
+/**
+ * Tonnage-level reconciliation for a terminal-routed settlement.
+ * Instead of matching individual tickets, aggregates MT at the contract level.
+ *
+ * Compares:
+ * - C2 side: DeliveryTickets (Traction Ag) shipped to LGX
+ * - LGX inbound: TerminalTickets (inbound, is_c2_farms=true)
+ * - LGX outbound: TerminalTickets (outbound)
+ * - Buyer side: Settlement lines (rail cars)
+ *
+ * @param {string} terminalFarmId - LGX terminal farm ID
+ * @param {string} settlementId - Enterprise Settlement ID
+ * @returns {Object} Tonnage reconciliation summary with three layers
+ */
+export async function reconcileTerminalTonnage(terminalFarmId, settlementId) {
+  const { farmId: enterpriseFarmId } = await resolveInventoryFarm(terminalFarmId);
+
+  // Load the enterprise settlement
+  const settlement = await prisma.settlement.findFirst({
+    where: { id: settlementId, farm_id: enterpriseFarmId },
+    include: {
+      lines: { orderBy: { line_number: 'asc' } },
+      marketing_contract: {
+        select: {
+          id: true,
+          contract_number: true,
+          contracted_mt: true,
+          delivered_mt: true,
+          delivery_method: true,
+          terminal_farm_id: true,
+          grade_prices_json: true,
+          commodity: { select: { id: true, name: true, code: true } },
+          counterparty: { select: { id: true, name: true } },
+        },
+      },
+    },
+  });
+
+  if (!settlement) throw Object.assign(new Error('Settlement not found'), { status: 404 });
+  if (!settlement.marketing_contract) {
+    throw Object.assign(new Error('Settlement not linked to a MarketingContract'), { status: 400 });
+  }
+  if (settlement.marketing_contract.delivery_method !== 'terminal') {
+    throw Object.assign(new Error('Contract is not terminal-routed — use standard reconciliation'), { status: 400 });
+  }
+
+  const mc = settlement.marketing_contract;
+  const resolvedTerminalFarmId = mc.terminal_farm_id || terminalFarmId;
+
+  // Layer 1: C2 DeliveryTickets → LGX (what C2 shipped)
+  const deliveryTickets = await prisma.deliveryTicket.findMany({
+    where: {
+      farm_id: enterpriseFarmId,
+      marketing_contract_id: mc.id,
+    },
+    select: {
+      id: true, ticket_number: true, delivery_date: true,
+      net_weight_mt: true, net_weight_kg: true, grade: true,
+      location: { select: { name: true } },
+    },
+  });
+
+  // Layer 1b: LGX inbound TerminalTickets (C2 grain for this contract)
+  const inboundTickets = await prisma.terminalTicket.findMany({
+    where: {
+      farm_id: resolvedTerminalFarmId,
+      direction: 'inbound',
+      is_c2_farms: true,
+      marketing_contract_id: mc.id,
+      status: 'complete',
+    },
+    select: {
+      id: true, ticket_number: true, ticket_date: true,
+      weight_kg: true, grower_name: true, product: true,
+    },
+  });
+
+  // Layer 2: LGX outbound TerminalTickets (shipped to buyer)
+  const outboundTickets = await prisma.terminalTicket.findMany({
+    where: {
+      farm_id: resolvedTerminalFarmId,
+      direction: 'outbound',
+      marketing_contract_id: mc.id,
+      status: 'complete',
+    },
+    select: {
+      id: true, ticket_number: true, ticket_date: true,
+      weight_kg: true, rail_car_number: true, sold_to: true,
+    },
+  });
+
+  // Layer 3: Settlement lines (what buyer settled)
+  const settledMt = settlement.lines.reduce((s, l) => s + (l.net_weight_mt || 0), 0);
+  const settledGross = settlement.settlement_gross || 0;
+  const settledNet = settlement.total_amount || 0;
+
+  // Aggregate
+  const c2ShippedMt = deliveryTickets.reduce((s, t) => s + (t.net_weight_mt || (t.net_weight_kg || 0) / 1000), 0);
+  const lgxInboundMt = inboundTickets.reduce((s, t) => s + ((t.weight_kg || 0) / 1000), 0);
+  const lgxOutboundMt = outboundTickets.reduce((s, t) => s + ((t.weight_kg || 0) / 1000), 0);
+
+  // Variance calculations
+  const c2VsLgxVariance = c2ShippedMt > 0 ? ((lgxInboundMt - c2ShippedMt) / c2ShippedMt * 100) : null;
+  const lgxVsSettledVariance = lgxOutboundMt > 0 ? ((settledMt - lgxOutboundMt) / lgxOutboundMt * 100) : null;
+  const overallVariance = c2ShippedMt > 0 ? ((settledMt - c2ShippedMt) / c2ShippedMt * 100) : null;
+
+  // BU breakdown (from inbound tickets)
+  const buBreakdown = new Map();
+  for (const t of inboundTickets) {
+    const bu = t.grower_name || 'Unknown';
+    if (!buBreakdown.has(bu)) buBreakdown.set(bu, { mt: 0, tickets: 0 });
+    const group = buBreakdown.get(bu);
+    group.mt += (t.weight_kg || 0) / 1000;
+    group.tickets += 1;
+  }
+
+  const summary = {
+    contract: {
+      id: mc.id,
+      contract_number: mc.contract_number,
+      contracted_mt: mc.contracted_mt,
+      commodity: mc.commodity?.name,
+      counterparty: mc.counterparty?.name,
+      has_grade_prices: Array.isArray(mc.grade_prices_json) && mc.grade_prices_json.length > 0,
+    },
+    layers: {
+      c2_shipped: {
+        total_mt: Math.round(c2ShippedMt * 1000) / 1000,
+        ticket_count: deliveryTickets.length,
+        source: 'DeliveryTicket (Traction Ag)',
+      },
+      lgx_inbound: {
+        total_mt: Math.round(lgxInboundMt * 1000) / 1000,
+        ticket_count: inboundTickets.length,
+        source: 'TerminalTicket (inbound)',
+      },
+      lgx_outbound: {
+        total_mt: Math.round(lgxOutboundMt * 1000) / 1000,
+        ticket_count: outboundTickets.length,
+        source: 'TerminalTicket (outbound)',
+      },
+      settled: {
+        total_mt: Math.round(settledMt * 1000) / 1000,
+        line_count: settlement.lines.length,
+        gross_amount: settledGross,
+        net_amount: settledNet,
+        source: 'Settlement lines (buyer)',
+      },
+    },
+    variances: {
+      c2_vs_lgx_inbound_pct: c2VsLgxVariance != null ? Math.round(c2VsLgxVariance * 100) / 100 : null,
+      lgx_outbound_vs_settled_pct: lgxVsSettledVariance != null ? Math.round(lgxVsSettledVariance * 100) / 100 : null,
+      overall_pct: overallVariance != null ? Math.round(overallVariance * 100) / 100 : null,
+    },
+    bu_breakdown: Array.from(buBreakdown.entries()).map(([name, data]) => ({
+      bu_farm_name: name,
+      contributed_mt: Math.round(data.mt * 1000) / 1000,
+      ticket_count: data.tickets,
+    })),
+    recommendation: Math.abs(overallVariance || 0) <= 5
+      ? 'APPROVE — variance within normal range (<=5%)'
+      : 'REVIEW — variance exceeds 5%, investigate before approving',
+  };
+
+  logger.info('Tonnage reconciliation computed', {
+    settlementId,
+    contractNumber: mc.contract_number,
+    c2Mt: c2ShippedMt,
+    lgxInMt: lgxInboundMt,
+    lgxOutMt: lgxOutboundMt,
+    settledMt,
+    overallVariance,
+  });
+
+  return summary;
+}
+
+/**
+ * Approve a tonnage reconciliation — triggers BU credit cascade and updates contract.
+ *
+ * @param {string} terminalFarmId - LGX terminal farm ID
+ * @param {string} settlementId - Enterprise Settlement ID
+ * @param {Object} io - Socket.io instance
+ * @returns {{ settlement, contract, buCredits }}
+ */
+export async function approveTerminalTonnageRecon(terminalFarmId, settlementId, io) {
+  const { farmId: enterpriseFarmId } = await resolveInventoryFarm(terminalFarmId);
+
+  const settlement = await prisma.settlement.findFirst({
+    where: { id: settlementId, farm_id: enterpriseFarmId },
+    include: {
+      marketing_contract: {
+        select: {
+          id: true,
+          contract_number: true,
+          contracted_mt: true,
+          delivery_method: true,
+          terminal_farm_id: true,
+          counterparty_id: true,
+        },
+      },
+      lines: true,
+    },
+  });
+
+  if (!settlement) throw Object.assign(new Error('Settlement not found'), { status: 404 });
+  if (settlement.status === 'approved') {
+    throw Object.assign(new Error('Settlement already approved'), { status: 400 });
+  }
+  if (!settlement.marketing_contract) {
+    throw Object.assign(new Error('No MarketingContract linked'), { status: 400 });
+  }
+  if (settlement.marketing_contract.delivery_method !== 'terminal') {
+    throw Object.assign(new Error('Contract is not terminal-routed'), { status: 400 });
+  }
+
+  const mc = settlement.marketing_contract;
+  const resolvedTerminalFarmId = mc.terminal_farm_id || terminalFarmId;
+  const netAmount = settlement.total_amount || 0;
+  const settledMt = settlement.lines.reduce((s, l) => s + (l.net_weight_mt || 0), 0);
+
+  // 1. Approve the settlement
+  await prisma.settlement.update({
+    where: { id: settlementId },
+    data: {
+      status: 'approved',
+      reconciliation_report: {
+        type: 'terminal_tonnage',
+        approved_at: new Date().toISOString(),
+        settled_mt: settledMt,
+        net_amount: netAmount,
+      },
+    },
+  });
+
+  // 2. Mark all settlement lines as matched (tonnage-level approval)
+  await prisma.settlementLine.updateMany({
+    where: { settlement_id: settlementId },
+    data: { match_status: 'matched', match_confidence: 1.0 },
+  });
+
+  // 3. Update MarketingContract
+  const newDelivered = settledMt;
+  const rawRemaining = mc.contracted_mt - newDelivered;
+  const newRemaining = rawRemaining < 0.5 ? 0 : rawRemaining;
+  const newStatus = newRemaining <= 0 ? 'fulfilled' : 'in_delivery';
+
+  await prisma.marketingContract.update({
+    where: { id: mc.id },
+    data: {
+      delivered_mt: newDelivered,
+      remaining_mt: newRemaining,
+      status: newStatus,
+      settlement_amount: netAmount,
+    },
+  });
+
+  // 4. Trigger BU credit cascade
+  let buCredits = { allocations: [], settlements: [] };
+  try {
+    buCredits = await processBuCreditCascade(
+      resolvedTerminalFarmId,
+      mc.id,
+      netAmount,
+      mc.counterparty_id,
+      io
+    );
+  } catch (err) {
+    logger.warn('BU credit cascade failed (non-fatal): %s', err.message);
+    // Non-fatal — settlement is still approved, BU credits can be retried
+  }
+
+  // 5. Broadcast
+  if (io) {
+    io.to(enterpriseFarmId).emit('settlement:approved', {
+      id: settlementId,
+      contract_number: mc.contract_number,
+      bu_credits: buCredits.allocations?.length || 0,
+    });
+  }
+
+  logger.info('Tonnage recon approved with BU credits', {
+    settlementId,
+    contractNumber: mc.contract_number,
+    settledMt,
+    netAmount,
+    buCredits: buCredits.allocations?.length || 0,
+  });
+
+  return {
+    settlement: { id: settlementId, status: 'approved' },
+    contract: { id: mc.id, status: newStatus, delivered_mt: newDelivered },
+    buCredits,
+  };
+}
+
+// ─── Transloading Service Fee ───────────────────────────────────────────────
+
+/**
+ * Auto-generate a transloading settlement from outbound tickets for a transloading contract.
+ * Sums outbound ticket tonnage and applies the transloading rate from the contract.
+ *
+ * @param {string} farmId - LGX terminal farm ID
+ * @param {string} contractId - TerminalContract ID (contract_purpose='transloading_service')
+ * @returns {Object} Created TerminalSettlement with lines
+ */
+export async function generateTransloadingSettlement(farmId, contractId) {
+  // Load the transloading contract
+  const contract = await prisma.terminalContract.findFirst({
+    where: { id: contractId, farm_id: farmId },
+    include: {
+      counterparty: { select: { id: true, name: true } },
+      commodity: { select: { id: true, name: true, code: true } },
+      marketing_contract: { select: { id: true, contract_number: true } },
+    },
+  });
+
+  if (!contract) throw Object.assign(new Error('Contract not found'), { status: 404 });
+  if (contract.contract_purpose !== 'transloading_service') {
+    throw Object.assign(new Error('Contract is not a transloading service agreement'), { status: 400 });
+  }
+  if (!contract.transloading_rate || contract.transloading_rate <= 0) {
+    throw Object.assign(new Error('No transloading rate set on contract'), { status: 400 });
+  }
+
+  // Find outbound tickets linked to the associated marketing contract
+  const mcId = contract.marketing_contract_id;
+  const outboundWhere = {
+    farm_id: farmId,
+    direction: 'outbound',
+    status: 'complete',
+  };
+  // Link via marketing_contract_id if available, else via assigned contract_id
+  if (mcId) {
+    outboundWhere.marketing_contract_id = mcId;
+  } else {
+    outboundWhere.contract_id = contractId;
+  }
+
+  const outboundTickets = await prisma.terminalTicket.findMany({
+    where: outboundWhere,
+    select: {
+      id: true,
+      ticket_number: true,
+      ticket_date: true,
+      weight_kg: true,
+      rail_car_number: true,
+      product: true,
+      sold_to: true,
+    },
+    orderBy: { ticket_date: 'asc' },
+  });
+
+  if (outboundTickets.length === 0) {
+    throw Object.assign(new Error('No outbound tickets found for this contract'), { status: 400 });
+  }
+
+  const rate = contract.transloading_rate;
+  const lines = outboundTickets.map((ticket, idx) => {
+    const mt = (ticket.weight_kg || 0) / 1000;
+    return {
+      line_number: idx + 1,
+      ticket_id: ticket.id,
+      source_farm_name: ticket.rail_car_number || `Ticket #${ticket.ticket_number}`,
+      commodity_id: contract.commodity_id || null,
+      grade: null,
+      gross_weight_mt: mt,
+      tare_weight_mt: null,
+      net_weight_mt: mt,
+      price_per_mt: rate,
+      line_amount: Math.round(mt * rate * 100) / 100,
+      match_status: 'matched',
+      match_confidence: 1.0,
+    };
+  });
+
+  const grossAmount = lines.reduce((s, l) => s + (l.line_amount || 0), 0);
+
+  // Generate settlement number
+  const existingCount = await prisma.terminalSettlement.count({
+    where: { farm_id: farmId, type: 'transloading' },
+  });
+  const seq = String(existingCount + 1).padStart(3, '0');
+  const mcNum = contract.marketing_contract?.contract_number || contract.contract_number;
+  const settlementNumber = `TL-${seq}-${mcNum}`;
+
+  const settlement = await prisma.terminalSettlement.create({
+    data: {
+      farm_id: farmId,
+      type: 'transloading',
+      settlement_number: settlementNumber,
+      counterparty_id: contract.counterparty_id,
+      contract_id: contractId,
+      marketing_contract_id: mcId || null,
+      settlement_date: new Date(),
+      gross_amount: grossAmount,
+      net_amount: grossAmount,
+      status: 'draft',
+      notes: `Transloading fee: ${outboundTickets.length} loads × $${rate}/MT = $${grossAmount.toFixed(2)}`,
+      lines: { create: lines },
+    },
+    include: standardIncludes,
+  });
+
+  logger.info('Generated transloading settlement', {
+    id: settlement.id,
+    contractId,
+    loads: outboundTickets.length,
+    totalMt: lines.reduce((s, l) => s + (l.net_weight_mt || 0), 0),
+    rate,
+    amount: grossAmount,
+  });
+
+  return settlement;
+}
+
+/**
+ * Get LGX transloading revenue summary.
+ * Aggregates transloading settlements by buyer, contract, and month.
+ *
+ * @param {string} farmId - LGX terminal farm ID
+ * @returns {Object} Revenue summary
+ */
+export async function getTransloadingRevenueSummary(farmId) {
+  const settlements = await prisma.terminalSettlement.findMany({
+    where: {
+      farm_id: farmId,
+      type: 'transloading',
+    },
+    include: {
+      counterparty: { select: { id: true, name: true, short_code: true } },
+      contract: {
+        select: {
+          id: true, contract_number: true, transloading_rate: true,
+          marketing_contract: { select: { contract_number: true } },
+        },
+      },
+    },
+    orderBy: { settlement_date: 'desc' },
+  });
+
+  // By buyer
+  const byBuyer = new Map();
+  for (const s of settlements) {
+    const buyerName = s.counterparty?.name || 'Unknown';
+    if (!byBuyer.has(buyerName)) byBuyer.set(buyerName, { count: 0, total: 0, mt: 0 });
+    const group = byBuyer.get(buyerName);
+    group.count += 1;
+    group.total += s.net_amount || 0;
+  }
+
+  // By month
+  const byMonth = new Map();
+  for (const s of settlements) {
+    const month = s.settlement_date ? new Date(s.settlement_date).toISOString().slice(0, 7) : 'unknown';
+    if (!byMonth.has(month)) byMonth.set(month, { count: 0, total: 0 });
+    const group = byMonth.get(month);
+    group.count += 1;
+    group.total += s.net_amount || 0;
+  }
+
+  const totalRevenue = settlements.reduce((s, t) => s + (t.net_amount || 0), 0);
+  const draftAmount = settlements.filter(s => s.status === 'draft').reduce((s, t) => s + (t.net_amount || 0), 0);
+  const finalizedAmount = settlements.filter(s => s.status !== 'draft').reduce((s, t) => s + (t.net_amount || 0), 0);
+
+  return {
+    total_revenue: Math.round(totalRevenue * 100) / 100,
+    draft_amount: Math.round(draftAmount * 100) / 100,
+    finalized_amount: Math.round(finalizedAmount * 100) / 100,
+    settlement_count: settlements.length,
+    by_buyer: Array.from(byBuyer.entries()).map(([name, data]) => ({
+      buyer: name,
+      ...data,
+      total: Math.round(data.total * 100) / 100,
+    })),
+    by_month: Array.from(byMonth.entries()).map(([month, data]) => ({
+      month,
+      ...data,
+      total: Math.round(data.total * 100) / 100,
+    })).sort((a, b) => b.month.localeCompare(a.month)),
+    settlements,
+  };
 }

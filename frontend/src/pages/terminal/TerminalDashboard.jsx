@@ -47,6 +47,7 @@ export default function TerminalDashboard() {
   const [data, setData] = useState(null);
   const [contractSummary, setContractSummary] = useState(null);
   const [settlementSummary, setSettlementSummary] = useState(null);
+  const [transloadingRevenue, setTransloadingRevenue] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [exportAnchor, setExportAnchor] = useState(null);
@@ -55,14 +56,16 @@ export default function TerminalDashboard() {
     if (!currentFarm?.id) return;
     try {
       setLoading(true);
-      const [dashRes, ctRes, stRes] = await Promise.all([
+      const [dashRes, ctRes, stRes, tlRes] = await Promise.all([
         api.get(`/api/farms/${currentFarm.id}/terminal/dashboard`),
         api.get(`/api/farms/${currentFarm.id}/terminal/contracts/summary`).catch(() => ({ data: null })),
         api.get(`/api/farms/${currentFarm.id}/terminal/settlements/summary`).catch(() => ({ data: null })),
+        api.get(`/api/farms/${currentFarm.id}/terminal/transloading-revenue`).catch(() => ({ data: null })),
       ]);
       setData(dashRes.data);
       setContractSummary(ctRes.data);
       setSettlementSummary(stRes.data);
+      setTransloadingRevenue(tlRes.data);
     } catch (err) {
       setError(extractErrorMessage(err, 'Failed to load dashboard'));
     } finally {
@@ -138,6 +141,16 @@ export default function TerminalDashboard() {
             <MenuItem onClick={() => handleExport('contract-fulfillment')}>
               <DescriptionIcon sx={{ mr: 1, fontSize: 18 }} /> Contract Fulfillment (Excel)
             </MenuItem>
+            <Divider />
+            <MenuItem onClick={() => handleExport('bu-credits')}>
+              <DescriptionIcon sx={{ mr: 1, fontSize: 18 }} /> BU Credit Allocations (Excel)
+            </MenuItem>
+            <MenuItem onClick={() => handleExport('transloading-pnl')}>
+              <DescriptionIcon sx={{ mr: 1, fontSize: 18 }} /> Transloading P&L (Excel)
+            </MenuItem>
+            <MenuItem onClick={() => handleExport('inventory-flow')}>
+              <DescriptionIcon sx={{ mr: 1, fontSize: 18 }} /> Inventory Flow (Excel)
+            </MenuItem>
           </Menu>
         </Box>
       </Box>
@@ -195,20 +208,20 @@ export default function TerminalDashboard() {
           {contractSummary && (
             <>
               <Grid item xs={12} sm={6} md={3}>
-                <StatCard icon={<GavelIcon />} label="Purchase Contracts" value={`${contractSummary.purchase.count}`} subtitle={`${contractSummary.purchase.total_remaining_mt.toFixed(0)} MT remaining`} color="primary.main" />
+                <StatCard icon={<GavelIcon />} label="Grain Contracts" value={`${contractSummary.grain_trade?.count || (contractSummary.purchase.count + contractSummary.sale.count)}`} subtitle={`${(contractSummary.sale.total_remaining_mt || 0).toFixed(0)} MT remaining to ship`} color="primary.main" />
               </Grid>
               <Grid item xs={12} sm={6} md={3}>
-                <StatCard icon={<GavelIcon />} label="Sale Contracts" value={`${contractSummary.sale.count}`} subtitle={`${contractSummary.sale.total_remaining_mt.toFixed(0)} MT remaining`} color="secondary.main" />
+                <StatCard icon={<GavelIcon />} label="Transloading Agreements" value={`${contractSummary.transloading?.count || 0}`} subtitle={`Projected: ${formatCurrency(contractSummary.transloading?.total_revenue || 0)}`} color="warning.main" />
               </Grid>
             </>
           )}
           {settlementSummary && (
             <>
               <Grid item xs={12} sm={6} md={3}>
-                <StatCard icon={<AccountBalanceIcon />} label="Transfer Settlements" value={formatCurrency(settlementSummary.by_type?.transfer?.total_amount || 0)} subtitle={`${settlementSummary.by_type?.transfer?.count || 0} total`} color="primary.main" />
+                <StatCard icon={<AccountBalanceIcon />} label="Grain Settlements" value={formatCurrency((settlementSummary.by_type?.transfer?.total_amount || 0) + (settlementSummary.by_type?.grain_sale?.total_amount || 0))} subtitle={`${(settlementSummary.by_type?.transfer?.count || 0) + (settlementSummary.by_type?.grain_sale?.count || 0)} settlements`} color="primary.main" />
               </Grid>
               <Grid item xs={12} sm={6} md={3}>
-                <StatCard icon={<AccountBalanceIcon />} label="Transloading Invoices" value={formatCurrency(settlementSummary.by_type?.transloading?.total_amount || 0)} subtitle={`${settlementSummary.by_type?.transloading?.count || 0} total`} color="success.main" />
+                <StatCard icon={<AccountBalanceIcon />} label="Transloading Revenue" value={formatCurrency(settlementSummary.by_type?.transloading?.total_amount || 0)} subtitle={`${settlementSummary.by_type?.transloading?.count || 0} invoices`} color="success.main" />
               </Grid>
             </>
           )}

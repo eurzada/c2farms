@@ -20,6 +20,7 @@ import {
   createTransferAgreementFromTerminal,
   getContractFulfillment,
   getSpotInventoryValue,
+  getInventoryValuation,
 } from '../services/marketingService.js';
 import { broadcastMarketingEvent } from '../socket/handler.js';
 import multer from 'multer';
@@ -51,6 +52,13 @@ router.get('/:farmId/marketing/dashboard', authenticate, async (req, res, next) 
 router.get('/:farmId/marketing/spot-value', authenticate, async (req, res, next) => {
   try {
     const data = await getSpotInventoryValue(req.params.farmId);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/:farmId/marketing/valuation', authenticate, async (req, res, next) => {
+  try {
+    const data = await getInventoryValuation(req.params.farmId);
     res.json(data);
   } catch (err) { next(err); }
 });
