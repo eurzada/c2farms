@@ -27,6 +27,7 @@ import inventoryExportsRoutes from './routes/inventoryExports.js';
 import gradingExportsRoutes from './routes/gradingExports.js';
 import agronomyExportsRoutes from './routes/agronomyExports.js';
 import procurementExportsRoutes from './routes/procurementExports.js';
+import labourExportsRoutes from './routes/labourExports.js';
 import marketingRoutes from './routes/marketing.js';
 import counterpartyRoutes from './routes/counterparties.js';
 import cashFlowRoutes from './routes/cashFlowEntries.js';
@@ -155,6 +156,7 @@ app.use('/api/farms/:farmId/agronomy', authenticate, requireModule('agronomy'));
 app.use('/api/farms', agronomyRoutes);
 
 // Labour planning module
+app.use('/api/labour/export', labourExportsRoutes);
 app.use('/api/labour', labourGeneralRouter);
 app.use('/api/farms', labourRoutes);
 

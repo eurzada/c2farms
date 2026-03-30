@@ -8,6 +8,7 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import LockIcon from '@mui/icons-material/Lock';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import SyncIcon from '@mui/icons-material/Sync';
+import LabourExportButtons from '../../components/labour/LabourExportButtons';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Tooltip as ChartTooltip, Legend } from 'chart.js';
@@ -158,6 +159,7 @@ export default function EnterpriseLabour() {
         <Typography variant="h5" fontWeight="bold">Labour & Fuel Rollup</Typography>
         <Chip icon={<VisibilityIcon />} label="Read-Only" size="small" variant="outlined" />
         <Chip label={`${farmsWithPlans.length} of ${farmData.length} farms`} size="small" color="info" variant="outlined" />
+        {farmsWithPlans.length > 0 && <LabourExportButtons fiscalYear={year} />}
         {isAdmin && farmsWithPlans.length > 0 && (
           <Box sx={{ ml: 'auto', display: 'flex', gap: 1 }}>
             {farmsWithPlans.some(r => ['approved', 'locked'].includes(r.data?.status)) && (
