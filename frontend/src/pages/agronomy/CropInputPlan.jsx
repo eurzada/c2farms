@@ -203,8 +203,7 @@ function InputSection({ title, inputs, allocation, canEdit, onAdd, onDelete, onU
 }
 
 export default function CropInputPlan() {
-  const { currentFarm, farmUnits, canEdit: userCanEdit } = useFarm();
-  const [year, setYear] = useState(2026);
+  const { currentFarm, farmUnits, canEdit: userCanEdit, fiscalYear: year } = useFarm();
   const [plan, setPlan] = useState(null);
   const [loading, setLoading] = useState(true);
   const [addDialog, setAddDialog] = useState(null); // { allocId, category }
@@ -386,14 +385,11 @@ export default function CropInputPlan() {
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-        <Typography variant="h5" fontWeight="bold">Crop Input Plan</Typography>
+        <Box>
+          <Typography variant="h5" fontWeight="bold">Crop Input Plan</Typography>
+          <Typography variant="caption" color="text.secondary">Crop Year {year}</Typography>
+        </Box>
         <Chip label={status.toUpperCase()} color={status === 'approved' ? 'success' : 'default'} size="small" />
-        <FormControl size="small" sx={{ minWidth: 120 }}>
-          <InputLabel>Crop Year</InputLabel>
-          <Select value={year} label="Crop Year" onChange={e => setYear(e.target.value)}>
-            <MenuItem value={2026}>2026</MenuItem>
-          </Select>
-        </FormControl>
         {canEdit && (
           <Button
             variant="outlined"

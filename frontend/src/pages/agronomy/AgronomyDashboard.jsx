@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Paper, Button, Chip, Alert, Stack,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Select, MenuItem, FormControl, InputLabel, LinearProgress, Collapse,
+  LinearProgress, Collapse,
   List, ListItem, ListItemText,
 } from '@mui/material';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
@@ -31,8 +31,7 @@ function KpiCard({ title, value, prefix = '$' }) {
 }
 
 export default function AgronomyDashboard() {
-  const { currentFarm } = useFarm();
-  const [year, setYear] = useState(2026);
+  const { currentFarm, fiscalYear: year } = useFarm();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [importOpen, setImportOpen] = useState(false);
@@ -84,13 +83,10 @@ export default function AgronomyDashboard() {
     return (
       <Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-          <Typography variant="h5" fontWeight="bold">Agronomy Dashboard</Typography>
-          <FormControl size="small" sx={{ minWidth: 120 }}>
-            <InputLabel>Crop Year</InputLabel>
-            <Select value={year} label="Crop Year" onChange={e => setYear(e.target.value)}>
-              <MenuItem value={2026}>2026</MenuItem>
-            </Select>
-          </FormControl>
+          <Box>
+            <Typography variant="h5" fontWeight="bold">Agronomy Dashboard</Typography>
+            <Typography variant="caption" color="text.secondary">Crop Year {year}</Typography>
+          </Box>
           <Box sx={{ flexGrow: 1 }} />
           <Button variant="outlined" size="small" startIcon={<UploadFileIcon />} onClick={() => setImportOpen(true)}>
             Import Plans
@@ -117,14 +113,11 @@ export default function AgronomyDashboard() {
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-        <Typography variant="h5" fontWeight="bold">Agronomy Dashboard</Typography>
+        <Box>
+          <Typography variant="h5" fontWeight="bold">Agronomy Dashboard</Typography>
+          <Typography variant="caption" color="text.secondary">Crop Year {year}</Typography>
+        </Box>
         <Chip label={data.plan_status?.toUpperCase()} color={data.plan_status === 'approved' ? 'success' : data.plan_status === 'draft' ? 'default' : 'warning'} size="small" />
-        <FormControl size="small" sx={{ minWidth: 120 }}>
-          <InputLabel>Crop Year</InputLabel>
-          <Select value={year} label="Crop Year" onChange={e => setYear(e.target.value)}>
-            <MenuItem value={2026}>2026</MenuItem>
-          </Select>
-        </FormControl>
         <Box sx={{ flexGrow: 1 }} />
         <Button variant="outlined" size="small" startIcon={<UploadFileIcon />} onClick={() => setImportOpen(true)}>
           Import Plans

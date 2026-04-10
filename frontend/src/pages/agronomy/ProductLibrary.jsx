@@ -10,6 +10,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import SearchIcon from '@mui/icons-material/Search';
 import api from '../../services/api';
 import { extractErrorMessage } from '../../utils/errorHelpers';
+import { useFarm } from '../../contexts/FarmContext';
 import WorkOrderImportDialog from '../../components/agronomy/WorkOrderImportDialog';
 
 function fmt(n) { return (n || 0).toLocaleString('en-CA', { maximumFractionDigits: 0 }); }
@@ -31,7 +32,8 @@ const TYPE_OPTIONS = [
 const LOCATION_OPTIONS = [{ value: '', label: 'All Locations' }];
 
 export default function ProductLibrary({ year: externalYear }) {
-  const [year, setYear] = useState(externalYear || 2026);
+  const { fiscalYear } = useFarm();
+  const year = externalYear || fiscalYear;
   const [typeFilter, setTypeFilter] = useState('');
   const [locationFilter, setLocationFilter] = useState('');
   const [searchFilter, setSearchFilter] = useState('');
@@ -39,8 +41,6 @@ export default function ProductLibrary({ year: externalYear }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [importOpen, setImportOpen] = useState(false);
-
-  useEffect(() => { if (externalYear) setYear(externalYear); }, [externalYear]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -85,12 +85,7 @@ export default function ProductLibrary({ year: externalYear }) {
       {/* Toolbar */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
         {!externalYear && (
-          <FormControl size="small" sx={{ minWidth: 100 }}>
-            <InputLabel>Year</InputLabel>
-            <Select value={year} label="Year" onChange={e => setYear(e.target.value)}>
-              <MenuItem value={2026}>2026</MenuItem>
-            </Select>
-          </FormControl>
+          <Typography variant="body2" color="text.secondary">Year {year}</Typography>
         )}
         <FormControl size="small" sx={{ minWidth: 120 }}>
           <InputLabel>Type</InputLabel>

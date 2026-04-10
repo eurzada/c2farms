@@ -27,8 +27,7 @@ function fmtDec(n) { return (n || 0).toLocaleString('en-CA', { minimumFractionDi
 const STATUS_COLORS = { draft: 'default', submitted: 'warning', approved: 'success', locked: 'info', rejected: 'error' };
 
 export default function PlanSetup() {
-  const { currentFarm, canEdit, isAdmin } = useFarm();
-  const [year, setYear] = useState(2026);
+  const { currentFarm, canEdit, isAdmin, fiscalYear: year } = useFarm();
   const [plan, setPlan] = useState(null);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
@@ -164,13 +163,10 @@ export default function PlanSetup() {
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3, flexWrap: 'wrap' }}>
-        <Typography variant="h5" fontWeight="bold">Plan Setup</Typography>
-        <FormControl size="small" sx={{ minWidth: 120 }}>
-          <InputLabel>Crop Year</InputLabel>
-          <Select value={year} label="Crop Year" onChange={e => setYear(e.target.value)}>
-            <MenuItem value={2026}>2026</MenuItem>
-          </Select>
-        </FormControl>
+        <Box>
+          <Typography variant="h5" fontWeight="bold">Plan Setup</Typography>
+          <Typography variant="caption" color="text.secondary">Crop Year {year}</Typography>
+        </Box>
         {plan && <Chip label={status.toUpperCase()} color={STATUS_COLORS[status] || 'default'} />}
         {plan?.prepared_by && <Typography variant="body2" color="text.secondary">Prepared by: {plan.prepared_by}</Typography>}
         {plan?.approved_by && <Typography variant="body2" color="text.secondary">Approved by: {plan.approved_by}</Typography>}

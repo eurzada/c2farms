@@ -38,7 +38,7 @@ function KpiCard({ label, value, sub }) {
 }
 
 export default function LabourPlan() {
-  const { currentFarm, canEdit } = useFarm();
+  const { currentFarm, canEdit, fiscalYear: year } = useFarm();
   const { confirm, dialogProps } = useConfirmDialog();
   const [plan, setPlan] = useState(null);
   const [priorPlan, setPriorPlan] = useState(null);
@@ -46,7 +46,6 @@ export default function LabourPlan() {
   const [saving, setSaving] = useState(false);
   const [snack, setSnack] = useState(null);
   const [dirty, setDirty] = useState(false);
-  const year = 2026;
 
   const load = useCallback(async () => {
     if (!currentFarm) return;
