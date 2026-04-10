@@ -70,7 +70,7 @@ export default function Header({ onToggleChat, chatOpen }) {
             onChange={(e) => setFiscalYear(e.target.value)}
           >
             {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i).map(y => (
-              <MenuItem key={y} value={y}>FY {y}</MenuItem>
+              <MenuItem key={y} value={y}>{y}</MenuItem>
             ))}
           </Select>
 

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { AgGridReact } from 'ag-grid-react';
 import {
   Box, Typography, Paper, Grid, Stack, Chip, Alert, Button,
-  TextField, MenuItem, CircularProgress, IconButton, Tooltip,
+  CircularProgress, IconButton, Tooltip,
 } from '@mui/material';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Tooltip as ChartTooltip, Legend } from 'chart.js';
@@ -16,8 +16,6 @@ import api from '../../services/api';
 import { fmt, fmtDollar } from '../../utils/formatting';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ChartTooltip, Legend);
-
-const FY_OPTIONS = [2024, 2025, 2026, 2027];
 
 /** Export ag-Grid data as CSV via its built-in API */
 function exportGridCsv(gridRef, fileName) {
@@ -68,7 +66,7 @@ function KPICard({ label, value, color }) {
 }
 
 export default function LogisticsDashboard() {
-  const { currentFarm } = useFarm();
+  const { currentFarm, fiscalYear } = useFarm();
   const { mode } = useThemeMode();
   const navigate = useNavigate();
   const unsettledGridRef = useRef();
@@ -79,7 +77,6 @@ export default function LogisticsDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [fiscalYear, setFiscalYear] = useState('2026');
 
   const agTheme = mode === 'dark' ? 'ag-theme-alpine-dark' : 'ag-theme-alpine';
 
@@ -235,20 +232,12 @@ export default function LogisticsDashboard() {
     <Box>
       {/* Header */}
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 3 }}>
-        <Typography variant="h5" sx={{ fontWeight: 600 }}>Logistics Dashboard</Typography>
-        <TextField
-          select size="small" label="Fiscal Year"
-          value={fiscalYear}
-          onChange={(e) => setFiscalYear(e.target.value)}
-          sx={{ minWidth: 140 }}
-        >
-          <MenuItem value="">All Years</MenuItem>
-          {FY_OPTIONS.map(fy => (
-            <MenuItem key={fy} value={String(fy)}>
-              FY{fy} (Nov {String(fy - 1).slice(-2)} – Oct {String(fy).slice(-2)})
-            </MenuItem>
-          ))}
-        </TextField>
+        <Box>
+          <Typography variant="h5" sx={{ fontWeight: 600 }}>Logistics Dashboard</Typography>
+          <Typography variant="caption" color="text.secondary">
+            FY{fiscalYear} (Nov {String(fiscalYear - 1).slice(-2)} – Oct {String(fiscalYear).slice(-2)})
+          </Typography>
+        </Box>
       </Stack>
 
       {/* Row 1: KPI Cards */}

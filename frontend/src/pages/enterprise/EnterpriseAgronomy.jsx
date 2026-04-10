@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import {
   Box, Typography, Paper, Alert, Chip, Stack, Button,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  FormControl, InputLabel, Select, MenuItem, useTheme,
+  useTheme,
 } from '@mui/material';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
@@ -39,8 +39,7 @@ function KpiCard({ label, value, sub, color }) {
 
 export default function EnterpriseAgronomy() {
   const theme = useTheme();
-  const { farmUnits, isAdmin } = useFarm();
-  const [year, setYear] = useState(2026);
+  const { farmUnits, isAdmin, fiscalYear: year } = useFarm();
   const [farmData, setFarmData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [bulkLoading, setBulkLoading] = useState(false);
@@ -193,13 +192,10 @@ export default function EnterpriseAgronomy() {
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3, flexWrap: 'wrap' }}>
-        <Typography variant="h5" fontWeight="bold">Agronomy Rollup</Typography>
-        <FormControl size="small" sx={{ minWidth: 120 }}>
-          <InputLabel>Crop Year</InputLabel>
-          <Select value={year} label="Crop Year" onChange={e => setYear(e.target.value)}>
-            <MenuItem value={2026}>2026</MenuItem>
-          </Select>
-        </FormControl>
+        <Box>
+          <Typography variant="h5" fontWeight="bold">Agronomy Rollup</Typography>
+          <Typography variant="caption" color="text.secondary">Crop Year {year}</Typography>
+        </Box>
         <Chip icon={<VisibilityIcon />} label="Read-Only" size="small" variant="outlined" />
         <Chip label={`${farmsWithPlans.length} of ${farmData.length} farms`} size="small" color="info" variant="outlined" />
         {isAdmin && farmsWithPlans.length > 0 && (
