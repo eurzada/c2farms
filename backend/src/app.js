@@ -47,6 +47,7 @@ import auditReportRoutes from './routes/auditReport.js';
 import reportingRoutes from './routes/reporting.js';
 import enterpriseForecastRoutes from './routes/enterpriseForecast.js';
 import varianceRoutes from './routes/variance.js';
+import { farmRouter as traceabilityFarmRouter, publicRouter as traceabilityPublicRouter } from './routes/traceability.js';
 import { logActivity } from './services/activityService.js';
 
 const app = express();
@@ -203,6 +204,13 @@ app.use('/api/farms', logisticsDashboardRoutes);
 // Terminal operations module (LGX)
 app.use('/api/farms/:farmId/terminal', authenticate, requireModule('terminal'));
 app.use('/api/farms', terminalRoutes);
+
+// Blockchain traceability (bin-to-buyer provenance)
+// Public verification endpoint — unauthenticated so external buyers can
+// look up provenance via lot_code printed on delivery paperwork.
+app.use('/api/traceability', traceabilityPublicRouter);
+// Farm-scoped management routes — require farm access (inherited above).
+app.use('/api/farms', traceabilityFarmRouter);
 
 // Serve uploaded files (contract documents, etc.)
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));

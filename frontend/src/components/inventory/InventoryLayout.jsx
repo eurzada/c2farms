@@ -7,6 +7,7 @@ import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import CountertopsIcon from '@mui/icons-material/Countertops';
 import TimelineIcon from '@mui/icons-material/Timeline';
 import GradingIcon from '@mui/icons-material/Grade';
+import LinkIcon from '@mui/icons-material/Link';
 import { useFarm } from '../../contexts/FarmContext';
 
 const TABS = [
@@ -17,6 +18,7 @@ const TABS = [
 
   { label: 'Reconciliation', path: '/inventory/recon', icon: <CompareArrowsIcon />, enterprise: true },
   { label: 'Bin Count', path: '/inventory/count', icon: <CountertopsIcon />, roles: ['admin', 'manager'] },
+  { label: 'Traceability', path: '/inventory/traceability', icon: <LinkIcon /> },
 ];
 
 export default function InventoryLayout({ children }) {

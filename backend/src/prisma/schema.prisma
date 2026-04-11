@@ -364,6 +364,7 @@ model InventoryLocation {
   submissions CountSubmission[]
   delivery_tickets DeliveryTicket[]
   shipping_priorities  ShippingPriority[]
+  traceability_lots    TraceabilityLot[]
 
   @@unique([farm_id, code])
   @@map("inventory_locations")
@@ -388,6 +389,7 @@ model InventoryBin {
   delivery_tickets DeliveryTicket[]
   withdrawals InventoryWithdrawal[]
   shipping_priorities  ShippingPriority[]
+  traceability_lots    TraceabilityLot[]
 
   @@unique([farm_id, location_id, bin_number])
   @@map("inventory_bins")
@@ -1533,4 +1535,90 @@ model LoadClaim {
   @@index([shipping_priority_id])
   @@index([trucker_user_id, status])
   @@map("load_claims")
+}
+
+// ─── Agricultural Blockchain Traceability ───────────────────────────
+// Tamper-evident, hash-linked provenance ledger that tracks grain
+// from bin to buyer. Each lot is a chain of blocks; each block stores
+// a canonical JSON payload whose SHA-256 hash is linked to the
+// previous block's hash, forming an immutable audit trail.
+
+model TraceabilityLot {
+  id                    String              @id @default(uuid())
+  farm_id               String
+  lot_code              String              // public verification code, e.g. "C2F-2026-WHT-001"
+  crop_year             Int
+  crop_type             String              // wheat, canola, durum, peas, barley, lentils, flax
+  variety               String?             // e.g. CDC Go, Nexera
+  grade                 String?             // e.g. "1 CWRS"
+  farm_site             String?             // legal land description or field ID (e.g. "SE-23-45-10-W4")
+  origin_bin_id         String?
+  origin_location_id    String?
+  total_bushels         Float               @default(0)
+  total_mt              Float               @default(0)
+  status                String              @default("active") // active, in_transit, delivered, closed, voided
+  genesis_hash          String              // hash of the first (genesis) block
+  current_hash          String              // hash of the latest block (chain tip)
+  block_count           Int                 @default(0)
+  buyer_counterparty_id String?
+  marketing_contract_id String?
+  metadata_json         Json?               // free-form: certifications, organic, IP contracts
+  created_by            String?
+  created_at            DateTime            @default(now())
+  updated_at            DateTime            @updatedAt
+  origin_bin            InventoryBin?       @relation(fields: [origin_bin_id], references: [id])
+  origin_location       InventoryLocation?  @relation(fields: [origin_location_id], references: [id])
+  blocks                TraceabilityBlock[]
+
+  @@unique([farm_id, lot_code])
+  @@index([farm_id, crop_year])
+  @@index([farm_id, status])
+  @@index([current_hash])
+  @@map("traceability_lots")
+}
+
+model TraceabilityBlock {
+  id              String          @id @default(uuid())
+  lot_id          String
+  farm_id         String
+  block_index     Int             // 0 = genesis; monotonically increasing within a lot
+  event_type      String          // HARVEST, GRADE, TRANSFER, BLEND, SHIP, RECEIVE, CUSTODY, VOID
+  event_timestamp DateTime        @default(now())
+  actor_user_id   String?
+  actor_name      String?
+  // Custody / location
+  bin_id          String?
+  location_id     String?
+  farm_site       String?
+  destination     String?         // next custodian (elevator, terminal, buyer)
+  // Commodity snapshot at the time of the event
+  crop_year       Int?
+  crop_type       String?
+  variety         String?
+  grade           String?
+  protein_pct     Float?
+  moisture_pct    Float?
+  dockage_pct     Float?
+  test_weight     Float?
+  // Quantity moved / recorded in this event
+  bushels         Float?
+  net_weight_mt   Float?
+  // References to business documents that correspond to this event
+  counterparty_id String?
+  ticket_number   String?
+  contract_number String?
+  // Cryptographic chain
+  payload_json    Json            // canonical JSON of all event data (the "block body")
+  payload_hash    String          // sha256 of canonicalized payload_json
+  previous_hash   String          // block_hash of previous block ("0" for genesis)
+  block_hash      String          // sha256(block_index || payload_hash || previous_hash || timestamp)
+  signature       String?         // HMAC-SHA256 signature over block_hash using chain secret
+  notes           String?
+  created_at      DateTime        @default(now())
+  lot             TraceabilityLot @relation(fields: [lot_id], references: [id], onDelete: Cascade)
+
+  @@unique([lot_id, block_index])
+  @@index([farm_id, event_type])
+  @@index([block_hash])
+  @@map("traceability_blocks")
 }
