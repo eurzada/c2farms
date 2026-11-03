@@ -181,7 +181,6 @@ export default function Grading() {
   ], [qualityColDefs]);
 
   const defaultColDef = useMemo(() => ({
-    headerClass: 'ag-header-wrap',
     autoHeaderHeight: true,
     sortable: true,
     resizable: true,

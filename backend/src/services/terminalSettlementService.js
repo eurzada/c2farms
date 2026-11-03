@@ -785,7 +785,6 @@ export async function uploadBuyerSettlementPdf(farmId, pdfBuffer, filename) {
   const lines = (extraction.lines || []).map((line, idx) => ({
     line_number: line.line_number ?? (idx + 1),
     ticket_id: null,
-    source_farm_name: line.origin || null,
     commodity_id: null,
     grade: line.grade || null,
     gross_weight_mt: line.gross_weight_mt ?? null,

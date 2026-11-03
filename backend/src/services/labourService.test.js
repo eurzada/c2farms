@@ -143,10 +143,20 @@ describe('updatePlan', () => {
   it('updates multiple fields at once', async () => {
     prismaMock.labourPlan.update.mockResolvedValue(makePlan());
 
-    await svc.updatePlan('plan-1', { avg_wage: 35, total_acres: 12000, notes: 'test' });
+    await svc.updatePlan('plan-1', { avg_wage: 35, notes: 'test' });
 
     const updateArg = prismaMock.labourPlan.update.mock.calls[0][0];
-    expect(updateArg.data).toEqual({ avg_wage: 35, total_acres: 12000, notes: 'test' });
+    expect(updateArg.data).toEqual({ avg_wage: 35, notes: 'test' });
+  });
+
+  it('ignores total_acres (acres are driven by agronomy, not set directly)', async () => {
+    prismaMock.labourPlan.update.mockResolvedValue(makePlan());
+
+    await svc.updatePlan('plan-1', { avg_wage: 35, total_acres: 12000 });
+
+    const updateArg = prismaMock.labourPlan.update.mock.calls[0][0];
+    expect(updateArg.data).toEqual({ avg_wage: 35 });
+    expect(updateArg.data).not.toHaveProperty('total_acres');
   });
 });
 

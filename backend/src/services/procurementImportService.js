@@ -516,7 +516,7 @@ export async function commitProcurementImport(preview, cropYear, userId) {
   log.info(`Procurement import committed: ${contractsCreated} contracts, ${linesCreated} lines, ${suppliersCreated} new suppliers for crop year ${cropYear}`);
 
   // Sync fertilizer contract pricing → product library
-  let pricingSync = null;
+  let pricingSync;
   try {
     pricingSync = await syncContractPricingToLibrary(enterprise.id, cropYear);
   } catch (err) {
