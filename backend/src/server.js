@@ -36,3 +36,13 @@ app.set('io', io);
 httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+// Graceful shutdown — close the server so the port is released immediately
+function shutdown() {
+  httpServer.close(() => process.exit(0));
+  // Force exit if close hangs
+  setTimeout(() => process.exit(1), 3000);
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

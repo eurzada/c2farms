@@ -4,10 +4,12 @@ import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField, LinearProgress,
   IconButton, Tooltip, MenuItem, Grid, FormControlLabel, Switch,
+  Autocomplete, Collapse,
 } from '@mui/material';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import WarningIcon from '@mui/icons-material/Warning';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import ErrorIcon from '@mui/icons-material/Error';
 import LinkIcon from '@mui/icons-material/Link';
 import DoneAllIcon from '@mui/icons-material/DoneAll';
@@ -15,7 +17,9 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
-// PercentIcon removed — confidence display dropped
+import EditIcon from '@mui/icons-material/Edit';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import DownloadIcon from '@mui/icons-material/Download';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import { useSearchParams } from 'react-router-dom';
@@ -105,11 +109,18 @@ export default function SettlementReconciliation() {
   const [manualMatchDialog, setManualMatchDialog] = useState({ open: false, line: null });
   const [manualTicketId, setManualTicketId] = useState('');
   const [manualNotes, setManualNotes] = useState('');
+  const [manualDateWindow, setManualDateWindow] = useState(7);
+  const [manualLocationFilter, setManualLocationFilter] = useState('');
+  const [manualContractFilter, setManualContractFilter] = useState('');
   const [tickets, setTickets] = useState([]);
   const [approveConfirmOpen, setApproveConfirmOpen] = useState(false);
   const [approving, setApproving] = useState(false);
   const [dismissing, setDismissing] = useState(null);
   const [weightDateMode, setWeightDateMode] = useState(false);
+  const [editingLineContract, setEditingLineContract] = useState(null);
+  const [editingLineTicket, setEditingLineTicket] = useState(null);
+  const [editValue, setEditValue] = useState('');
+  const [collapsedContracts, setCollapsedContracts] = useState({});
 
   const fetchSettlement = useCallback(() => {
     if (!currentFarm || !settlementId) return;
@@ -172,6 +183,34 @@ export default function SettlementReconciliation() {
       setError(err.response?.data?.error || err.message);
     } finally {
       setDismissing(null);
+    }
+  };
+
+  const handleLineContractEdit = async (lineId, contractNumber) => {
+    try {
+      await api.patch(
+        `/api/farms/${currentFarm.id}/settlements/${settlementId}/lines/${lineId}/contract`,
+        { contract_number: contractNumber }
+      );
+      setEditingLineContract(null);
+      setEditValue('');
+      fetchSettlement();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    }
+  };
+
+  const handleLineTicketEdit = async (lineId, ticketNumber) => {
+    try {
+      await api.patch(
+        `/api/farms/${currentFarm.id}/settlements/${settlementId}/lines/${lineId}/ticket-number`,
+        { ticket_number: ticketNumber }
+      );
+      setEditingLineTicket(null);
+      setEditValue('');
+      fetchSettlement();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
     }
   };
 
@@ -253,6 +292,10 @@ export default function SettlementReconciliation() {
       .map(l => l.delivery_ticket.marketing_contract_id)
   );
 
+  // Detect multi-contract from line-level contract_numbers
+  const lineContractNumbers = [...new Set(settlement.lines.map(l => l.contract_number).filter(Boolean))].sort();
+  const isMultiContract = lineContractNumbers.length > 1;
+
   return (
     <Box>
       {/* Header */}
@@ -264,8 +307,16 @@ export default function SettlementReconciliation() {
           <Typography variant="body2" color="text.secondary">
             {settlement.settlement_number} | {settlement.counterparty?.name || 'Unknown Buyer'} |{' '}
             {settlement.buyer_format?.toUpperCase()}
-            {settlement.marketing_contract?.contract_number && ` | Contract #${settlement.marketing_contract.contract_number}`}
+            {!isMultiContract && settlement.marketing_contract?.contract_number && ` | Contract #${settlement.marketing_contract.contract_number}`}
           </Typography>
+          {isMultiContract && (
+            <Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }} alignItems="center">
+              <Typography variant="caption" color="text.secondary">Contracts:</Typography>
+              {lineContractNumbers.map(cn => (
+                <Chip key={cn} label={cn} size="small" variant="outlined" color="primary" />
+              ))}
+            </Stack>
+          )}
         </Box>
         <Stack direction="row" spacing={1} alignItems="center">
           <Chip label={settlement.status.toUpperCase()} color={
@@ -467,10 +518,64 @@ export default function SettlementReconciliation() {
                         <Grid container spacing={2} sx={{ mb: 1 }}>
                           <Grid item xs={12} sm={6}>
                             <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>Settlement Line</Typography>
-                            <Typography variant="body2">Ticket #: {line.ticket_number_on_settlement || 'N/A'}</Typography>
+
+                            {/* Editable ticket number */}
+                            {editingLineTicket === line.id ? (
+                              <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mb: 0.5 }}>
+                                <TextField
+                                  size="small" variant="outlined" label="Ticket #" value={editValue}
+                                  onChange={(e) => setEditValue(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') handleLineTicketEdit(line.id, editValue); if (e.key === 'Escape') { setEditingLineTicket(null); setEditValue(''); } }}
+                                  autoFocus sx={{ width: 180 }}
+                                />
+                                <Button size="small" onClick={() => handleLineTicketEdit(line.id, editValue)}>Save</Button>
+                                <Button size="small" color="inherit" onClick={() => { setEditingLineTicket(null); setEditValue(''); }}>Cancel</Button>
+                              </Stack>
+                            ) : (
+                              <Stack direction="row" spacing={0.5} alignItems="center">
+                                <Typography variant="body2">Ticket #: {line.ticket_number_on_settlement || 'N/A'}</Typography>
+                                {canEdit && (
+                                  <Tooltip title="Edit ticket number">
+                                    <IconButton size="small" onClick={() => { setEditingLineTicket(line.id); setEditValue(line.ticket_number_on_settlement || ''); }}>
+                                      <EditIcon sx={{ fontSize: 14 }} />
+                                    </IconButton>
+                                  </Tooltip>
+                                )}
+                              </Stack>
+                            )}
+
                             <Typography variant="body2">Net: {fmt(line.net_weight_mt, 3)} MT</Typography>
                             <Typography variant="body2">Date: {line.delivery_date ? new Date(line.delivery_date).toLocaleDateString() : 'N/A'}</Typography>
                             <Typography variant="body2">Commodity: {line.commodity || 'N/A'}</Typography>
+
+                            {/* Editable contract number */}
+                            {editingLineContract === line.id ? (
+                              <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: 0.5 }}>
+                                <TextField
+                                  size="small" variant="outlined" label="Contract #" value={editValue}
+                                  onChange={(e) => setEditValue(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') handleLineContractEdit(line.id, editValue); if (e.key === 'Escape') { setEditingLineContract(null); setEditValue(''); } }}
+                                  autoFocus sx={{ width: 180 }}
+                                />
+                                <Button size="small" onClick={() => handleLineContractEdit(line.id, editValue)}>Save</Button>
+                                <Button size="small" color="inherit" onClick={() => { setEditingLineContract(null); setEditValue(''); }}>Cancel</Button>
+                              </Stack>
+                            ) : (
+                              <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: 0.5 }}>
+                                <Chip
+                                  size="small" variant="outlined"
+                                  label={line.contract_number ? `Ct# ${line.contract_number}` : 'No contract'}
+                                  color={line.contract_number ? 'primary' : 'default'}
+                                />
+                                {canEdit && (
+                                  <Tooltip title="Change contract assignment">
+                                    <IconButton size="small" onClick={() => { setEditingLineContract(line.id); setEditValue(line.contract_number || ''); }}>
+                                      <EditIcon sx={{ fontSize: 14 }} />
+                                    </IconButton>
+                                  </Tooltip>
+                                )}
+                              </Stack>
+                            )}
                           </Grid>
                           {ticket && (
                             <Grid item xs={12} sm={6}>
@@ -566,6 +671,7 @@ export default function SettlementReconciliation() {
             <TableRow>
               <TableCell width={50}>#</TableCell>
               <TableCell>Status</TableCell>
+              {isMultiContract && <TableCell>Contract</TableCell>}
               <TableCell>Buyer Ticket #</TableCell>
               <TableCell>Date</TableCell>
               <TableCell align="right">Net MT</TableCell>
@@ -576,7 +682,53 @@ export default function SettlementReconciliation() {
             </TableRow>
           </TableHead>
           <TableBody>
-            {settlement.lines.map(line => {
+            {(() => {
+              // Group lines by contract for multi-contract, or flat list for single
+              const sortedLines = isMultiContract
+                ? [...settlement.lines].sort((a, b) => (a.contract_number || '').localeCompare(b.contract_number || '') || a.line_number - b.line_number)
+                : settlement.lines;
+              const rows = [];
+              let lastContract = null;
+
+              for (const line of sortedLines) {
+                // Insert contract group header for multi-contract settlements
+                if (isMultiContract && line.contract_number !== lastContract) {
+                  lastContract = line.contract_number;
+                  const groupLines = sortedLines.filter(l => l.contract_number === lastContract);
+                  const groupMt = groupLines.reduce((s, l) => s + (l.net_weight_mt || 0), 0);
+                  const groupNet = groupLines.reduce((s, l) => s + (l.line_net || 0), 0);
+                  const colSpan = 10 + (isApproved ? 0 : 1);
+                  rows.push(
+                    <TableRow key={`group-${lastContract}`} sx={{ bgcolor: 'primary.50' }}>
+                      <TableCell colSpan={colSpan} sx={{ py: 0.5 }}>
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <IconButton
+                            size="small"
+                            onClick={() => setCollapsedContracts(prev => ({ ...prev, [lastContract]: !prev[lastContract] }))}
+                          >
+                            {collapsedContracts[lastContract] ? <ExpandMoreIcon fontSize="small" /> : <ExpandLessIcon fontSize="small" />}
+                          </IconButton>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                            Contract #{lastContract || 'Unassigned'}
+                          </Typography>
+                          <Chip size="small" label={`${groupLines.length} lines`} />
+                          <Chip size="small" label={`${groupMt.toFixed(2)} MT`} variant="outlined" />
+                          <Chip size="small" label={fmtDollar(groupNet)} variant="outlined" />
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  );
+                }
+
+                if (isMultiContract && collapsedContracts[line.contract_number]) continue;
+
+                rows.push(line);
+              }
+              return rows;
+            })().map(item => {
+              // Contract group headers are already JSX elements
+              if (item && item.key && String(item.key).startsWith('group-')) return item;
+              const line = item;
               const statusConfig = MATCH_STATUS_CONFIG[line.match_status] || MATCH_STATUS_CONFIG.unmatched;
               return (
                 <TableRow
@@ -599,6 +751,11 @@ export default function SettlementReconciliation() {
                       color={statusConfig.color}
                     />
                   </TableCell>
+                  {isMultiContract && (
+                    <TableCell>
+                      <Chip size="small" variant="outlined" label={line.contract_number || '—'} />
+                    </TableCell>
+                  )}
                   <TableCell>{line.ticket_number_on_settlement || '-'}</TableCell>
                   <TableCell>{line.delivery_date ? new Date(line.delivery_date).toLocaleDateString() : '-'}</TableCell>
                   <TableCell align="right">{line.net_weight_mt?.toFixed(2) || '-'}</TableCell>
@@ -658,7 +815,7 @@ export default function SettlementReconciliation() {
       {/* ═══ Manual Match Dialog ═══ */}
       <Dialog
         open={manualMatchDialog.open}
-        onClose={() => setManualMatchDialog({ open: false, line: null })}
+        onClose={() => { setManualMatchDialog({ open: false, line: null }); setManualLocationFilter(''); setManualContractFilter(''); setManualDateWindow(7); }}
         maxWidth="md"
         fullWidth
       >
@@ -668,14 +825,12 @@ export default function SettlementReconciliation() {
             const line = manualMatchDialog.line;
             const lineDate = line.delivery_date ? new Date(line.delivery_date) : null;
             const lineWeight = line.net_weight_mt || line.gross_weight_mt;
-            // Commodity: from line, or from settlement contract, or from settlement lines
             const lineCommodity = (
               line.commodity ||
               settlement?.marketing_contract?.commodity?.name ||
               ''
             ).toLowerCase();
 
-            // Extract base grain for matching (e.g. "wheat (milling)" → "wheat", "spring wheat" → "wheat")
             const getBaseGrain = (name) => {
               if (!name) return null;
               const l = name.toLowerCase();
@@ -700,35 +855,63 @@ export default function SettlementReconciliation() {
             );
             const availableTickets = tickets.filter(t => !matchedTicketIds.has(t.id));
 
-            // HARD filter by commodity — same crop type only
+            // Hard filter by commodity
             const commodityFiltered = lineGrain
               ? availableTickets.filter(t => getBaseGrain(t.commodity?.name) === lineGrain)
               : availableTickets;
 
-            // Filter & rank: date first (±2 days, ticket on or before settlement),
-            // then crop (already filtered above), then weight, then ticket #
+            // Build duplicate ticket number set
+            const ticketNumCounts = {};
+            commodityFiltered.forEach(t => { ticketNumCounts[t.ticket_number] = (ticketNumCounts[t.ticket_number] || 0) + 1; });
+
+            // Extract unique locations and contracts for filter chips
+            const locations = [...new Set(commodityFiltered.map(t => t.location?.name).filter(Boolean))].sort();
+            const contracts = [...new Set(commodityFiltered.map(t => t.marketing_contract?.contract_number).filter(Boolean))].sort();
+
             const getCstDate = (ts) => {
               if (!ts) return null;
               const d = new Date(ts);
               d.setUTCHours(d.getUTCHours() - 6);
               return new Date(d.toISOString().split('T')[0] + 'T12:00:00Z');
             };
+
+            // Score and filter tickets
             const scored = commodityFiltered.map(t => {
               const tDate = t.source_timestamp ? getCstDate(t.source_timestamp) : (t.delivery_date ? new Date(t.delivery_date) : null);
               const daysDiff = lineDate && tDate ? Math.abs((lineDate - tDate) / (1000 * 60 * 60 * 24)) : 999;
-              // Positive = ticket delivered before settlement (expected flow)
               const dateDirection = lineDate && tDate ? (lineDate - tDate) / (1000 * 60 * 60 * 24) : 0;
               const weightDiff = lineWeight && t.net_weight_mt
                 ? Math.abs(lineWeight - t.net_weight_mt) / Math.max(lineWeight, t.net_weight_mt)
                 : 1;
-
               return { ...t, daysDiff, weightDiff, dateDirection };
             })
-            // Hard filter: ±7 days, ticket typically on or before settlement (allow 1 day grace after)
-            .filter(t => t.daysDiff <= 7 && t.dateDirection >= -1)
-            // Sort: closest date → closest weight → ticket number
-            .sort((a, b) => a.daysDiff - b.daysDiff || a.weightDiff - b.weightDiff || String(a.ticket_number).localeCompare(String(b.ticket_number)))
-            .slice(0, 40);
+            .filter(t => {
+              // Date window filter (skip if "All")
+              if (manualDateWindow > 0) {
+                if (t.daysDiff > manualDateWindow || t.dateDirection < -1) return false;
+              }
+              // Location filter
+              if (manualLocationFilter && t.location?.name !== manualLocationFilter) return false;
+              // Contract filter
+              if (manualContractFilter && t.marketing_contract?.contract_number !== manualContractFilter) return false;
+              return true;
+            })
+            .sort((a, b) => a.daysDiff - b.daysDiff || a.weightDiff - b.weightDiff || String(a.ticket_number).localeCompare(String(b.ticket_number)));
+
+            // Format option label for Autocomplete
+            const getOptionLabel = (t) => {
+              if (!t || !t.id) return '';
+              const wtLabel = t.weightDiff <= 0.01 ? '~exact' : t.weightDiff <= 0.03 ? '~close' : `${(t.weightDiff * 100).toFixed(1)}% off`;
+              const dateLabel = t.source_timestamp
+                ? new Date(t.source_timestamp).toLocaleString('en-CA', { timeZone: 'America/Regina', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                : t.delivery_date ? new Date(t.delivery_date).toLocaleDateString() : '—';
+              const dayLabel = t.daysDiff <= 0.5 ? 'same day' : t.daysDiff <= 1.5 ? '1 day' : `${Math.round(t.daysDiff)} days`;
+              const dup = ticketNumCounts[t.ticket_number] > 1 ? ' [DUP]' : '';
+              const contract = t.marketing_contract?.contract_number ? ` | Ct#${t.marketing_contract.contract_number}` : '';
+              return `#${t.ticket_number}${dup} | ${dateLabel} (${dayLabel}) | ${t.net_weight_mt?.toFixed(2)} MT (${wtLabel}) | ${t.location?.name || '—'}${contract}`;
+            };
+
+            const selectedTicket = scored.find(t => t.id === manualTicketId) || null;
 
             return (
               <>
@@ -739,37 +922,84 @@ export default function SettlementReconciliation() {
                     Commodity: {line.commodity || settlement?.marketing_contract?.commodity?.name || 'N/A'} |
                     Weight: {lineWeight?.toFixed(2)} MT |
                     Date: {lineDate ? lineDate.toLocaleDateString() : 'N/A'}
+                    {line.contract_number ? ` | Contract: ${line.contract_number}` : ''}
                   </Typography>
                 </Box>
                 <Divider sx={{ mb: 2 }} />
-                <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                  {scored.length} tickets — {lineGrain ? `${lineGrain} only` : 'all crops'}, ±7 days, ranked by date → weight → ticket #
-                </Typography>
-                <TextField
-                  select
-                  fullWidth
-                  label="Select Delivery Ticket"
-                  value={manualTicketId}
-                  onChange={(e) => setManualTicketId(e.target.value)}
-                  sx={{ mb: 2 }}
-                  SelectProps={{ MenuProps: { PaperProps: { sx: { maxHeight: 400 } } } }}
-                >
-                  {scored.map(t => {
-                    const wtLabel = t.weightDiff <= 0.01 ? '~exact' : t.weightDiff <= 0.03 ? '~close' : `${(t.weightDiff * 100).toFixed(1)}% off`;
-                    const dateLabel = t.source_timestamp
-                      ? new Date(t.source_timestamp).toLocaleString('en-CA', { timeZone: 'America/Regina', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-                      : new Date(t.delivery_date).toLocaleDateString();
-                    const dayLabel = t.daysDiff <= 0.5 ? 'same day' : t.daysDiff <= 1.5 ? '1 day' : `${Math.round(t.daysDiff)} days`;
-                    return (
-                      <MenuItem key={t.id} value={t.id} sx={{ fontSize: '0.85rem' }}>
-                        {dateLabel} ({dayLabel}) | {t.net_weight_mt?.toFixed(2)} MT ({wtLabel}) | #{t.ticket_number} | {t.location?.name || '—'}
-                      </MenuItem>
-                    );
-                  })}
-                  {scored.length === 0 && (
-                    <MenuItem disabled>No {lineGrain || ''} tickets within ±7 days of {lineDate?.toLocaleDateString() || 'settlement date'}</MenuItem>
+
+                {/* Filter row */}
+                <Stack direction="row" spacing={1} sx={{ mb: 1.5 }} alignItems="center" flexWrap="wrap" useFlexGap>
+                  <TextField
+                    select size="small" label="Date window" value={manualDateWindow}
+                    onChange={(e) => setManualDateWindow(Number(e.target.value))}
+                    sx={{ minWidth: 110 }}
+                  >
+                    <MenuItem value={7}>±7 days</MenuItem>
+                    <MenuItem value={14}>±14 days</MenuItem>
+                    <MenuItem value={30}>±30 days</MenuItem>
+                    <MenuItem value={0}>All dates</MenuItem>
+                  </TextField>
+
+                  {locations.length > 1 && (
+                    <TextField
+                      select size="small" label="Location" value={manualLocationFilter}
+                      onChange={(e) => setManualLocationFilter(e.target.value)}
+                      sx={{ minWidth: 130 }}
+                    >
+                      <MenuItem value="">All locations</MenuItem>
+                      {locations.map(loc => <MenuItem key={loc} value={loc}>{loc}</MenuItem>)}
+                    </TextField>
                   )}
-                </TextField>
+
+                  {contracts.length > 1 && (
+                    <TextField
+                      select size="small" label="Contract" value={manualContractFilter}
+                      onChange={(e) => setManualContractFilter(e.target.value)}
+                      sx={{ minWidth: 140 }}
+                    >
+                      <MenuItem value="">All contracts</MenuItem>
+                      {contracts.map(c => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+                    </TextField>
+                  )}
+
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
+                    {scored.length} tickets — {lineGrain ? `${lineGrain} only` : 'all crops'}
+                  </Typography>
+                </Stack>
+
+                {/* Autocomplete ticket search */}
+                <Autocomplete
+                  options={scored}
+                  value={selectedTicket}
+                  onChange={(_, newValue) => setManualTicketId(newValue?.id || '')}
+                  getOptionLabel={getOptionLabel}
+                  filterOptions={(options, { inputValue }) => {
+                    if (!inputValue) return options;
+                    const lower = inputValue.toLowerCase();
+                    return options.filter(t =>
+                      String(t.ticket_number).includes(lower) ||
+                      (t.location?.name || '').toLowerCase().includes(lower) ||
+                      (t.marketing_contract?.contract_number || '').includes(lower)
+                    );
+                  }}
+                  renderOption={(props, t) => {
+                    const isDup = ticketNumCounts[t.ticket_number] > 1;
+                    return (
+                      <li {...props} key={t.id} style={{ fontSize: '0.85rem' }}>
+                        {isDup && <WarningAmberIcon fontSize="inherit" sx={{ color: 'warning.main', mr: 0.5 }} />}
+                        {getOptionLabel(t)}
+                      </li>
+                    );
+                  }}
+                  renderInput={(params) => (
+                    <TextField {...params} label="Search or select delivery ticket" placeholder="Type ticket #, location, or contract..." />
+                  )}
+                  isOptionEqualToValue={(opt, val) => opt.id === val?.id}
+                  noOptionsText={`No ${lineGrain || ''} tickets match filters`}
+                  sx={{ mb: 2 }}
+                  ListboxProps={{ style: { maxHeight: 350 } }}
+                />
+
                 <TextField
                   fullWidth
                   label="Notes (optional)"
@@ -783,7 +1013,7 @@ export default function SettlementReconciliation() {
           })()}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setManualMatchDialog({ open: false, line: null })}>Cancel</Button>
+          <Button onClick={() => { setManualMatchDialog({ open: false, line: null }); setManualLocationFilter(''); setManualContractFilter(''); setManualDateWindow(7); }}>Cancel</Button>
           <Button variant="contained" onClick={handleManualMatch} disabled={!manualTicketId}>
             Confirm Match
           </Button>

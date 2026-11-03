@@ -285,6 +285,15 @@ export default function Tickets() {
     { field: 'settled', headerName: 'Paid' },
   ];
 
+  // Detect duplicate ticket numbers
+  const duplicateTicketNums = useMemo(() => {
+    const freq = {};
+    for (const t of tickets) {
+      if (t.ticket_number) freq[t.ticket_number] = (freq[t.ticket_number] || 0) + 1;
+    }
+    return new Set(Object.entries(freq).filter(([, c]) => c > 1).map(([n]) => n));
+  }, [tickets]);
+
   const columnDefs = useMemo(() => [
     {
       headerCheckboxSelection: true,
@@ -319,7 +328,16 @@ export default function Tickets() {
         </Tooltip>
       ),
     },
-    !hiddenCols['ticket_number'] && { field: 'ticket_number', headerName: 'Ticket #', width: 100 },
+    !hiddenCols['ticket_number'] && {
+      field: 'ticket_number', headerName: 'Ticket #', width: 115,
+      cellRenderer: p => {
+        if (!p.value) return '';
+        const isDup = duplicateTicketNums.has(p.value);
+        return isDup
+          ? <span title="Duplicate ticket number" style={{ color: '#ed6c02', fontWeight: 600 }}>⚠ {p.value}</span>
+          : p.value;
+      },
+    },
     !hiddenCols['source_timestamp'] && {
       field: 'source_timestamp', headerName: 'Timestamp', width: 145,
       valueFormatter: p => {
@@ -381,7 +399,7 @@ export default function Tickets() {
         ? <Chip label="Paid" size="small" color="success" />
         : <Chip label="No" size="small" color="default" variant="outlined" />,
     },
-  ].filter(Boolean), [hiddenCols, canEdit]);
+  ].filter(Boolean), [hiddenCols, canEdit, duplicateTicketNums]);
 
   return (
     <Box>

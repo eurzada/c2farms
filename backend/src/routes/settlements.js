@@ -600,7 +600,7 @@ router.post('/:farmId/settlements/upload', authenticate, requireRole('admin', 'm
       });
     }
 
-    // Save to database (may split multi-contract PDFs into separate settlements)
+    // Save to database (single settlement, even for multi-contract PDFs)
     const settlement = await saveSettlement(
       req.params.farmId,
       extraction,
@@ -608,28 +608,30 @@ router.post('/:farmId/settlements/upload', authenticate, requireRole('admin', 'm
       { usage }
     );
 
-    const allSettlements = settlement._split_settlements || [settlement];
-    for (const s of allSettlements) {
-      logAudit({
-        farmId: req.params.farmId,
-        userId: req.userId,
-        entityType: 'Settlement',
-        entityId: s.id,
-        action: 'create',
-        changes: {
-          settlement_number: s.settlement_number,
-          buyer_format: buyerFormat,
-          lines_extracted: s.lines.length,
-          split: allSettlements.length > 1,
-          ai_usage: usage,
-        },
-      });
-    }
+    // Detect multi-contract from extraction_json
+    const isMultiContract = settlement.extraction_json?._is_multi_contract || false;
+    const contractNumbers = settlement.extraction_json?._contract_numbers || [];
+
+    logAudit({
+      farmId: req.params.farmId,
+      userId: req.userId,
+      entityType: 'Settlement',
+      entityId: settlement.id,
+      action: 'create',
+      changes: {
+        settlement_number: settlement.settlement_number,
+        buyer_format: buyerFormat,
+        lines_extracted: settlement.lines.length,
+        multi_contract: isMultiContract,
+        contract_numbers: contractNumbers,
+        ai_usage: usage,
+      },
+    });
 
     res.status(201).json({
       settlement,
-      settlements: allSettlements.length > 1 ? allSettlements : undefined,
-      split: allSettlements.length > 1,
+      multi_contract: isMultiContract,
+      contract_numbers: contractNumbers,
       extraction,
       buyer_format: buyerFormat,
       usage,
@@ -681,7 +683,7 @@ router.post('/:farmId/settlements/save-reviewed', authenticate, requireRole('adm
     const { extraction, buyer_format, usage, hint } = req.body;
     if (!extraction) return res.status(400).json({ error: 'No extraction data provided' });
 
-    // Save settlement with (possibly corrected) extraction — may split multi-contract
+    // Save settlement with (possibly corrected) extraction — single settlement, even for multi-contract
     const settlement = await saveSettlement(
       req.params.farmId,
       extraction,
@@ -689,7 +691,8 @@ router.post('/:farmId/settlements/save-reviewed', authenticate, requireRole('adm
       { usage }
     );
 
-    const allSettlements = settlement._split_settlements || [settlement];
+    const isMultiContract = settlement.extraction_json?._is_multi_contract || false;
+    const contractNumbers = settlement.extraction_json?._contract_numbers || [];
 
     // If admin provided a correction hint, save it for future extractions
     if (hint && hint.trim()) {
@@ -703,42 +706,39 @@ router.post('/:farmId/settlements/save-reviewed', authenticate, requireRole('adm
       });
     }
 
-    for (const s of allSettlements) {
-      logAudit({
-        farmId: req.params.farmId,
-        userId: req.userId,
-        entityType: 'Settlement',
-        entityId: s.id,
-        action: 'create',
-        changes: {
-          settlement_number: s.settlement_number,
-          buyer_format: buyer_format,
-          lines_extracted: s.lines.length,
-          reviewed: true,
-          split: allSettlements.length > 1,
-          had_corrections: !!hint,
-          ai_usage: usage,
-        },
-      });
-    }
+    logAudit({
+      farmId: req.params.farmId,
+      userId: req.userId,
+      entityType: 'Settlement',
+      entityId: settlement.id,
+      action: 'create',
+      changes: {
+        settlement_number: settlement.settlement_number,
+        buyer_format: buyer_format,
+        lines_extracted: settlement.lines.length,
+        reviewed: true,
+        multi_contract: isMultiContract,
+        contract_numbers: contractNumbers,
+        had_corrections: !!hint,
+        ai_usage: usage,
+      },
+    });
 
     // Broadcast settlement creation for real-time table updates
     const io = req.app.get('io');
     if (io) {
-      for (const s of allSettlements) {
-        broadcastMarketingEvent(io, req.params.farmId, 'settlement:created', {
-          id: s.id,
-          settlement_number: s.settlement_number,
-          buyer_format,
-          split: allSettlements.length > 1,
-        });
-      }
+      broadcastMarketingEvent(io, req.params.farmId, 'settlement:created', {
+        id: settlement.id,
+        settlement_number: settlement.settlement_number,
+        buyer_format,
+        multi_contract: isMultiContract,
+      });
     }
 
     res.status(201).json({
       settlement,
-      settlements: allSettlements.length > 1 ? allSettlements : undefined,
-      split: allSettlements.length > 1,
+      multi_contract: isMultiContract,
+      contract_numbers: contractNumbers,
       extraction,
       buyer_format,
       usage,
@@ -947,6 +947,97 @@ router.post('/:farmId/settlements/:id/lines/:lineId/match', authenticate, requir
     });
 
     res.json({ line: result });
+  } catch (err) { next(err); }
+});
+
+// PATCH update a settlement line's contract number (for multi-contract reassignment)
+router.patch('/:farmId/settlements/:id/lines/:lineId/contract', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { contract_number } = req.body;
+    if (!contract_number) return res.status(400).json({ error: 'contract_number is required' });
+
+    const line = await prisma.settlementLine.findFirst({
+      where: { id: req.params.lineId },
+      include: { settlement: true },
+    });
+    if (!line || line.settlement.farm_id !== req.params.farmId || line.settlement.id !== req.params.id) {
+      return res.status(404).json({ error: 'Settlement line not found' });
+    }
+
+    const updated = await prisma.settlementLine.update({
+      where: { id: req.params.lineId },
+      data: {
+        contract_number,
+        delivery_ticket_id: null,
+        match_status: 'unmatched',
+        match_confidence: null,
+        exception_reason: null,
+      },
+    });
+
+    logAudit({
+      farmId: req.params.farmId,
+      userId: req.userId,
+      entityType: 'SettlementLine',
+      entityId: req.params.lineId,
+      action: 'reassign_contract',
+      changes: { from: line.contract_number, to: contract_number },
+    });
+
+    res.json({ line: updated });
+  } catch (err) { next(err); }
+});
+
+// PATCH update a settlement line's ticket number (correct AI extraction errors)
+router.patch('/:farmId/settlements/:id/lines/:lineId/ticket-number', authenticate, requireRole('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { ticket_number } = req.body;
+    if (ticket_number == null) return res.status(400).json({ error: 'ticket_number is required' });
+
+    const line = await prisma.settlementLine.findFirst({
+      where: { id: req.params.lineId },
+      include: { settlement: true },
+    });
+    if (!line || line.settlement.farm_id !== req.params.farmId || line.settlement.id !== req.params.id) {
+      return res.status(404).json({ error: 'Settlement line not found' });
+    }
+
+    // Try to auto-match with the corrected ticket number
+    const { parseTicketNumber } = await import('../services/reconciliationAiService.js');
+    const numericValue = parseTicketNumber(ticket_number);
+    let matchedTicket = null;
+    if (!isNaN(numericValue)) {
+      const tickets = await prisma.deliveryTicket.findMany({
+        where: { farm_id: req.params.farmId },
+        select: { id: true, ticket_number: true },
+      });
+      matchedTicket = tickets.find(t => {
+        const tNum = parseTicketNumber(t.ticket_number);
+        return !isNaN(tNum) && tNum === numericValue;
+      });
+    }
+
+    const updated = await prisma.settlementLine.update({
+      where: { id: req.params.lineId },
+      data: {
+        ticket_number_on_settlement: ticket_number,
+        delivery_ticket_id: matchedTicket?.id || null,
+        match_status: matchedTicket ? 'matched' : 'unmatched',
+        match_confidence: matchedTicket ? 1.0 : null,
+        exception_reason: matchedTicket ? null : (ticket_number ? `ticket_not_found: ${ticket_number}` : null),
+      },
+    });
+
+    logAudit({
+      farmId: req.params.farmId,
+      userId: req.userId,
+      entityType: 'SettlementLine',
+      entityId: req.params.lineId,
+      action: 'edit_ticket_number',
+      changes: { from: line.ticket_number_on_settlement, to: ticket_number, auto_matched: !!matchedTicket },
+    });
+
+    res.json({ line: updated, auto_matched: !!matchedTicket });
   } catch (err) { next(err); }
 });
 

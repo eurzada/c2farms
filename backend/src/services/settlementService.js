@@ -329,6 +329,8 @@ FORMAT B — Clean tabular "SETTLEMENT DOCUMENT" pages:
 - Pricing info (Apply Type, Contract Nbr, Net of Discounts) per ticket
 - Last page has CONTRACT summary and DEDUCTIONS summary tables
 
+This document may cover TWO OR MORE contracts. Each ticket block has a "Contract Nbr" in the Pricing section — extract it faithfully per line. DO NOT merge lines from different contracts.
+
 Extract ALL of the following into structured JSON:
 
 {
@@ -375,7 +377,7 @@ CRITICAL RULES FOR G3:
 2. DO NOT use the "TICKET / SOURCE NBR" from the EFT summary page — that is a batch reference number (e.g. 15722) that is the SAME for all lines. It is NOT a per-ticket identifier.
 3. DO NOT use the Load Order # as the ticket number — those are G3's internal order tracking numbers (e.g. 1436221, 1440931).
 4. Each ticket block on the settlement detail pages has its OWN unique Receipt Number. Extract EVERY ticket individually.
-5. Some tickets may have the same Receipt Number but different pricing (e.g. a split between "Flat" contract pricing and "Spot" pricing). These are sub-allocations of the SAME physical load — combine them into ONE line using the Receipt Number, summing the gross amounts and net amounts, and noting both contract numbers.
+5. Some tickets may have the same Receipt Number but different pricing and contracts (e.g. a split between "Fixed Prc" contract 305415 at 16.977% and contract 304141 at 27.617%). These are sub-allocations of the SAME physical load across DIFFERENT contracts. Extract each allocation as a SEPARATE line with its own contract_number, split_percent, net_weight_mt (the split portion, NOT the full gross), and line_gross. Use the same ticket_number (Receipt Number) for both lines. This is critical for multi-contract settlement detection.
 6. Deduction types: SK Wht C/SK Wht Develop Com = checkoff (wheat), SK Durum/SK Durum Develop Com = checkoff (durum), Drying/DryRebC = drying, SHR_BKI = quality (shrinkage/breakage), GFRHTS/FRHTS = freight, MIL/TSPTD/HVK/TWT/FUS DMC/ERG/SFLY MD/SEVMDG/SEVSPTL = quality (grading factors). The per-ticket "Net Deduction" is the total deduction for that ticket.
 7. The last page typically shows: Total Number of Loads, Total Net Units (MT), CONTRACT summary (Contract Nbr, Gross Amt Payable), and DEDUCTIONS summary (Discount name, Discount Amt, Net Settlement). Extract these into deductions_summary.
 8. Weights are in MT (metric tonnes).
@@ -1084,24 +1086,21 @@ export async function saveSettlement(farmId, extraction, buyerFormat, { pdfUrl =
     lines = merged;
   }
 
-  // Detect multi-contract settlements: group lines by contract_number
-  const contractGroups = new Map();
+  // Detect multi-contract settlements: count distinct contract_numbers across lines
+  const contractNumbers = new Set();
   for (const line of lines) {
-    const cn = line.contract_number || extraction.contract_number || '_default';
-    if (!contractGroups.has(cn)) contractGroups.set(cn, []);
-    contractGroups.get(cn).push(line);
+    const cn = line.contract_number || extraction.contract_number;
+    if (cn) contractNumbers.add(cn);
+  }
+  const isMultiContract = contractNumbers.size > 1;
+
+  if (isMultiContract) {
+    console.log(`[SETTLEMENT] Multi-contract settlement detected: ${[...contractNumbers].join(', ')}`);
   }
 
-  const multiContract = contractGroups.size > 1 && !contractGroups.has('_default');
-
-  // If multiple contracts detected, split into separate settlements
-  if (multiContract) {
-    return saveMultiContractSettlements(farmId, extraction, buyerFormat, counterparty, lines, contractGroups, { pdfUrl, usage, batchId, batchCustomId });
-  }
-
-  // Single contract — original behavior
+  // For single-contract, link to the marketing contract. For multi-contract, leave null (truth at line level).
   let marketingContract = null;
-  if (extraction.contract_number) {
+  if (!isMultiContract && extraction.contract_number) {
     marketingContract = await prisma.marketingContract.findFirst({
       where: { farm_id: farmId, contract_number: extraction.contract_number },
     });
@@ -1124,7 +1123,11 @@ export async function saveSettlement(farmId, extraction, buyerFormat, { pdfUrl =
       status: 'pending',
       buyer_format: buyerFormat,
       source_pdf_url: pdfUrl,
-      extraction_json: extraction,
+      extraction_json: {
+        ...extraction,
+        _is_multi_contract: isMultiContract,
+        _contract_numbers: [...contractNumbers],
+      },
       usage_json: usage || null,
     },
   });
@@ -1139,102 +1142,6 @@ export async function saveSettlement(farmId, extraction, buyerFormat, { pdfUrl =
       marketing_contract: { include: { commodity: true } },
     },
   });
-}
-
-/**
- * Split a multi-contract extraction into separate settlements.
- * Each contract group gets its own settlement with suffixed settlement_number
- * (e.g. 571040066092-913, 571040066092-244) and pro-rata deductions.
- */
-async function saveMultiContractSettlements(farmId, extraction, buyerFormat, counterparty, allLines, contractGroups, { pdfUrl, usage, batchId, batchCustomId }) {
-  const baseNumber = extraction.settlement_number || `UNK-${Date.now()}`;
-  const settlementDate = extraction.settlement_date ? new Date(extraction.settlement_date) : null;
-  const totalGrossAllLines = allLines.reduce((s, l) => s + (l.line_gross || l.gross_weight_mt || 0), 0);
-
-  const settlements = [];
-
-  for (const [contractNumber, groupLines] of contractGroups) {
-    // Suffix: last 3 digits of contract number
-    const suffix = contractNumber.slice(-3);
-    const settlementNumber = `${baseNumber}-${suffix}`;
-
-    // Look up this group's marketing contract
-    let marketingContract = null;
-    if (contractNumber && contractNumber !== '_default') {
-      marketingContract = await prisma.marketingContract.findFirst({
-        where: { farm_id: farmId, contract_number: contractNumber },
-      });
-    }
-
-    // Sum line-level amounts for this group
-    const groupGross = groupLines.reduce((s, l) => s + (l.line_gross || 0), 0);
-    const groupNet = groupLines.reduce((s, l) => s + (l.line_net || 0), 0);
-    const groupWeightMt = groupLines.reduce((s, l) => s + (l.net_weight_mt || 0), 0);
-
-    // Pro-rata deductions by gross amount proportion
-    const proportion = totalGrossAllLines > 0 ? groupGross / totalGrossAllLines : 1 / contractGroups.size;
-    const deductions = extraction.deductions_summary
-      ? extraction.deductions_summary.map(d => ({
-        ...d,
-        amount: Math.round((d.amount || 0) * proportion * 100) / 100,
-        gst: d.gst != null ? Math.round(d.gst * proportion * 100) / 100 : null,
-        pst: d.pst != null ? Math.round(d.pst * proportion * 100) / 100 : null,
-      }))
-      : null;
-
-    // Build per-group extraction snapshot for extraction_json
-    const groupExtraction = {
-      ...extraction,
-      contract_number: contractNumber,
-      settlement_number: settlementNumber,
-      total_gross_amount: Math.round(groupGross * 100) / 100,
-      total_net_amount: Math.round(groupNet * 100) / 100,
-      settlement_gross: Math.round(groupGross * 100) / 100,
-      deductions_summary: deductions,
-      lines: groupLines,
-      _split_from: baseNumber,
-      _split_contracts: [...contractGroups.keys()],
-    };
-
-    const settlement = await prisma.settlement.create({
-      data: {
-        farm_id: farmId,
-        counterparty_id: counterparty?.id || null,
-        marketing_contract_id: marketingContract?.id || null,
-        ai_batch_id: batchId || null,
-        batch_custom_id: batchCustomId || null,
-        extraction_status: 'completed',
-        settlement_number: settlementNumber,
-        settlement_date: settlementDate,
-        total_amount: Math.round(groupNet * 100) / 100 || null,
-        settlement_gross: Math.round(groupGross * 100) / 100 || null,
-        deductions_summary: deductions,
-        currency: extraction.currency || 'CAD',
-        status: 'pending',
-        buyer_format: buyerFormat,
-        source_pdf_url: pdfUrl,
-        extraction_json: groupExtraction,
-        usage_json: usage || null,
-      },
-    });
-
-    await createSettlementLines(settlement.id, groupLines, extraction);
-
-    const full = await prisma.settlement.findUnique({
-      where: { id: settlement.id },
-      include: {
-        lines: { orderBy: { line_number: 'asc' } },
-        counterparty: true,
-        marketing_contract: { include: { commodity: true } },
-      },
-    });
-    settlements.push(full);
-  }
-
-  // Return first settlement for backward compat, but attach all splits
-  const result = settlements[0];
-  result._split_settlements = settlements;
-  return result;
 }
 
 /** Create SettlementLine records for a settlement */

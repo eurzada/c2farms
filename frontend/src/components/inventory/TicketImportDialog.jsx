@@ -250,7 +250,12 @@ export default function TicketImportDialog({ open, onClose, farmId, onImported }
         ? <Chip label="New" size="small" color="primary" />
         : <Chip label="Update" size="small" color="info" />,
     },
-    { field: 'ticket_number', headerName: 'Ticket #', width: 110 },
+    { field: 'ticket_number', headerName: 'Ticket #', width: 110,
+      cellStyle: p => p.data?.is_duplicate ? { backgroundColor: '#FFF3E0', fontWeight: 600 } : null,
+      cellRenderer: p => p.data?.is_duplicate
+        ? <span title={`Duplicate: ${p.data.duplicate_count} tickets share this number`}>⚠ {p.value}</span>
+        : p.value,
+    },
     { field: 'delivery_date', headerName: 'Date', width: 110 },
     { field: 'crop_name', headerName: 'Crop', width: 120,
       cellStyle: p => (!p.data?.commodity_id && p.value) ? { backgroundColor: '#FFF3E0', fontWeight: 600 } : null,
@@ -310,6 +315,16 @@ export default function TicketImportDialog({ open, onClose, farmId, onImported }
                 color={(preview.summary?.unmatched_contracts || 0) === 0 ? 'success' : 'warning'}
               />
             </Stack>
+
+            {(preview.summary?.duplicate_ticket_numbers || 0) > 0 && (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                <strong>{preview.summary.duplicate_ticket_numbers} duplicate ticket number{preview.summary.duplicate_ticket_numbers !== 1 ? 's' : ''} found in CSV</strong>
+                {' — '}
+                {preview.summary.duplicate_ticket_details?.slice(0, 5).map(d => `#${d.ticket_number} (${d.count}x)`).join(', ')}
+                {preview.summary.duplicate_ticket_details?.length > 5 && ` and ${preview.summary.duplicate_ticket_details.length - 5} more`}
+                . These may be data entry errors in Traction Ag.
+              </Alert>
+            )}
 
             {preview.errors.length > 0 && (
               <Alert severity="warning" sx={{ mb: 2 }}>

@@ -58,7 +58,7 @@ const GRADE_TO_COMMODITY = {
  * Strips non-digit characters (spaces, dashes, leading zeros handled by Number()).
  * Returns NaN if no digits found.
  */
-function parseTicketNumber(value) {
+export function parseTicketNumber(value) {
   if (value == null) return NaN;
   const digits = String(value).replace(/[^0-9]/g, '');
   return digits.length > 0 ? Number(digits) : NaN;
@@ -306,14 +306,26 @@ export async function reconcileSettlement(settlementId, { matchMode = 'auto' } =
       for (const t of allFarmTickets) {
         const num = parseTicketNumber(t.ticket_number);
         if (!isNaN(num)) {
-          ticketByNumber.set(num, t);
+          if (!ticketByNumber.has(num)) ticketByNumber.set(num, []);
+          ticketByNumber.get(num).push(t);
+        }
+      }
+
+      // Log duplicate ticket numbers
+      for (const [num, arr] of ticketByNumber) {
+        if (arr.length > 1) {
+          console.log(`[RECON] WARNING: ${arr.length} tickets with number ${num} — will match each to a different settlement line if possible`);
         }
       }
 
       for (const { numeric } of linesWithTicketNums) {
-        const ticket = ticketByNumber.get(numeric);
-        if (ticket && !directMatchTickets.some(t => t.id === ticket.id)) {
-          directMatchTickets.push(ticket);
+        const tickets = ticketByNumber.get(numeric);
+        if (tickets) {
+          for (const ticket of tickets) {
+            if (!directMatchTickets.some(t => t.id === ticket.id)) {
+              directMatchTickets.push(ticket);
+            }
+          }
         }
       }
     }
@@ -389,14 +401,22 @@ export async function reconcileSettlement(settlementId, { matchMode = 'auto' } =
       if (!lineNum) continue;
       const numericValue = parseTicketNumber(lineNum);
       if (isNaN(numericValue)) continue;
-      const ticket = ticketByNumber.get(numericValue);
-      if (!ticket) continue;
+      const ticketArr = ticketByNumber.get(numericValue);
+      if (!ticketArr || ticketArr.length === 0) continue;
 
-      if (matchedTicketIds.has(ticket.id)) {
-        const priorMatch = matches.find(m => m.ticket_id === ticket.id);
+      // Pick the first unmatched ticket from the array (handles duplicate ticket numbers)
+      let ticket = ticketArr.find(t => !matchedTicketIds.has(t.id));
+
+      // If all are matched, allow split-load re-matching (same ticket# on settlement = same physical load)
+      if (!ticket) {
+        const priorMatch = matches.find(m => ticketArr.some(t => t.id === m.ticket_id));
         const priorLine = priorMatch && settlement.lines.find(l => l.id === priorMatch.line_id);
         const priorNum = priorLine?.ticket_number_on_settlement?.trim();
-        if (priorNum !== lineNum) continue;
+        if (priorNum === lineNum) {
+          ticket = ticketArr.find(t => t.id === priorMatch.ticket_id);
+        } else {
+          continue;
+        }
       }
 
       const result = computeMatchScore(line, ticket, contractNumber);

@@ -78,7 +78,7 @@ export default function BuyerSettlementUploadDialog({ open, onClose, farmId, onS
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
-      <DialogTitle>Upload Buyer Settlement PDF</DialogTitle>
+      <DialogTitle>Upload Grain Sale Settlement PDF</DialogTitle>
       <DialogContent dividers>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
@@ -108,10 +108,10 @@ export default function BuyerSettlementUploadDialog({ open, onClose, farmId, onS
               />
               <CloudUploadIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 1 }} />
               <Typography variant="body1" gutterBottom>
-                {file ? file.name : 'Drop buyer settlement PDF here or click to browse'}
+                {file ? file.name : 'Drop grain sale settlement PDF here or click to browse'}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                Supports JGL, Cargill, Richardson, Bunge, GSL formats
+                Supports JGL, Cargill, Richardson, Bunge, GSL, G3 formats
               </Typography>
             </Box>
 
@@ -163,7 +163,7 @@ export default function BuyerSettlementUploadDialog({ open, onClose, farmId, onS
             )}
             {!settlement?.contract && extraction.contract_number && (
               <Alert severity="warning" sx={{ mb: 2 }}>
-                Contract #{extraction.contract_number} not found in terminal contracts — you can link it later
+                Contract #{extraction.contract_number} not found — you can link it manually after saving
               </Alert>
             )}
 
@@ -234,7 +234,7 @@ export default function BuyerSettlementUploadDialog({ open, onClose, farmId, onS
           <>
             <Button onClick={handleClose}>Cancel</Button>
             <Button variant="contained" onClick={handleSave} color="success">
-              Save Draft Settlement
+              Save Grain Sale Settlement
             </Button>
           </>
         )}

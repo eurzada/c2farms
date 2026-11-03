@@ -15,12 +15,17 @@ import ConfirmDialog from '../shared/ConfirmDialog';
 import RealizationPanel from './RealizationPanel';
 
 const STATUS_COLORS = { draft: 'default', finalized: 'warning', pushed: 'success' };
-const TYPE_COLORS = { transfer: 'primary', transloading: 'warning', buyer_settlement: 'success' };
+const TYPE_COLORS = {
+  bu_credit: 'info', transloading: 'warning', grain_sale: 'success',
+  transfer: 'primary', buyer_settlement: 'success',
+};
 
 const TYPE_LABELS = {
-  transfer: 'Transfer',
+  bu_credit: 'BU Credit',
   transloading: 'Transloading',
-  buyer_settlement: 'Buyer',
+  grain_sale: 'Grain Sale',
+  transfer: 'Transfer (legacy)',
+  buyer_settlement: 'Grain Sale',
 };
 
 function formatDate(d) {
@@ -69,24 +74,23 @@ export default function TerminalSettlementDetailDialog({
     );
   }, [detail, allSettlements]);
 
-  // Paired buyer settlement (for transfer/transloading types)
-  const pairedBuyer = useMemo(() => {
-    if (detail?.type === 'buyer_settlement') return null;
-    return pairedSettlements.find(s => s.type === 'buyer_settlement') || null;
-  }, [detail, pairedSettlements]);
+  // Paired transloading settlements
+  const pairedTransloading = useMemo(() => {
+    return pairedSettlements.filter(s => s.type === 'transloading');
+  }, [pairedSettlements]);
 
-  // Paired transfer settlements (for buyer_settlement type)
-  const pairedTransfers = useMemo(() => {
-    if (detail?.type !== 'buyer_settlement') return [];
-    return pairedSettlements.filter(s => s.type === 'transfer' || s.type === 'transloading');
-  }, [detail, pairedSettlements]);
+  // Paired BU credits
+  const pairedBuCredits = useMemo(() => {
+    return pairedSettlements.filter(s => s.type === 'bu_credit' || s.type === 'transfer');
+  }, [pairedSettlements]);
 
   const lines = detail?.lines || [];
   const isDraft = detail?.status === 'draft';
   const isFinalized = detail?.status === 'finalized';
   const isPushed = detail?.status === 'pushed';
-  const isBuyer = detail?.type === 'buyer_settlement';
+  const isBuyer = detail?.type === 'buyer_settlement' || detail?.type === 'grain_sale';
   const isTransfer = detail?.type === 'transfer';
+  const isBuCredit = detail?.type === 'bu_credit';
   const isTransloading = detail?.type === 'transloading';
 
   const totalMT = lines.reduce((s, l) => s + (parseFloat(l.net_weight_mt) || 0), 0);
@@ -285,12 +289,14 @@ export default function TerminalSettlementDetailDialog({
   );
 
   const renderPairedTransfers = () => {
-    if (!isBuyer || pairedTransfers.length === 0) return null;
+    const items = [...pairedTransloading, ...pairedBuCredits];
+    if (items.length === 0) return null;
+    const pairedTransfers = items;
     return (
       <>
         <Divider sx={{ my: 2 }} />
         <Typography variant="subtitle1" fontWeight={700} gutterBottom>
-          LGX → C2 Transfer Settlements
+          Related Settlements & Credits
         </Typography>
         <TableContainer component={Paper} variant="outlined">
           <Table size="small">
@@ -403,119 +409,51 @@ export default function TerminalSettlementDetailDialog({
       return actions;
     }
 
-    // Draft + transfer/transloading
-    if (isDraft && !isBuyer) {
+    // Draft + transloading: finalize
+    if (isDraft && isTransloading) {
       const needsPricing = !detail.net_amount || parseFloat(detail.net_amount) === 0;
       if (needsPricing) {
         actions.push(
-          <Button
-            key="pricing"
-            color="warning"
-            onClick={handleApplyPricing}
-            disabled={actionLoading}
-          >
+          <Button key="pricing" color="warning" onClick={handleApplyPricing} disabled={actionLoading}>
             Apply Pricing
           </Button>
         );
       }
       actions.push(
-        <Button
-          key="finalize"
-          variant="outlined"
-          onClick={handleFinalize}
-          disabled={actionLoading}
-        >
+        <Button key="finalize" variant="outlined" onClick={handleFinalize} disabled={actionLoading}>
           Finalize
         </Button>
       );
     }
 
-    // Draft + buyer_settlement
-    if (isDraft && isBuyer) {
-      actions.push(
-        <Button
-          key="reconcile"
-          variant="outlined"
-          color="success"
-          onClick={handleReconcile}
-          disabled={actionLoading}
-        >
-          Reconcile
-        </Button>
-      );
-    }
-
-    // Finalized + transfer
-    if (isFinalized && isTransfer) {
-      actions.push(
-        <Button
-          key="revert"
-          color="warning"
-          onClick={handleRevertToDraft}
-          disabled={actionLoading}
-        >
-          Revert to Draft
-        </Button>
-      );
-      actions.push(
-        <Button
-          key="push"
-          variant="contained"
-          onClick={handlePush}
-          disabled={actionLoading}
-        >
-          Push to Logistics
-        </Button>
-      );
-    }
-
-    // Finalized + transloading
+    // Finalized + transloading: revert or download invoice
     if (isFinalized && isTransloading) {
       actions.push(
-        <Button
-          key="revert"
-          color="warning"
-          onClick={handleRevertToDraft}
-          disabled={actionLoading}
-        >
+        <Button key="revert" color="warning" onClick={handleRevertToDraft} disabled={actionLoading}>
           Revert to Draft
         </Button>
       );
       actions.push(
-        <Button
-          key="invoice"
-          variant="outlined"
-          onClick={handleInvoice}
-          disabled={actionLoading}
-        >
+        <Button key="invoice" variant="outlined" onClick={handleInvoice} disabled={actionLoading}>
           Download Invoice
         </Button>
       );
     }
 
-    // Finalized + buyer_settlement
-    if (isFinalized && isBuyer) {
+    // Grain sale / buyer_settlement: tonnage reconciliation
+    if (isDraft && (isBuyer || detail?.type === 'grain_sale')) {
       actions.push(
-        <Button
-          key="push-buyer"
-          variant="contained"
-          color="primary"
-          onClick={handleReconcile}
-          disabled={actionLoading}
-        >
-          Push to Logistics
+        <Button key="tonnage-recon" variant="outlined" color="success" disabled={actionLoading}
+          onClick={() => onAction?.('tonnage-recon', detail.id)}>
+          Tonnage Reconciliation
         </Button>
       );
     }
 
-    // Pushed
+    // Pushed / completed: view in logistics
     if (isPushed) {
       actions.push(
-        <Button
-          key="view-logistics"
-          startIcon={<OpenInNewIcon />}
-          onClick={() => navigate('/logistics/settlements')}
-        >
+        <Button key="view-logistics" startIcon={<OpenInNewIcon />} onClick={() => navigate('/logistics/settlements')}>
           View in Logistics
         </Button>
       );

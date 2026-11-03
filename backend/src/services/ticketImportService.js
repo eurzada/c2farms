@@ -380,6 +380,21 @@ export async function previewTicketImport(farmId, csvText) {
     });
   }
 
+  // Detect duplicate ticket numbers within the import batch
+  const ticketNumFreq = {};
+  for (const t of tickets) {
+    if (t.ticket_number) {
+      ticketNumFreq[t.ticket_number] = (ticketNumFreq[t.ticket_number] || 0) + 1;
+    }
+  }
+  const duplicateNums = Object.entries(ticketNumFreq).filter(([, count]) => count > 1);
+  for (const t of tickets) {
+    if (t.ticket_number && ticketNumFreq[t.ticket_number] > 1) {
+      t.is_duplicate = true;
+      t.duplicate_count = ticketNumFreq[t.ticket_number];
+    }
+  }
+
   return {
     tickets,
     errors,
@@ -389,6 +404,8 @@ export async function previewTicketImport(farmId, csvText) {
       update_count: tickets.filter(t => t.status === 'update').length,
       matched_contracts: tickets.filter(t => t.marketing_contract_id).length,
       unmatched_contracts: tickets.filter(t => !t.marketing_contract_id).length,
+      duplicate_ticket_numbers: duplicateNums.length,
+      duplicate_ticket_details: duplicateNums.map(([num, count]) => ({ ticket_number: num, count })),
     },
     column_mappings: colMap,
   };

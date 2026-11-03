@@ -204,19 +204,13 @@ export default function TerminalContractDetailDialog({
   };
 
   // Derived data
-  const transferAgreements = contract?.transfer_agreements || [];
-  const buyerSettlements = (contract?.settlements || []).filter(s => s.type === 'buyer_settlement');
-  const transferSettlements = (contract?.settlements || []).filter(s => s.type === 'transfer' || s.type === 'transloading');
+  const grainSaleSettlements = (contract?.settlements || []).filter(s => s.type === 'grain_sale' || s.type === 'buyer_settlement');
+  const transloadingSettlements = (contract?.settlements || []).filter(s => s.type === 'transloading');
+  const buCreditSettlements = (contract?.settlements || []).filter(s => s.type === 'bu_credit' || s.type === 'transfer');
   const gradePrices = parseJsonArray(contract?.grade_prices_json);
   const blendRequirement = parseJsonArray(contract?.blend_requirement_json);
-
-  // Find realization from buyer settlements
-  const realizationSettlement = buyerSettlements.find(s => s.realization_json);
-  const realization = realizationSettlement ? (
-    typeof realizationSettlement.realization_json === 'string'
-      ? JSON.parse(realizationSettlement.realization_json)
-      : realizationSettlement.realization_json
-  ) : null;
+  const isTransloadingContract = contract?.contract_purpose === 'transloading_service';
+  const linkedMc = contract?.marketing_contract;
 
   const counterpartyName = contract?.counterparty?.name || '';
 
@@ -337,90 +331,66 @@ export default function TerminalContractDetailDialog({
                       </Box>
                     )}
 
-                    {/* Buyer Settlements */}
-                    <Box sx={{ mt: 2 }}>
-                      <Typography variant="subtitle2" gutterBottom>Buyer Settlements</Typography>
-                      <SettlementTable settlements={buyerSettlements} label="buyer settlements" />
-                    </Box>
+                    {/* Grain Sale Settlements */}
+                    {grainSaleSettlements.length > 0 && (
+                      <Box sx={{ mt: 2 }}>
+                        <Typography variant="subtitle2" gutterBottom>Grain Sale Settlements</Typography>
+                        <SettlementTable settlements={grainSaleSettlements} label="grain sale settlements" />
+                      </Box>
+                    )}
                   </Paper>
                 </Grid>
 
-                {/* Right Pane: Transfer Contract */}
+                {/* Right Pane: Transloading & BU Credits */}
                 <Grid item xs={12} md={6}>
                   <Paper variant="outlined" sx={{ p: 2, height: '100%' }}>
                     <Typography variant="subtitle1" fontWeight={700} gutterBottom>
-                      Transfer Contract (LGX \u2192 C2)
+                      {isTransloadingContract ? 'Transloading Details' : 'Settlements & Credits'}
                     </Typography>
                     <Divider sx={{ mb: 1.5 }} />
 
-                    {transferAgreements.length > 0 ? (
-                      transferAgreements.map((ta, idx) => (
-                        <Box key={ta.id || idx} sx={{ mb: idx < transferAgreements.length - 1 ? 3 : 0 }}>
-                          {transferAgreements.length > 1 && (
-                            <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-                              Transfer {idx + 1}
-                            </Typography>
-                          )}
-                          <InfoRow label="Contract #" value={ta.contract_number || ta.contractNumber || '\u2014'} />
-                          <InfoRow label="Counterparty" value={ta.counterparty?.name || ta.counterparty_name || '\u2014'} />
-                          <InfoRow label="Commodity" value={ta.commodity?.name || ta.commodity_name || contract.commodity?.name || ''} />
-                          <InfoRow label="Contracted" value={fmtMt(ta.contracted_mt || ta.contracted_tonnes)} />
-                          <InfoRow label="Delivered" value={fmtMt(ta.delivered_mt || ta.delivered_tonnes)} />
-                          <InfoRow label="Remaining" value={fmtMt(
-                            ta.remaining_mt ?? ta.remaining_tonnes ??
-                            ((ta.contracted_mt || ta.contracted_tonnes || 0) - (ta.delivered_mt || ta.delivered_tonnes || 0))
-                          )} />
-                          <InfoRow label="Status" value="">
-                            <Chip
-                              label={ta.status || 'executed'}
-                              size="small"
-                              color={STATUS_COLORS[ta.status] || 'default'}
-                            />
-                          </InfoRow>
-
-                          {/* Transfer Settlements */}
-                          <Box sx={{ mt: 2 }}>
-                            <Typography variant="subtitle2" gutterBottom>Transfer Settlements</Typography>
-                            <SettlementTable
-                              settlements={ta.settlements || transferSettlements}
-                              label="transfer settlements"
-                            />
-                          </Box>
-                        </Box>
-                      ))
-                    ) : (
-                      <Box sx={{ py: 4, textAlign: 'center' }}>
-                        <Typography variant="body1" color="text.secondary">
-                          No C2 transfer \u2014 transloading only
-                        </Typography>
-                        <Typography variant="body2" color="text.disabled" sx={{ mt: 0.5 }}>
-                          This contract does not have a linked C2 transfer agreement.
-                        </Typography>
+                    {/* Linked Marketing Contract */}
+                    {linkedMc && (
+                      <Box sx={{ mb: 2 }}>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>Linked Marketing Contract</Typography>
+                        <InfoRow label="Contract #" value={linkedMc.contract_number || '\u2014'} />
                       </Box>
                     )}
 
-                    {/* Transloading settlements that aren't linked to a transfer agreement */}
-                    {transferAgreements.length === 0 && transferSettlements.length > 0 && (
+                    {/* Transloading rate */}
+                    {isTransloadingContract && contract.transloading_rate && (
+                      <Box sx={{ mb: 2 }}>
+                        <InfoRow label="Transloading Rate" value={`$${contract.transloading_rate}/MT`} />
+                        <InfoRow label="Projected Revenue" value={fmtDollar(contract.contracted_mt * contract.transloading_rate)} />
+                      </Box>
+                    )}
+
+                    {/* Transloading Settlements / Invoices */}
+                    {transloadingSettlements.length > 0 && (
                       <Box sx={{ mt: 2 }}>
-                        <Typography variant="subtitle2" gutterBottom>Transloading Settlements</Typography>
-                        <SettlementTable settlements={transferSettlements} label="transloading settlements" />
+                        <Typography variant="subtitle2" gutterBottom>Transloading Invoices</Typography>
+                        <SettlementTable settlements={transloadingSettlements} label="transloading invoices" />
+                      </Box>
+                    )}
+
+                    {/* BU Credit Allocations */}
+                    {buCreditSettlements.length > 0 && (
+                      <Box sx={{ mt: 2 }}>
+                        <Typography variant="subtitle2" gutterBottom>BU Farm Credits</Typography>
+                        <SettlementTable settlements={buCreditSettlements} label="BU farm credits" />
+                      </Box>
+                    )}
+
+                    {transloadingSettlements.length === 0 && buCreditSettlements.length === 0 && !linkedMc && (
+                      <Box sx={{ py: 4, textAlign: 'center' }}>
+                        <Typography variant="body2" color="text.secondary">
+                          No settlements or credits yet
+                        </Typography>
                       </Box>
                     )}
                   </Paper>
                 </Grid>
               </Grid>
-
-              {/* Bottom Section: Realization Panel */}
-              {realization && (
-                <Box sx={{ mt: 3 }}>
-                  <RealizationPanel
-                    realization={realization}
-                    buyerName={counterpartyName}
-                    contractNumber={contract.contract_number}
-                    deductions={realization.deductions || []}
-                  />
-                </Box>
-              )}
             </>
           )}
 

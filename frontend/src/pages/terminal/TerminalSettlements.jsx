@@ -16,11 +16,9 @@ import { extractErrorMessage } from '../../utils/errorHelpers';
 import { formatCurrency, fmt, fmtDollar } from '../../utils/formatting';
 import CreateTerminalSettlementDialog from '../../components/terminal/CreateTerminalSettlementDialog';
 import BuyerSettlementUploadDialog from '../../components/terminal/BuyerSettlementUploadDialog';
-import BuyerSettlementReconciliationDialog from '../../components/terminal/BuyerSettlementReconciliationDialog';
-import TransferReconciliationDialog from '../../components/terminal/TransferReconciliationDialog';
+import TonnageReconciliationDialog from '../../components/terminal/TonnageReconciliationDialog';
 import TerminalSettlementDetailDialog from '../../components/terminal/TerminalSettlementDetailDialog';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
-import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import useGridState from '../../hooks/useGridState.js';
 
 const STATUS_COLORS = {
@@ -30,19 +28,21 @@ const STATUS_COLORS = {
 };
 
 const TYPE_COLORS = {
-  transfer: 'primary',
   bu_credit: 'info',
   transloading: 'warning',
-  buyer_settlement: 'success',
   grain_sale: 'success',
+  // legacy types kept for display of old data
+  transfer: 'primary',
+  buyer_settlement: 'success',
 };
 
 const TYPE_LABELS = {
-  transfer: 'Transfer',
   bu_credit: 'BU Credit',
   transloading: 'Transloading',
-  buyer_settlement: 'Buyer',
   grain_sale: 'Grain Sale',
+  // legacy
+  transfer: 'Transfer (legacy)',
+  buyer_settlement: 'Grain Sale',
 };
 
 export default function TerminalSettlements() {
@@ -55,10 +55,9 @@ export default function TerminalSettlements() {
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState('all');
   const [createOpen, setCreateOpen] = useState(false);
-  const [buyerUploadOpen, setBuyerUploadOpen] = useState(false);
-  const [buyerReconOpen, setBuyerReconOpen] = useState(false);
-  const [buyerReconId, setBuyerReconId] = useState(null);
-  const [transferReconOpen, setTransferReconOpen] = useState(false);
+  const [grainSaleUploadOpen, setGrainSaleUploadOpen] = useState(false);
+  const [tonnageReconOpen, setTonnageReconOpen] = useState(false);
+  const [tonnageReconId, setTonnageReconId] = useState(null);
   const [detailId, setDetailId] = useState(null);
 
   const { onGridReady, onStateChanged } = useGridState('c2_terminal_settlements_grid');
@@ -82,33 +81,27 @@ export default function TerminalSettlements() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Summary calculations
+  // Summary — group grain sale + legacy buyer_settlement together
   const summary = useMemo(() => {
-    const byType = {
-      grain_sale: { count: 0, amount: 0 },
-      transloading: { count: 0, amount: 0 },
-      bu_credit: { count: 0, amount: 0 },
-      transfer: { count: 0, amount: 0 },
-      buyer_settlement: { count: 0, amount: 0 },
-    };
+    let grainSale = { count: 0, amount: 0 };
+    let transloading = { count: 0, amount: 0 };
+    let buCredit = { count: 0, amount: 0 };
     for (const r of rows) {
-      const t = r.type || 'transfer';
-      if (byType[t]) {
-        byType[t].count += 1;
-        byType[t].amount += parseFloat(r.net_amount) || 0;
+      const t = r.type || 'grain_sale';
+      const amt = parseFloat(r.net_amount) || 0;
+      if (t === 'grain_sale' || t === 'buyer_settlement' || t === 'transfer') {
+        grainSale.count += 1;
+        grainSale.amount += amt;
+      } else if (t === 'transloading') {
+        transloading.count += 1;
+        transloading.amount += amt;
+      } else if (t === 'bu_credit') {
+        buCredit.count += 1;
+        buCredit.amount += amt;
       }
     }
-    return byType;
+    return { grainSale, transloading, buCredit };
   }, [rows]);
-
-  const handleApplyGradePricing = async (id) => {
-    try {
-      await api.post(`/api/farms/${farmId}/terminal/settlements/${id}/apply-pricing`);
-      load();
-    } catch (err) {
-      setError(extractErrorMessage(err, 'Failed to apply grade pricing — set grade prices on the contract first'));
-    }
-  };
 
   const handleFinalize = async (id) => {
     try {
@@ -116,15 +109,6 @@ export default function TerminalSettlements() {
       load();
     } catch (err) {
       setError(extractErrorMessage(err, 'Failed to finalize settlement'));
-    }
-  };
-
-  const handlePush = async (id) => {
-    try {
-      await api.post(`/api/farms/${farmId}/terminal/settlements/${id}/push`);
-      load();
-    } catch (err) {
-      setError(extractErrorMessage(err, 'Failed to push settlement'));
     }
   };
 
@@ -147,7 +131,7 @@ export default function TerminalSettlements() {
   const columnDefs = useMemo(() => [
     { field: 'settlement_number', headerName: 'Settlement #', width: 160 },
     {
-      field: 'type', headerName: 'Type', width: 120,
+      field: 'type', headerName: 'Type', width: 130,
       cellRenderer: p => (
         <Chip
           label={TYPE_LABELS[p.value] || p.value}
@@ -180,7 +164,7 @@ export default function TerminalSettlements() {
       field: 'status', headerName: 'Status', width: 120,
       cellRenderer: p => (
         <Chip
-          label={p.value === 'draft' ? 'Draft' : p.value === 'finalized' ? 'Finalized' : 'Pushed'}
+          label={p.value === 'draft' ? 'Draft' : p.value === 'finalized' ? 'Finalized' : 'Complete'}
           size="small"
           color={STATUS_COLORS[p.value] || 'default'}
           variant={p.value === 'draft' ? 'filled' : 'outlined'}
@@ -188,27 +172,35 @@ export default function TerminalSettlements() {
       ),
     },
     {
-      headerName: 'Actions', width: 250, sortable: false, filter: false, pinned: 'right',
+      headerName: 'Actions', width: 220, sortable: false, filter: false, pinned: 'right',
       cellRenderer: p => {
-        const { id, status, type: sType, settlement_number, net_amount } = p.data;
+        const { id, status, type: sType, settlement_number } = p.data;
 
-        // Buyer settlement actions
-        if (sType === 'buyer_settlement') {
+        // Transloading: draft → finalize, finalized → download invoice
+        if (sType === 'transloading') {
           if (status === 'draft') {
             return (
-              <Button size="small" variant="outlined" color="success" onClick={() => { setBuyerReconId(id); setBuyerReconOpen(true); }}>
-                Reconcile
-              </Button>
+              <Button size="small" variant="outlined" onClick={() => handleFinalize(id)}>Finalize</Button>
             );
           }
           if (status === 'finalized') {
             return (
-              <Button size="small" variant="contained" color="primary" onClick={() => { setBuyerReconId(id); setBuyerReconOpen(true); }}>
-                Push to Logistics
+              <Button size="small" variant="outlined" onClick={() => handleInvoice(id, settlement_number)}>
+                Download Invoice
               </Button>
             );
           }
-          if (status === 'pushed') {
+          return null;
+        }
+
+        // BU Credit: read-only, just view detail
+        if (sType === 'bu_credit') {
+          return null;
+        }
+
+        // Grain sale / legacy buyer_settlement: view detail
+        if (sType === 'grain_sale' || sType === 'buyer_settlement' || sType === 'transfer') {
+          if (status === 'pushed' || status === 'finalized') {
             return (
               <Button size="small" startIcon={<OpenInNewIcon />} onClick={() => navigate('/logistics/settlements')}>
                 View in Logistics
@@ -218,47 +210,6 @@ export default function TerminalSettlements() {
           return null;
         }
 
-        // Transfer/transloading actions
-        if (status === 'draft') {
-          const needsPricing = !net_amount || net_amount === 0;
-          return (
-            <Box sx={{ display: 'flex', gap: 0.5 }}>
-              {needsPricing && (
-                <Button size="small" variant="outlined" color="warning" onClick={() => handleApplyGradePricing(id)}>
-                  Apply Pricing
-                </Button>
-              )}
-              <Button size="small" variant="outlined" onClick={() => handleFinalize(id)}>
-                Finalize
-              </Button>
-            </Box>
-          );
-        }
-        if (status === 'finalized' && sType === 'transfer') {
-          return (
-            <Button size="small" variant="contained" color="primary" onClick={() => handlePush(id)}>
-              Push to Logistics
-            </Button>
-          );
-        }
-        if (status === 'finalized' && sType === 'transloading') {
-          return (
-            <Button size="small" variant="outlined" onClick={() => handleInvoice(id, settlement_number)}>
-              Download Invoice
-            </Button>
-          );
-        }
-        if (status === 'pushed') {
-          return (
-            <Button
-              size="small"
-              startIcon={<OpenInNewIcon />}
-              onClick={() => navigate('/logistics/settlements')}
-            >
-              View in Logistics
-            </Button>
-          );
-        }
         return null;
       },
     },
@@ -275,16 +226,12 @@ export default function TerminalSettlements() {
             <ToggleButton value="all">All</ToggleButton>
             <ToggleButton value="grain_sale">Grain Sales</ToggleButton>
             <ToggleButton value="transloading">Transloading</ToggleButton>
-            <ToggleButton value="bu_credit">BU Credits</ToggleButton>
           </ToggleButtonGroup>
-          <Button variant="outlined" color="info" startIcon={<CompareArrowsIcon />} onClick={() => setTransferReconOpen(true)}>
-            Reconcile Transfer
-          </Button>
-          <Button variant="outlined" color="success" startIcon={<UploadFileIcon />} onClick={() => setBuyerUploadOpen(true)}>
-            Upload Buyer Settlement
+          <Button variant="outlined" color="success" startIcon={<UploadFileIcon />} onClick={() => setGrainSaleUploadOpen(true)}>
+            Upload Grain Sale PDF
           </Button>
           <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateOpen(true)}>
-            New Settlement
+            New Transloading Invoice
           </Button>
         </Box>
       </Box>
@@ -296,8 +243,8 @@ export default function TerminalSettlements() {
         <Grid item xs={12} sm={4}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="subtitle2" color="success.main">Grain Sale Settlements</Typography>
-            <Typography variant="h6" fontWeight={700}>{(summary.grain_sale.count + summary.buyer_settlement.count)} settlements</Typography>
-            <Typography variant="body2">Total: {fmtDollar(summary.grain_sale.amount + summary.buyer_settlement.amount)}</Typography>
+            <Typography variant="h6" fontWeight={700}>{summary.grainSale.count} settlements</Typography>
+            <Typography variant="body2">Total: {fmtDollar(summary.grainSale.amount)}</Typography>
           </Paper>
         </Grid>
         <Grid item xs={12} sm={4}>
@@ -309,9 +256,9 @@ export default function TerminalSettlements() {
         </Grid>
         <Grid item xs={12} sm={4}>
           <Paper sx={{ p: 2 }}>
-            <Typography variant="subtitle2" color="info.main">BU Credits</Typography>
-            <Typography variant="h6" fontWeight={700}>{(summary.bu_credit.count + summary.transfer.count)} allocations</Typography>
-            <Typography variant="body2">Allocated: {fmtDollar(summary.bu_credit.amount + summary.transfer.amount)}</Typography>
+            <Typography variant="subtitle2" color="info.main">BU Farm Credits</Typography>
+            <Typography variant="h6" fontWeight={700}>{summary.buCredit.count} allocations</Typography>
+            <Typography variant="body2">Allocated: {fmtDollar(summary.buCredit.amount)}</Typography>
           </Paper>
         </Grid>
       </Grid>
@@ -342,24 +289,17 @@ export default function TerminalSettlements() {
       />
 
       <BuyerSettlementUploadDialog
-        open={buyerUploadOpen}
-        onClose={() => setBuyerUploadOpen(false)}
+        open={grainSaleUploadOpen}
+        onClose={() => setGrainSaleUploadOpen(false)}
         farmId={farmId}
-        onSaved={() => { setBuyerUploadOpen(false); load(); }}
+        onSaved={() => { setGrainSaleUploadOpen(false); load(); }}
       />
 
-      <TransferReconciliationDialog
-        open={transferReconOpen}
-        onClose={() => setTransferReconOpen(false)}
+      <TonnageReconciliationDialog
+        open={tonnageReconOpen}
+        onClose={() => { setTonnageReconOpen(false); setTonnageReconId(null); }}
         farmId={farmId}
-        onDone={load}
-      />
-
-      <BuyerSettlementReconciliationDialog
-        open={buyerReconOpen}
-        onClose={() => { setBuyerReconOpen(false); setBuyerReconId(null); }}
-        farmId={farmId}
-        settlementId={buyerReconId}
+        settlementId={tonnageReconId}
         onDone={load}
       />
 
@@ -374,12 +314,11 @@ export default function TerminalSettlements() {
           if (action === 'deleted' || action === 'finalized' || action === 'pushed' || action === 'reverted' || action === 'priced') {
             setDetailId(null);
             load();
-          } else if (action === 'reconcile') {
+          } else if (action === 'tonnage-recon') {
             setDetailId(null);
-            setBuyerReconId(id);
-            setBuyerReconOpen(true);
+            setTonnageReconId(id);
+            setTonnageReconOpen(true);
           } else if (action === 'refreshDetail') {
-            // Detail dialog will re-fetch itself
             load();
           }
         }}
