@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Unit tests mock Prisma; no database is needed. A dummy URL keeps
+      # anything that reads it at import time from crashing.
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:1/ci
+      JWT_SECRET: ci-only-not-a-real-secret
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install backend
+        working-directory: backend
+        run: npm ci --no-audit --no-fund
+
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Prisma generate
+        working-directory: backend
+        run: npx prisma generate --schema=src/prisma/schema.prisma
+
+      - name: Lint backend
+        working-directory: backend
+        run: npm run lint
+
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Test backend
+        working-directory: backend
+        run: npm test
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+  audit:
+    # Report-only until known critical/high advisories are fixed (hardening
+    # step 4). Then remove continue-on-error to make it a required gate.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: Audit backend (production deps)
+        working-directory: backend
+        run: npm audit --omit=dev --audit-level=high
+      - name: Audit frontend (production deps)
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
