@@ -51,6 +51,15 @@ import { logActivity } from './services/activityService.js';
 
 const app = express();
 
+// Behind Render's load balancer every request arrives from the proxy's IP.
+// Without this, req.ip is the proxy, so all users share ONE rate-limit
+// bucket (5 logins / 15 min for the whole company) and activity logs record
+// the proxy IP. Trust exactly one hop in production; override with
+// TRUST_PROXY (hop count) if the hosting setup changes.
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', Number(process.env.TRUST_PROXY ?? 1));
+}
+
 // Security headers — disable CSP so the React SPA can load inline scripts/styles
 app.use(helmet({ contentSecurityPolicy: false }));
 
