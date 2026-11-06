@@ -25,3 +25,4 @@ obsidian C2 Farms/
 .cursor/
 .env.*
 !.env.example
+*~
