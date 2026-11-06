@@ -12,7 +12,9 @@
 set -e
 
 LOCAL_DB="postgresql://c2farms:c2farms_dev@localhost:5432/c2farms"
-RENDER_DB="postgresql://c2farms:Eegwjhwd9ovZWPNo3fgHnjVVZ4ba7fxO@dpg-d6hkovh5pdvs73djrm60-a.oregon-postgres.render.com/c2farms"
+# Credentials come from .env (see .env.example); never hardcode.
+source "$(dirname "$0")/lib/load-env.sh"
+RENDER_DB="$RENDER_DB_URL"
 BACKUP_BASE="${HOME}/c2farms-backups/module-sync"
 TMP_DIR="/tmp/c2farms-sync-$$"
 

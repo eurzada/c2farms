@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo } from 'react';
 import {
   Box, Typography, Paper, Alert, Chip, Stack, Tabs, Tab,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  FormControl, InputLabel, Select, MenuItem,
 } from '@mui/material';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import AgricultureIcon from '@mui/icons-material/Agriculture';
@@ -348,10 +347,10 @@ function ProcurementContent({ year, farmsWithData }) {
    Main Page — Tabbed: Procurement | Product Library
    ═══════════════════════════════════════════════════════════════════════════ */
 export default function EnterpriseAgroPlan() {
-  const { farmUnits } = useFarm();
+  // Crop year comes from the global header selector (single source of truth)
+  const { farmUnits, fiscalYear: year } = useFarm();
   const navigate = useNavigate();
   const location = useLocation();
-  const [year, setYear] = useState(2026);
   const [farmResults, setFarmResults] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -389,13 +388,10 @@ export default function EnterpriseAgroPlan() {
     <Box>
       {/* Header */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
-        <Typography variant="h5" fontWeight="bold">Procurement</Typography>
-        <FormControl size="small" sx={{ minWidth: 120 }}>
-          <InputLabel>Crop Year</InputLabel>
-          <Select value={year} label="Crop Year" onChange={e => setYear(e.target.value)}>
-            <MenuItem value={2026}>2026</MenuItem>
-          </Select>
-        </FormControl>
+        <Box>
+          <Typography variant="h5" fontWeight="bold">Procurement</Typography>
+          <Typography variant="caption" color="text.secondary">Crop Year {year}</Typography>
+        </Box>
         <Chip icon={<VisibilityIcon />} label="Read-Only" size="small" variant="outlined" />
         <Box sx={{ ml: 'auto' }}>
           <ProcurementExportButtons cropYear={year} />

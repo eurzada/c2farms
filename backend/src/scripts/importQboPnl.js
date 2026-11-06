@@ -172,7 +172,7 @@ function parseMonthYearFromHeader(header) {
   if (/^total$/i.test(trimmed)) return null;
 
   // Try "November 2023", "Nov 2024", "Nov-2024", "Nov.2024"
-  let match = trimmed.match(/^([A-Za-z]+)[\s\-\.]+(\d{4})$/);
+  let match = trimmed.match(/^([A-Za-z]+)[\s\-.]+(\d{4})$/);
   if (match) {
     const m = match[1].toLowerCase();
     const month = MONTH_ABBREV[m];
@@ -188,7 +188,7 @@ function parseMonthYearFromHeader(header) {
   }
 
   // Try "Nov-24" (2-digit year)
-  match = trimmed.match(/^([A-Za-z]+)[\s\-\.]+(\d{2})$/);
+  match = trimmed.match(/^([A-Za-z]+)[\s\-.]+(\d{2})$/);
   if (match) {
     const m = match[1].toLowerCase();
     const month = MONTH_ABBREV[m];
