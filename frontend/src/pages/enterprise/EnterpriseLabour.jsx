@@ -8,6 +8,7 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import LockIcon from '@mui/icons-material/Lock';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import SyncIcon from '@mui/icons-material/Sync';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LabourExportButtons from '../../components/labour/LabourExportButtons';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
@@ -15,6 +16,7 @@ import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Tooltip as Ch
 import { Bar } from 'react-chartjs-2';
 import { useFarm } from '../../contexts/FarmContext';
 import { formatCurrency } from '../../utils/formatting';
+import { extractErrorMessage } from '../../utils/errorHelpers';
 import api from '../../services/api';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ChartTooltip, Legend);
@@ -36,13 +38,14 @@ function KpiCard({ label, value, sub, color }) {
 
 export default function EnterpriseLabour() {
   const theme = useTheme();
-  const { farmUnits, isAdmin } = useFarm();
+  // Fiscal year comes from the global header selector (single source of truth)
+  const { farmUnits, isAdmin, fiscalYear: year } = useFarm();
   const [farmData, setFarmData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [bulkLoading, setBulkLoading] = useState(false);
   const [pushResult, setPushResult] = useState(null);
+  const [copyResult, setCopyResult] = useState(null);
   const { confirm, dialogProps: confirmDialogProps } = useConfirmDialog();
-  const year = 2026;
 
   const loadData = () => {
     if (!farmUnits?.length) return;
@@ -56,7 +59,34 @@ export default function EnterpriseLabour() {
     ).then(setFarmData).finally(() => setLoading(false));
   };
 
-  useEffect(() => { loadData(); }, [farmUnits, year]);
+  useEffect(() => { setCopyResult(null); loadData(); }, [farmUnits, year]);
+
+  // Create this year's plan for every farm that has none, by copying each
+  // farm's prior-year plan (same as the per-farm "Copy from FY…" button).
+  const handleCopyAllFromPrior = async () => {
+    const targets = farmsWithout.map(r => r.farm);
+    const ok = await confirm({
+      title: `Create FY${year} Labour & Fuel Plans?`,
+      message: `This copies each farm's FY${year - 1} labour & fuel plan into FY${year} for ${targets.length} farm(s) without a FY${year} plan: ${targets.map(f => f.name).join(', ')}. Farms that already have a FY${year} plan are not touched. Acres are taken from FY${year} agronomy where available.`,
+      confirmText: `Create FY${year} Plans`,
+    });
+    if (!ok) return;
+    setBulkLoading(true);
+    setCopyResult(null);
+    const created = [];
+    const failed = [];
+    for (const farm of targets) {
+      try {
+        await api.post(`/api/farms/${farm.id}/labour/plan/copy-from-prior`, { fiscal_year: year });
+        created.push(farm.name);
+      } catch (err) {
+        failed.push(`${farm.name} (${extractErrorMessage(err, 'failed')})`);
+      }
+    }
+    setCopyResult({ created, failed });
+    setBulkLoading(false);
+    loadData();
+  };
 
   const handleBulkStatus = async (status) => {
     const action = status === 'draft' ? 'unlock' : 'lock';
@@ -156,7 +186,10 @@ export default function EnterpriseLabour() {
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3, flexWrap: 'wrap' }}>
-        <Typography variant="h5" fontWeight="bold">Labour & Fuel Rollup</Typography>
+        <Box>
+          <Typography variant="h5" fontWeight="bold">Labour & Fuel Rollup</Typography>
+          <Typography variant="caption" color="text.secondary">FY{year}</Typography>
+        </Box>
         <Chip icon={<VisibilityIcon />} label="Read-Only" size="small" variant="outlined" />
         <Chip label={`${farmsWithPlans.length} of ${farmData.length} farms`} size="small" color="info" variant="outlined" />
         {farmsWithPlans.length > 0 && <LabourExportButtons fiscalYear={year} />}
@@ -182,8 +215,30 @@ export default function EnterpriseLabour() {
         )}
       </Box>
 
+      {copyResult && (
+        <Alert severity={copyResult.failed.length ? 'warning' : 'success'} sx={{ mb: 2 }} onClose={() => setCopyResult(null)}>
+          {copyResult.created.length > 0 && <>Created FY{year} plans for: {copyResult.created.join(', ')}. </>}
+          {copyResult.failed.length > 0 && <>Not created: {copyResult.failed.join('; ')}</>}
+        </Alert>
+      )}
+
+      {isAdmin && farmsWithout.length > 0 && (
+        <Alert
+          severity="info"
+          sx={{ mb: 2 }}
+          action={
+            <Button size="small" variant="contained" startIcon={<ContentCopyIcon />}
+              disabled={bulkLoading} onClick={handleCopyAllFromPrior}>
+              Create FY{year} from FY{year - 1}
+            </Button>
+          }
+        >
+          {farmsWithout.length} farm unit(s) have no FY{year} plan. Copy each farm's FY{year - 1} plan to start FY{year}.
+        </Alert>
+      )}
+
       {farmsWithPlans.length === 0 ? (
-        <Alert severity="warning">No labour plans found for FY{year}. Create plans on individual farm units first.</Alert>
+        <Alert severity="warning">No labour plans found for FY{year}. Use the button above, or create plans on individual farm units.</Alert>
       ) : (
         <>
           {/* ─── LABOUR SECTION ─── */}
